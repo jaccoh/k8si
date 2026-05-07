@@ -19,7 +19,7 @@ def run(config: Config, restic: Restic) -> None:
     log.info("Sentinel missing, restoring from %s", config.restic_repository)
 
     try:
-        restic.restore(target=config.data_path)
+        restic.restore()
         log.info("Restore complete. App will write sentinel on first init.")
     except ResticNoSnapshotsError:
         log.info("No snapshots found — first deploy, starting fresh.")

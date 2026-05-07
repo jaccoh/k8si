@@ -30,9 +30,9 @@ class Restic:
     def init(self) -> None:
         self._run(self._cmd("init"))
 
-    def restore(self, target: Path) -> None:
+    def restore(self) -> None:
         try:
-            self._run(self._cmd("restore", "latest", "--target", str(target)))
+            self._run(self._cmd("restore", "latest", "--target", "/"))
         except ResticError as e:
             if "no matching snapshot" in e.stderr or "no snapshots found" in e.stderr:
                 raise ResticNoSnapshotsError(
