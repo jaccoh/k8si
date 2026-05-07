@@ -14,11 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     sqlite3 \
     curl \
+    bzip2 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 ARG RESTIC_VERSION=0.18.1
-RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_arm64.bz2" \
+ARG TARGETARCH
+RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${TARGETARCH}.bz2" \
     | bunzip2 > /usr/local/bin/restic \
     && chmod +x /usr/local/bin/restic
 
