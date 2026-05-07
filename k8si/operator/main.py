@@ -13,6 +13,17 @@ from .status import compute_next_backup, infer_result
 log = logging.getLogger(__name__)
 
 
+def _pvc_node(namespace: str, pvc_name: str) -> str | None:
+    """Return the node currently running a pod that mounts the given PVC, or None."""
+    v1 = kubernetes.client.CoreV1Api()
+    pods = v1.list_namespaced_pod(namespace)
+    for pod in pods.items:
+        for vol in pod.spec.volumes or []:
+            if vol.persistent_volume_claim and vol.persistent_volume_claim.claim_name == pvc_name:
+                return pod.spec.node_name
+    return None
+
+
 @kopf.on.startup()
 def startup(logger: logging.Logger, **_: object) -> None:
     kubernetes.config.load_incluster_config()
@@ -32,7 +43,10 @@ def on_create(
     **_: object,
 ) -> None:
     api = kubernetes.client.BatchV1Api()
-    body = build_cronjob(name, namespace, uid, spec)
+    node = _pvc_node(namespace, spec["pvc"])
+    if node:
+        logger.info("PVC %s is on node %s, pinning backup job there", spec["pvc"], node)
+    body = build_cronjob(name, namespace, uid, spec, node_name=node)
     api.create_namespaced_cron_job(namespace, body)
     logger.info("Created CronJob k8si-%s in %s", name, namespace)
     patch.status["nextBackupTime"] = compute_next_backup(spec["schedule"])
@@ -50,7 +64,8 @@ def on_update(
     **_: object,
 ) -> None:
     api = kubernetes.client.BatchV1Api()
-    body = build_cronjob(name, namespace, uid, spec)
+    node = _pvc_node(namespace, spec["pvc"])
+    body = build_cronjob(name, namespace, uid, spec, node_name=node)
     try:
         api.patch_namespaced_cron_job(f"k8si-{name}", namespace, body)
         logger.info("Updated CronJob k8si-%s", name)

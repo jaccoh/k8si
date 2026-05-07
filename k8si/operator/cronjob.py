@@ -6,7 +6,13 @@ from typing import Any
 K8SI_IMAGE = os.environ.get("K8SI_IMAGE", "ghcr.io/jaccoh/k8si:latest")
 
 
-def build_cronjob(name: str, namespace: str, uid: str, spec: dict[str, Any]) -> dict[str, Any]:
+def build_cronjob(
+    name: str,
+    namespace: str,
+    uid: str,
+    spec: dict[str, Any],
+    node_name: str | None = None,
+) -> dict[str, Any]:
     restic_secret = spec["resticSecret"]
     retention = spec.get("retention", {})
 
@@ -60,6 +66,7 @@ def build_cronjob(name: str, namespace: str, uid: str, spec: dict[str, Any]) -> 
                     "template": {
                         "spec": {
                             "restartPolicy": "Never",
+                            **({"nodeSelector": {"kubernetes.io/hostname": node_name}} if node_name else {}),
                             "volumes": [
                                 {
                                     "name": "data",
