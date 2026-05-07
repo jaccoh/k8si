@@ -1,5 +1,6 @@
-"""Entrypoint: read config, build restic env, dispatch to restore or backup."""
+"""Entrypoint: 'k8si generate' for YAML generation, 'k8si' for runtime (MODE env var)."""
 
+import argparse
 import logging
 import os
 import sys
@@ -16,6 +17,18 @@ log = logging.getLogger(__name__)
 
 
 def main() -> None:
+    # 'k8si generate ...' → offline YAML generator, no env vars needed
+    if len(sys.argv) > 1 and sys.argv[1] == "generate":
+        from . import generate
+
+        parser = argparse.ArgumentParser(prog="k8si")
+        subparsers = parser.add_subparsers()
+        generate.add_parser(subparsers)
+        args = parser.parse_args()
+        args.func(args)
+        return
+
+    # 'k8si' → runtime mode, reads MODE env var
     try:
         config = Config.from_env()
     except ConfigError as e:
