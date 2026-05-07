@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from k8si.backup import LAST_BACKUP_FILE, _run_cycle
+from k8si.backup import LAST_BACKUP_FILE, _run_cycle, run_once
 from k8si.config import Config
 from k8si.restic import ResticError
 
@@ -39,6 +39,14 @@ def test_backup_error_does_not_raise(tmp_path: Path) -> None:
     restic = MagicMock()
     restic.backup.side_effect = ResticError("failed", 1, "connection refused")
     _run_cycle(config, restic)  # must not raise — sidecar keeps running
+
+
+def test_run_once_runs_single_cycle(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    restic = MagicMock()
+    run_once(config, restic)
+    restic.backup.assert_called_once()
+    restic.forget.assert_called_once()
 
 
 def test_pre_backup_hook_called(tmp_path: Path) -> None:

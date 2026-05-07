@@ -40,6 +40,9 @@ def main() -> None:
     if config.mode == "restore":
         from . import restore
         restore.run(config, restic)
+    elif config.mode == "job":
+        from . import backup
+        backup.run_once(config, restic)
     else:
         from . import backup
         backup.run(config, restic)

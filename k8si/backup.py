@@ -16,6 +16,12 @@ log = logging.getLogger(__name__)
 LAST_BACKUP_FILE = ".k8si-last-backup"
 
 
+def run_once(config: Config, restic: Restic) -> None:
+    """Single backup cycle — used by the operator CronJob (MODE=job)."""
+    log.info("Backup job starting. Repo: %s", config.restic_repository)
+    _run_cycle(config, restic)
+
+
 def run(config: Config, restic: Restic) -> None:
     assert config.backup_schedule is not None
     log.info(

@@ -26,9 +26,9 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
-        mode = _require("MODE", "restore | backup")
-        if mode not in ("restore", "backup"):
-            raise ConfigError(f"MODE must be 'restore' or 'backup', got: {mode!r}")
+        mode = _require("MODE", "restore | backup | job")
+        if mode not in ("restore", "backup", "job"):
+            raise ConfigError(f"MODE must be 'restore', 'backup', or 'job', got: {mode!r}")
 
         data_path = Path(os.environ.get("DATA_PATH", "/data"))
         restic_repository = _require("RESTIC_REPOSITORY", "restic repository URL")
@@ -49,8 +49,9 @@ class Config:
 
         if mode == "restore":
             sentinel_file = _require("SENTINEL_FILE", "path relative to DATA_PATH root")
-        else:
-            backup_schedule = _require("BACKUP_SCHEDULE", "cron expression, e.g. '0 * * * *'")
+        elif mode in ("backup", "job"):
+            if mode == "backup":
+                backup_schedule = _require("BACKUP_SCHEDULE", "cron expression, e.g. '0 * * * *'")
             hook_str = os.environ.get("PRE_BACKUP_HOOK")
             pre_backup_hook = Path(hook_str) if hook_str else None
             tags_str = os.environ.get("BACKUP_TAGS", "")

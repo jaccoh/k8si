@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8si-operator
+  namespace: k8si-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8si-operator
+  template:
+    metadata:
+      labels:
+        app: k8si-operator
+    spec:
+      serviceAccountName: k8si-operator
+      containers:
+        - name: operator
+          image: ghcr.io/jaccoh/k8si:latest
+          command: [kopf, run, --all-namespaces, -m, k8si.operator.main]
+          env:
+            - name: K8SI_IMAGE
+              value: ghcr.io/jaccoh/k8si:latest
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
