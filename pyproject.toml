@@ -1,0 +1,31 @@
+[project]
+name = "k8si"
+version = "0.1.0"
+description = "Kubernetes init container + sidecar for restic backup and restore"
+requires-python = ">=3.12"
+dependencies = [
+    "croniter>=5.0",
+]
+
+[project.scripts]
+k8si = "k8si.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
