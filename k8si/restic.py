@@ -21,13 +21,18 @@ class ResticNoSnapshotsError(ResticError):
 class Restic:
     def __init__(self, env: dict[str, str]) -> None:
         self._env = env
+        sftp_cmd = env.get("RESTIC_SFTP_COMMAND")
+        self._global_opts = ["-o", f"sftp.command={sftp_cmd}"] if sftp_cmd else []
+
+    def _cmd(self, *args: str) -> list[str]:
+        return ["restic"] + self._global_opts + list(args)
 
     def init(self) -> None:
-        self._run(["restic", "init"])
+        self._run(self._cmd("init"))
 
     def restore(self, target: Path) -> None:
         try:
-            self._run(["restic", "restore", "latest", "--target", str(target)])
+            self._run(self._cmd("restore", "latest", "--target", str(target)))
         except ResticError as e:
             if "no matching snapshot" in e.stderr or "no snapshots found" in e.stderr:
                 raise ResticNoSnapshotsError(
@@ -36,18 +41,18 @@ class Restic:
             raise
 
     def backup(self, source: Path, tags: list[str] | None = None) -> None:
-        cmd = ["restic", "backup", str(source)]
+        cmd = self._cmd("backup", str(source))
         for tag in tags or []:
             cmd += ["--tag", tag]
         self._run(cmd)
 
     def forget(self, daily: int, weekly: int, monthly: int, prune: bool = True) -> None:
-        cmd = [
-            "restic", "forget",
+        cmd = self._cmd(
+            "forget",
             "--keep-daily", str(daily),
             "--keep-weekly", str(weekly),
             "--keep-monthly", str(monthly),
-        ]
+        )
         if prune:
             cmd.append("--prune")
         self._run(cmd)
