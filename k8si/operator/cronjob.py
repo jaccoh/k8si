@@ -10,31 +10,52 @@ K8SI_IMAGE = os.environ.get("K8SI_IMAGE", "ghcr.io/jaccoh/k8si:latest")
 def build_restore_patch(spec: dict[str, Any]) -> str:
     """Return a YAML snippet to paste into spec.initContainers of any Deployment."""
     restic_secret = spec["resticSecret"]
-    sentinel = spec.get("sentinelFile", "<SENTINEL_FILE>")
+    restore = spec.get("restore", {})
+    sentinels = restore.get("sentinels", [])
+    required = restore.get("required", False)
+    max_age = restore.get("maxAge", "")
+    size_min = restore.get("size", {}).get("min", "")
+    size_max = restore.get("size", {}).get("max", "")
+    tags = restore.get("tags", [])
+
+    env_lines = [
+        "  - name: MODE\n    value: restore",
+    ]
+    if sentinels:
+        env_lines.append(f"  - name: RESTORE_SENTINELS\n    value: {','.join(sentinels)}")
+    if required:
+        env_lines.append("  - name: RESTORE_REQUIRED\n    value: \"true\"")
+    if max_age:
+        env_lines.append(f"  - name: RESTORE_MAX_AGE\n    value: {max_age}")
+    if size_min:
+        env_lines.append(f"  - name: RESTORE_SIZE_MIN\n    value: {size_min}")
+    if size_max:
+        env_lines.append(f"  - name: RESTORE_SIZE_MAX\n    value: {size_max}")
+    if tags:
+        env_lines.append(f"  - name: RESTORE_TAGS\n    value: {','.join(tags)}")
+
+    for var, key in [
+        ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY"),
+        ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
+        ("RESTIC_SFTP_COMMAND", "RESTIC_SFTP_COMMAND"),
+    ]:
+        env_lines.append(
+            f"  - name: {var}\n"
+            f"    valueFrom:\n"
+            f"      secretKeyRef:\n"
+            f"        name: {restic_secret}\n"
+            f"        key: {key}"
+        )
+
+    env_block = "\n".join(f"  {line}" if not line.startswith("  ") else line
+                          for line in "\n".join(env_lines).splitlines())
+
     return textwrap.dedent(f"""\
         # --- paste into spec.initContainers ---
         - name: k8si-restore
           image: {K8SI_IMAGE}
           env:
-          - name: MODE
-            value: restore
-          - name: SENTINEL_FILE
-            value: {sentinel}
-          - name: RESTIC_REPOSITORY
-            valueFrom:
-              secretKeyRef:
-                name: {restic_secret}
-                key: RESTIC_REPOSITORY
-          - name: RESTIC_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: {restic_secret}
-                key: RESTIC_PASSWORD
-          - name: RESTIC_SFTP_COMMAND
-            valueFrom:
-              secretKeyRef:
-                name: {restic_secret}
-                key: RESTIC_SFTP_COMMAND
+        {env_block}
           volumeMounts:
           - name: data
             mountPath: /data
@@ -63,6 +84,8 @@ def build_cronjob(
 ) -> dict[str, Any]:
     restic_secret = spec["resticSecret"]
     retention = spec.get("retention", {})
+    restore = spec.get("restore", {})
+    tags = restore.get("tags", [])
 
     env: list[dict[str, Any]] = [
         {"name": "MODE", "value": "job"},
@@ -73,6 +96,8 @@ def build_cronjob(
     ]
     if spec.get("preBackupHook"):
         env.append({"name": "PRE_BACKUP_HOOK", "value": spec["preBackupHook"]})
+    if tags:
+        env.append({"name": "BACKUP_TAGS", "value": ",".join(tags)})
     for var, key in [
         ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY"),
         ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),

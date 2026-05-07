@@ -47,6 +47,36 @@ spec:
                 schedule:
                   type: string
                   description: Cron schedule for backups, e.g. "0 3 * * *"
+                restore:
+                  type: object
+                  description: Restore init-container configuration and pre-restore sanity checks
+                  properties:
+                    sentinels:
+                      type: array
+                      description: Files checked on disk (data health) and inside the snapshot (quality gate)
+                      items:
+                        type: string
+                    required:
+                      type: boolean
+                      default: false
+                      description: Fail loudly (CrashLoopBackOff) if no snapshot found instead of starting fresh
+                    maxAge:
+                      type: string
+                      description: Refuse restore if latest snapshot is older than this (e.g. "7d", "168h")
+                    size:
+                      type: object
+                      properties:
+                        min:
+                          type: string
+                          description: Minimum snapshot restore size, e.g. "1Mi"
+                        max:
+                          type: string
+                          description: Maximum snapshot restore size, e.g. "50Gi"
+                    tags:
+                      type: array
+                      description: Only consider snapshots with these tags (also applied when creating backup snapshots)
+                      items:
+                        type: string
                 retention:
                   type: object
                   properties:
@@ -59,9 +89,6 @@ spec:
                     monthly:
                       type: integer
                       default: 3
-                sentinelFile:
-                  type: string
-                  description: File path relative to DATA_PATH that signals data is initialised (e.g. config.xml). Used to generate the restore init-container snippet.
                 preBackupHook:
                   type: string
                   description: Path to a script to run inside the backup container before restic backup

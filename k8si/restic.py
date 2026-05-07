@@ -1,5 +1,6 @@
 """Thin restic subprocess wrapper with typed errors."""
 
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -30,9 +31,43 @@ class Restic:
     def init(self) -> None:
         self._run(self._cmd("init"))
 
-    def restore(self) -> None:
+    def snapshots(self, tags: list[str] | None = None) -> list[dict]:
+        """Return snapshots from the repo, optionally filtered by tags."""
+        cmd = self._cmd("snapshots", "--json")
+        for tag in tags or []:
+            cmd += ["--tag", tag]
         try:
-            self._run(self._cmd("restore", "latest", "--target", "/"))
+            result = self._run(cmd)
+        except ResticError:
+            return []
+        data = json.loads(result.stdout) if result.stdout.strip() else []
+        return data if isinstance(data, list) else []
+
+    def ls(self, snapshot_id: str) -> list[str]:
+        """Return file paths contained in a snapshot (no data transfer)."""
+        result = self._run(self._cmd("ls", "--json", snapshot_id))
+        paths = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if obj.get("type") == "file":
+                    paths.append(obj["path"])
+            except (json.JSONDecodeError, KeyError):
+                pass
+        return paths
+
+    def snapshot_size(self, snapshot_id: str) -> int:
+        """Return restore size in bytes for a snapshot (no data transfer)."""
+        result = self._run(self._cmd("stats", "--json", snapshot_id))
+        data = json.loads(result.stdout)
+        return data.get("total_size", 0)
+
+    def restore(self, snapshot_id: str = "latest") -> None:
+        try:
+            self._run(self._cmd("restore", snapshot_id, "--target", "/"))
         except ResticError as e:
             if "no matching snapshot" in e.stderr or "no snapshots found" in e.stderr:
                 raise ResticNoSnapshotsError(
