@@ -20,7 +20,7 @@ def completed(returncode: int, stdout: str = "", stderr: str = "") -> subprocess
 @patch("k8si.restic.subprocess.run")
 def test_restore_success(mock_run: MagicMock) -> None:
     mock_run.return_value = completed(0)
-    make_restic().restore(Path("/data"))
+    make_restic().restore()
     cmd = mock_run.call_args[0][0]
     assert "restore" in cmd
     assert "latest" in cmd
@@ -31,14 +31,14 @@ def test_restore_success(mock_run: MagicMock) -> None:
 def test_restore_raises_no_snapshots(mock_run: MagicMock) -> None:
     mock_run.return_value = completed(1, stderr="no matching snapshot found")
     with pytest.raises(ResticNoSnapshotsError):
-        make_restic().restore(Path("/data"))
+        make_restic().restore()
 
 
 @patch("k8si.restic.subprocess.run")
 def test_restore_raises_generic_error(mock_run: MagicMock) -> None:
     mock_run.return_value = completed(1, stderr="connection refused")
     with pytest.raises(ResticError) as exc_info:
-        make_restic().restore(Path("/data"))
+        make_restic().restore()
     assert not isinstance(exc_info.value, ResticNoSnapshotsError)
 
 

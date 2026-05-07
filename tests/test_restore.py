@@ -36,7 +36,7 @@ def test_skips_restore_when_sentinel_present(tmp_path: Path) -> None:
 def test_restores_when_sentinel_missing(tmp_path: Path) -> None:
     restic = MagicMock()
     run(make_config(tmp_path), restic)
-    restic.restore.assert_called_once_with(target=tmp_path)
+    restic.restore.assert_called_once_with()
 
 
 def test_no_snapshots_exits_cleanly(tmp_path: Path) -> None:
