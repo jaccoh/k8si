@@ -76,7 +76,7 @@ def _sidecar(args: argparse.Namespace, tags: list[str]) -> str:
         tag_env = f"\n          - name: BACKUP_TAGS\n            value: \"{','.join(tags)}\""
 
     return (
-        "# ── containers (native sidecar, K8s 1.29+): ──────────────────────────────────\n"
+        "# ── initContainers (native sidecar, K8s 1.29+): ─────────────────────────────\n"
         f"      - name: k8si-backup\n"
         f"        image: {args.image}\n"
         f"        restartPolicy: Always\n"

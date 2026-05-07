@@ -87,11 +87,21 @@ garbage collection handles cleanup.
 
 ## What the Operator Does NOT Do
 
-- Does not inject init containers into deployments
+- Does not inject init containers into deployments (no mutating webhook —
+  see decision below)
 - Does not patch or watch existing Deployments/StatefulSets
 - Does not manage the restic repository (init is still manual or a one-time Job)
-- Does not handle restore — that stays as an explicit init container in the
-  deployment manifest
+- Does not handle restore — restore init containers live explicitly in deployment
+  YAML, generated once with `k8si generate --no-sidecar` and committed to git
+
+## Decision: No Webhook
+
+Reviewed with Claude Opus. For 7 apps, a mutating webhook costs:
+cert-manager dependency, ArgoCD ignoreDifferences on every deployment,
+admission path as an availability dependency, non-deterministic manifests in git.
+
+**Chosen approach**: `k8si generate` produces paste-ready YAML. Init containers
+are committed explicitly. Git is the source of truth. Operator owns only CronJobs.
 
 Restore init container example (unchanged from current design, lives in git):
 
@@ -186,16 +196,17 @@ Transition is safe: restic handles concurrent access via locks.
 
 ---
 
-## Open Questions
+## Open Questions (Resolved)
 
-1. **Image version pinning**: how does the operator know which `k8si` image version
-   to use for CronJobs? Options: operator env var `K8SI_IMAGE`, or a field on the
-   CRD. Env var is simpler — one place to update via Renovate.
+1. **Image version pinning**: operator env var `K8SI_IMAGE` — one place to update
+   via Renovate. Not on the CRD (too noisy).
 
-2. **Repo init**: first deploy, restic repo doesn't exist yet. The operator could
-   run `restic init` as part of CronJob creation. Or leave it manual (current
-   approach). Operator-managed init is cleaner for the "fresh cluster" story.
+2. **Repo init**: operator runs `restic init` as part of first CronJob creation —
+   cleaner for fresh cluster story. Idempotent (init on existing repo is a no-op).
 
-3. **Check and prune scheduling**: current design runs forget/prune after every
-   backup. The operator could add separate `check` scheduling (weekly integrity
-   check) consistent with what k8up offered.
+3. **Check and prune scheduling**: add optional `spec.checkSchedule` field on
+   K8siBackup CRD. Creates a separate CronJob running `restic check` weekly.
+   Default: no check CronJob (keep simple until needed).
+
+4. **Restore verification**: out of scope for operator. Manual: `k8si generate
+   --no-sidecar` + run as a Job in staging namespace with empty PVC.
