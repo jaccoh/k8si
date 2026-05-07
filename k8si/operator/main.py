@@ -61,6 +61,7 @@ def on_update(
     name: str,
     namespace: str,
     uid: str,
+    patch: kopf.Patch,
     logger: logging.Logger,
     **_: object,
 ) -> None:
@@ -76,6 +77,7 @@ def on_update(
             logger.info("CronJob k8si-%s was missing, recreated", name)
         else:
             raise
+    patch.status["restorePatch"] = build_restore_patch(spec)
 
 
 @kopf.on.delete("k8si.io", "v1", "k8sibackups")
