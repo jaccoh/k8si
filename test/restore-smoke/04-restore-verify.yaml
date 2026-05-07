@@ -1,0 +1,79 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8si-restore-verify
+  namespace: k8si-test
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: k8si-test-data
+        - name: restic-ssh
+          secret:
+            secretName: restic-k8si-test
+            defaultMode: 0400
+            items:
+              - key: id_ed25519
+                path: id_ed25519
+              - key: known_hosts
+                path: known_hosts
+      initContainers:
+        - name: k8si-restore
+          image: ghcr.io/jaccoh/k8si:latest
+          env:
+            - name: MODE
+              value: restore
+            - name: DATA_PATH
+              value: /data
+            - name: SENTINEL_FILE
+              value: sentinel
+            - name: RESTIC_REPOSITORY
+              valueFrom:
+                secretKeyRef:
+                  name: restic-k8si-test
+                  key: RESTIC_REPOSITORY
+            - name: RESTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: restic-k8si-test
+                  key: RESTIC_PASSWORD
+            - name: RESTIC_SFTP_COMMAND
+              valueFrom:
+                secretKeyRef:
+                  name: restic-k8si-test
+                  key: RESTIC_SFTP_COMMAND
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: restic-ssh
+              mountPath: /restic-ssh
+              readOnly: true
+      containers:
+        - name: verify
+          image: alpine:3.19
+          command: [sh, -c]
+          args:
+            - |
+              echo "=== Restored files ==="
+              find /data -type f | sort
+              echo ""
+              echo "=== hello.txt ==="
+              cat /data/hello.txt
+              echo ""
+              echo "=== app-state.json ==="
+              cat /data/app-state.json
+              echo ""
+              echo "=== Checks ==="
+              test -f /data/hello.txt    && echo "PASS: hello.txt present"    || { echo "FAIL: hello.txt missing";    exit 1; }
+              test -f /data/sentinel     && echo "PASS: sentinel present"     || { echo "FAIL: sentinel missing";     exit 1; }
+              test -f /data/subdir/nested.txt && echo "PASS: nested file present" || { echo "FAIL: nested file missing"; exit 1; }
+              grep -q "Hello from k8si" /data/hello.txt && echo "PASS: content correct" || { echo "FAIL: wrong content"; exit 1; }
+              echo ""
+              echo "=== RESTORE SMOKE TEST PASSED ==="
+          volumeMounts:
+            - name: data
+              mountPath: /data

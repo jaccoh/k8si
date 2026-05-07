@@ -27,6 +27,4 @@ RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VER
 COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
 COPY --from=builder /usr/local/bin/k8si /usr/local/bin/k8si
 
-USER 65532:65532
-
 ENTRYPOINT ["k8si"]

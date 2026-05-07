@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8si-backup
+  namespace: k8si-test
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: k8si-test-data
+        - name: restic-ssh
+          secret:
+            secretName: restic-k8si-test
+            defaultMode: 0400
+            items:
+              - key: id_ed25519
+                path: id_ed25519
+              - key: known_hosts
+                path: known_hosts
+      containers:
+        - name: backup
+          image: ghcr.io/jaccoh/k8si:latest
+          command: [restic, backup, /data, --tag, k8si-test, --verbose]
+          env:
+            - name: RESTIC_REPOSITORY
+              valueFrom:
+                secretKeyRef:
+                  name: restic-k8si-test
+                  key: RESTIC_REPOSITORY
+            - name: RESTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: restic-k8si-test
+                  key: RESTIC_PASSWORD
+            - name: RESTIC_SFTP_COMMAND
+              valueFrom:
+                secretKeyRef:
+                  name: restic-k8si-test
+                  key: RESTIC_SFTP_COMMAND
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: restic-ssh
+              mountPath: /restic-ssh
+              readOnly: true

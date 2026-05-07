@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8si-write-data
+  namespace: k8si-test
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: k8si-test-data
+      containers:
+        - name: writer
+          image: alpine:3.19
+          command: [sh, -c]
+          args:
+            - |
+              echo "Hello from k8si restore test" > /data/hello.txt
+              echo '{"status":"initialized","timestamp":"'$(date -Iseconds)'"}' > /data/app-state.json
+              mkdir -p /data/subdir
+              echo "nested file" > /data/subdir/nested.txt
+              touch /data/sentinel
+              echo "=== Written files ==="
+              find /data -type f | sort
+              echo "=== hello.txt ==="
+              cat /data/hello.txt
+              echo "=== Done ==="
+          volumeMounts:
+            - name: data
+              mountPath: /data
