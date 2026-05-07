@@ -1,9 +1,57 @@
-"""Build the CronJob body for a K8siBackup resource."""
+"""Build the CronJob body and restore patch for a K8siBackup resource."""
 
 import os
+import textwrap
 from typing import Any
 
 K8SI_IMAGE = os.environ.get("K8SI_IMAGE", "ghcr.io/jaccoh/k8si:latest")
+
+
+def build_restore_patch(spec: dict[str, Any]) -> str:
+    """Return a YAML snippet to paste into spec.initContainers of any Deployment."""
+    restic_secret = spec["resticSecret"]
+    sentinel = spec.get("sentinelFile", "<SENTINEL_FILE>")
+    return textwrap.dedent(f"""\
+        # --- paste into spec.initContainers ---
+        - name: k8si-restore
+          image: {K8SI_IMAGE}
+          env:
+          - name: MODE
+            value: restore
+          - name: SENTINEL_FILE
+            value: {sentinel}
+          - name: RESTIC_REPOSITORY
+            valueFrom:
+              secretKeyRef:
+                name: {restic_secret}
+                key: RESTIC_REPOSITORY
+          - name: RESTIC_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {restic_secret}
+                key: RESTIC_PASSWORD
+          - name: RESTIC_SFTP_COMMAND
+            valueFrom:
+              secretKeyRef:
+                name: {restic_secret}
+                key: RESTIC_SFTP_COMMAND
+          volumeMounts:
+          - name: data
+            mountPath: /data
+          - name: restic-ssh
+            mountPath: /restic-ssh
+            readOnly: true
+        # --- paste into spec.volumes (if not already present) ---
+        - name: restic-ssh
+          secret:
+            secretName: {restic_secret}
+            defaultMode: 0o400
+            items:
+            - key: id_ed25519
+              path: id_ed25519
+            - key: known_hosts
+              path: known_hosts
+    """)
 
 
 def build_cronjob(

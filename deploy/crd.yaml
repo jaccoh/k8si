@@ -59,6 +59,9 @@ spec:
                     monthly:
                       type: integer
                       default: 3
+                sentinelFile:
+                  type: string
+                  description: File path relative to DATA_PATH that signals data is initialised (e.g. config.xml). Used to generate the restore init-container snippet.
                 preBackupHook:
                   type: string
                   description: Path to a script to run inside the backup container before restic backup

@@ -7,7 +7,7 @@ import kubernetes
 import kubernetes.client
 import kubernetes.client.exceptions
 
-from .cronjob import K8SI_IMAGE, build_cronjob
+from .cronjob import K8SI_IMAGE, build_cronjob, build_restore_patch
 from .status import compute_next_backup, infer_result
 
 log = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ def on_create(
     patch.status["nextBackupTime"] = compute_next_backup(spec["schedule"])
     patch.status["lastBackupResult"] = "pending"
     patch.status["message"] = f"CronJob k8si-{name} created"
+    patch.status["restorePatch"] = build_restore_patch(spec)
 
 
 @kopf.on.update("k8si.io", "v1", "k8sibackups")
