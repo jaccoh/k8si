@@ -47,16 +47,32 @@ def _run_cycle(config: Config, restic: Restic) -> None:
 
     try:
         restic.backup(source=config.data_path, tags=config.backup_tags)
+    except ResticError as e:
+        if "repository does not exist" in e.stderr:
+            log.info("Repository not initialised, running restic init")
+            try:
+                restic.init()
+                restic.backup(source=config.data_path, tags=config.backup_tags)
+            except ResticError as init_err:
+                log.error("Backup failed after init: %s", init_err.stderr)
+                return
+        else:
+            log.error("Backup failed (will retry next cycle): %s", e.stderr)
+            return
+
+    try:
         restic.forget(
             daily=config.retention_daily,
             weekly=config.retention_weekly,
             monthly=config.retention_monthly,
             prune=True,
         )
-        _write_last_backup_timestamp(config.data_path)
-        log.info("Backup cycle complete.")
     except ResticError as e:
-        log.error("Backup failed (will retry next cycle): %s", e.stderr)
+        log.error("Forget/prune failed: %s", e.stderr)
+        return
+
+    _write_last_backup_timestamp(config.data_path)
+    log.info("Backup cycle complete.")
 
 
 def _run_hook(hook: Path) -> None:
