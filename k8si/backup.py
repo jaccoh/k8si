@@ -18,14 +18,14 @@ LAST_BACKUP_FILE = ".k8si-last-backup"
 
 def run_once(config: Config, backend: BackupBackend) -> None:
     """Single backup cycle — used by the operator CronJob (MODE=job)."""
-    log.info("Backup job starting. Repo: %s", config.restic_repository)
+    log.info("PVC backup job starting. Repo: %s", config.restic_repository)
     _run_cycle(config, backend)
 
 
 def run(config: Config, backend: BackupBackend) -> None:
     assert config.backup_schedule is not None
     log.info(
-        "Backup sidecar starting. Schedule: %s, repo: %s",
+        "PVC backup sidecar starting. Schedule: %s, repo: %s",
         config.backup_schedule,
         config.restic_repository,
     )
@@ -72,7 +72,7 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
         return
 
     _write_last_backup_timestamp(config.data_path)
-    log.info("Backup cycle complete.")
+    log.info("PVC backup complete.")
 
 
 def _run_hook(hook: Path) -> None:

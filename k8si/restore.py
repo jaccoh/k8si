@@ -29,7 +29,7 @@ def run(config: Config, backend: BackupBackend) -> None:
     # Step 1: all sentinels on disk → data is healthy, skip
     if sentinels and all(s.exists() for s in sentinels):
         log.info(
-            "Data healthy, skipping restore (sentinels present: %s)",
+            "PVC healthy, skipping restore (sentinels present: %s)",
             [s.name for s in sentinels],
         )
         return
@@ -38,14 +38,14 @@ def run(config: Config, backend: BackupBackend) -> None:
     if marker.exists() and sentinels:
         missing = [s.name for s in sentinels if not s.exists()]
         log.error(
-            "Post-restore corruption detected: marker exists but sentinels missing: %s",
+            "PVC corruption detected: restore marker exists but sentinels are missing: %s",
             missing,
         )
         raise SystemExit(1)
 
     # Step 3: no sentinels configured, use marker alone
     if not sentinels and marker.exists():
-        log.info("Restore marker present, data initialized, skipping")
+        log.info("PVC already initialized (marker present), skipping restore")
         return
 
     # Snapshot override annotation: skip remote checks, go straight to restore
@@ -75,7 +75,7 @@ def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
             )
             raise SystemExit(1)
         log.info(
-            "No snapshots found (tags=%s) — fresh install, starting clean",
+            "No snapshots found (tags=%s) — assuming fresh PVC, skipping restore",
             config.restore_tags,
         )
         return None
@@ -159,11 +159,11 @@ def _do_restore(
         return
 
     try:
-        log.info("Restoring from snapshot %s into %s", snapshot_id, data_path)
+        log.info("Restoring PVC from snapshot %s", snapshot_id)
         try:
             backend.restore(snapshot_id=snapshot_id)
         except BackupError as e:
-            log.error("Restore failed: %s", e.stderr)
+            log.error("PVC restore failed: %s", e.stderr)
             raise SystemExit(1) from e
 
         # Post-restore: verify sentinels are now present
@@ -171,14 +171,14 @@ def _do_restore(
             missing = [s.name for s in sentinels if not s.exists()]
             if missing:
                 log.error(
-                    "Restore completed but sentinels still missing: %s — data may be corrupt",
+                    "PVC restore completed but sentinels still missing: %s — volume may be corrupt",
                     missing,
                 )
                 raise SystemExit(1)
             log.info("Post-restore sentinel check passed: %s", [s.name for s in sentinels])
 
         marker.write_text("restored\n")
-        log.info("Restore complete. Marker written: %s", marker)
+        log.info("PVC restore complete")
 
     finally:
         fcntl.flock(lock_file, fcntl.LOCK_UN)
