@@ -4,8 +4,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from k8si.backup import LAST_BACKUP_FILE, _run_cycle, run_once
+from k8si.backend import BackupError
 from k8si.config import Config
-from k8si.restic import ResticError
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -26,26 +26,26 @@ def make_config(tmp_path: Path) -> Config:
 
 def test_successful_cycle_writes_timestamp(tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    restic = MagicMock()
-    _run_cycle(config, restic)
+    backend = MagicMock()
+    _run_cycle(config, backend)
     assert (tmp_path / LAST_BACKUP_FILE).exists()
-    restic.backup.assert_called_once_with(source=tmp_path, tags=["app=sonarr"])
-    restic.forget.assert_called_once_with(daily=7, weekly=4, monthly=3, prune=True)
+    backend.backup.assert_called_once_with(source=tmp_path, tags=["app=sonarr"])
+    backend.forget.assert_called_once_with(daily=7, weekly=4, monthly=3, prune=True)
 
 
 def test_backup_error_does_not_raise(tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    restic = MagicMock()
-    restic.backup.side_effect = ResticError("failed", 1, "connection refused")
-    _run_cycle(config, restic)  # must not raise — sidecar keeps running
+    backend = MagicMock()
+    backend.backup.side_effect = BackupError("failed", 1, "connection refused")
+    _run_cycle(config, backend)  # must not raise — sidecar keeps running
 
 
 def test_run_once_runs_single_cycle(tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    restic = MagicMock()
-    run_once(config, restic)
-    restic.backup.assert_called_once()
-    restic.forget.assert_called_once()
+    backend = MagicMock()
+    run_once(config, backend)
+    backend.backup.assert_called_once()
+    backend.forget.assert_called_once()
 
 
 def test_pre_backup_hook_called(tmp_path: Path) -> None:
@@ -64,8 +64,31 @@ def test_pre_backup_hook_called(tmp_path: Path) -> None:
         retention_monthly=3,
         pre_backup_hook=hook,
     )
-    restic = MagicMock()
+    backend = MagicMock()
     with patch("k8si.backup.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-        _run_cycle(config, restic)
+        _run_cycle(config, backend)
     mock_run.assert_called_once()
+
+
+def test_auto_init_on_missing_repo(tmp_path: Path) -> None:
+    """When backup fails with 'repository does not exist', init is called and backup retried."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.backup.side_effect = [
+        BackupError("failed", 1, "repository does not exist"),
+        None,  # succeeds after init
+    ]
+    _run_cycle(config, backend)
+    backend.init.assert_called_once()
+    assert backend.backup.call_count == 2
+    assert (tmp_path / LAST_BACKUP_FILE).exists()
+
+
+def test_forget_error_does_not_raise(tmp_path: Path) -> None:
+    """Forget/prune failure is logged but doesn't crash the sidecar."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.forget.side_effect = BackupError("prune failed", 1, "locks held")
+    _run_cycle(config, backend)  # must not raise
+    assert not (tmp_path / LAST_BACKUP_FILE).exists()

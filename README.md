@@ -1,49 +1,34 @@
 # k8si
 
-One image, two containers: an init container that restores your app's PVC from restic before the app starts, and a native sidecar that backs it up on a cron schedule. If the backup never ran yet, the pod starts clean. If the backup exists but restore fails, the pod stays in Init and the app never sees empty data.
+Kubernetes is good at keeping stateless workloads healthy. Stateful apps are harder: a deleted namespace, a misconfigured reclaimPolicy, or a botched migration can silently wipe a PVC and everything on it. Restoring from backup then becomes a manual, stressful event — find the snapshot, run the right restic command, remount the volume, restart the pod.
 
-Backend is restic over SFTP to Hetzner Storagebox. Image is published to `ghcr.io/jaccoh/k8si` for `linux/amd64` and `linux/arm64`.
+k8si makes restore automatic. A permanent init container runs on every pod start and asks one question: *is my data here?* If yes, it exits immediately. If no, it pulls the latest snapshot from restic and restores it before the app container ever sees an empty volume. No operator intervention, no runbook. The pod just comes up with its data intact.
 
----
+Backups are declared as a `K8siBackup` resource. The operator turns each one into a CronJob, keeps it pinned to the node where the PVC lives, and writes the result back to the CRD — so `kubectl get k8sibackups` gives a live view of backup health across all apps.
 
-## Architecture
+Three components, one image:
 
-```
-                        ┌─────────────────────────────────────────┐
-                        │  Pod                                     │
-                        │                                          │
-  ┌──────────────────┐  │  ┌─────────────┐    ┌────────────────┐  │
-  │ Hetzner          │  │  │ k8si-restore│    │ k8si-backup    │  │
-  │ Storagebox       │  │  │ initContainer│   │ initContainer  │  │
-  │ (restic over     │◄─┼──│             │    │ restartPolicy: │  │
-  │  SFTP)           │  │  │ sentinel?   │    │ Always         │  │
-  │                  │  │  │  yes → skip │    │                │  │
-  │                  │◄─┼──│  no  → pull │    │ cron loop:     │  │
-  │                  │  │  │             │    │  backup + forget│  │
-  └──────────────────┘  │  └──────┬──────┘    └───────┬────────┘  │
-                        │         │                    │           │
-                        │         ▼                    │           │
-                        │  ┌─────────────┐  PVC        │           │
-                        │  │ App         │◄────────────┘           │
-                        │  │ container   │  shared mount           │
-                        │  └─────────────┘                         │
-                        └─────────────────────────────────────────┘
+| Component | Mode | Description |
+|-----------|------|-------------|
+| **Restore init container** | `MODE=restore` | Checks sentinel files on the PVC; restores from restic if data is missing or incomplete. Fails loud rather than letting the app start on corrupt or empty state. |
+| **Backup sidecar** | `MODE=backup` | Runs `restic backup` on a cron schedule inside the pod. Writes a timestamp file for external monitoring. |
+| **Operator** | Kopf + `K8siBackup` CRD | Reconciles `K8siBackup` resources into CronJobs. Pins each job to the node where the PVC is mounted (avoids Multi-Attach). Reports `lastBackupResult` on the CRD. |
 
-  Flow on pod start:
-  1. k8si-restore checks DATA_PATH/SENTINEL_FILE
-     - present  → skip (app already initialized, nothing to do)
-     - missing, no snapshots → exit 0 (first deploy, start fresh)
-     - missing, snapshot found → restore latest to / → exit 0
-     - restore error → exit 1 (pod stays in Init, app never starts)
-  2. App container starts, writes sentinel on first init
-  3. k8si-backup sidecar runs independently on BACKUP_SCHEDULE cron
-```
+Backend is pluggable — restic over SFTP (Hetzner Storagebox) ships by default. Image: `ghcr.io/jaccoh/k8si` for `linux/amd64` and `linux/arm64`.
 
 ---
 
-## Quick start
+## Quick start (operator mode)
 
-### 1. Create the restic secret
+### 1. Install the CRD and operator
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/crd.yaml
+kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/rbac.yaml
+kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/operator.yaml
+```
+
+### 2. Create the restic secret
 
 ```yaml
 apiVersion: v1
@@ -62,26 +47,46 @@ stringData:
   known_hosts: "u12345.your-storagebox.de ecdsa-sha2-nistp521 AAAA..."
 ```
 
-Initialize the restic repository once (run this as a Job or locally with restic installed):
+### 3. Create a K8siBackup resource
 
-```bash
-restic -r sftp:u12345@u12345.your-storagebox.de:backup/sonarr-config \
-  -o sftp.command="ssh -i /path/to/id_ed25519 -p 23 ..." \
-  init
+```yaml
+apiVersion: k8si.io/v1
+kind: K8siBackup
+metadata:
+  name: sonarr-config
+  namespace: downloads
+spec:
+  pvc: sonarr-config
+  secret: restic-sonarr-config
+  schedule: "0 2 * * *"
+  restore:
+    sentinels: ["config.xml"]
+    required: false
+  retention:
+    daily: 7
+    weekly: 4
+    monthly: 3
+  tags: ["app=sonarr"]
 ```
 
-### 2. Generate the YAML snippet
+### 4. Check status
 
 ```bash
-k8si generate \
-  --app sonarr \
-  --pvc sonarr-config \
-  --secret restic-sonarr-config \
-  --sentinel config.xml \
-  --schedule "0 2 * * *"
+kubectl get k8sibackups -A
+# NAMESPACE   NAME            LAST-BACKUP            RESULT    NEXT-BACKUP
+# downloads   sonarr-config   2026-05-08T02:00:00Z   success   2026-05-09T02:00:00Z
 ```
 
-Or with Docker (no local install needed):
+### 5. Add the restore init container to your Deployment
+
+The operator generates the init container YAML and writes it to `.status.restorePatch`. Fetch and paste it:
+
+```bash
+kubectl get k8sibackup sonarr-config -n downloads \
+  -o jsonpath='{.status.restorePatch}'
+```
+
+Or generate it offline with `k8si generate`:
 
 ```bash
 docker run --rm ghcr.io/jaccoh/k8si:latest generate \
@@ -92,30 +97,95 @@ docker run --rm ghcr.io/jaccoh/k8si:latest generate \
   --schedule "0 2 * * *"
 ```
 
-### 3. Paste into your deployment
+---
 
-Add the output to your Deployment/StatefulSet `spec.template.spec`. The generator prints three blocks: the restore init container, the backup sidecar, and the volume stanza. The PVC volume entry is commented out — uncomment it only if you do not already have it in your volumes list.
+## Architecture
 
-### 4. Verify
+```
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ Cluster                                                             │
+  │                                                                     │
+  │  ┌──────────────────┐   reconciles    ┌──────────────────────────┐  │
+  │  │ K8siBackup CRD   │────────────────►│ k8si operator (Kopf)    │  │
+  │  │                  │◄────────────────│                          │  │
+  │  │ spec.schedule    │  status updates │ - creates CronJob        │  │
+  │  │ spec.pvc         │                 │ - pins to PVC node       │  │
+  │  │ spec.restore     │                 │ - reports lastBackup     │  │
+  │  └──────────────────┘                 └──────────────────────────┘  │
+  │                                                 │                   │
+  │                                           CronJob fires             │
+  │                                                 │                   │
+  │  ┌──────────────────────────────────────────────▼──────────────┐    │
+  │  │ Pod (your app)                                               │    │
+  │  │                                                              │    │
+  │  │  initContainers:                                             │    │
+  │  │    k8si-restore (restartPolicy: Always — native sidecar)    │    │
+  │  │      MODE=restore → checks sentinels → restores if needed   │    │
+  │  │                                                              │    │
+  │  │  containers:                                                 │    │
+  │  │    app                                                       │    │
+  │  │    /data PVC ─────────────────────────────────────────────  │    │
+  │  └──────────────────────────────────────────────────────────────┘    │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
 
-Check restore ran (or was correctly skipped on first deploy):
-
-```bash
-kubectl logs <pod-name> -c k8si-restore
+                    restic over SFTP
+  Pod ◄─────────────────────────────────► Hetzner Storagebox
 ```
 
-Check backups are running:
+---
 
-```bash
-kubectl logs <pod-name> -c k8si-backup --follow
-```
+## Restore behavior
 
-Confirm snapshots exist in restic (run from any pod with the secret mounted, or locally):
+The init container (`MODE=restore`) runs once per pod start and makes exactly one decision:
 
-```bash
-restic -r sftp:u12345@u12345.your-storagebox.de:backup/sonarr-config \
-  -o sftp.command="..." \
-  snapshots
+| Condition | Action |
+|-----------|--------|
+| `.k8si-no-restore` file on the PVC | Skip (emergency override, no git commit needed) |
+| All sentinels present on disk | Skip — data is healthy |
+| Marker present, sentinels missing | **Fail loud** — post-restore corruption |
+| No sentinels configured, marker present | Skip — already initialized |
+| No snapshots found, `restore.required: false` | Skip — first deploy, start fresh |
+| No snapshots found, `restore.required: true` | **Fail loud** |
+| Snapshot fails sentinel quality gate | Skip |
+| Snapshot outside age/size bounds | Skip |
+| Restore succeeds, sentinels appear | Write `.k8si-restore-complete` marker, continue |
+| Restore fails | **Fail loud** — pod stays in Init:Error |
+
+**Sentinel files** are written by the app, not by k8si. They represent "app fully initialized" — e.g. Sonarr writes `config.xml`, Nextcloud writes `config/config.php`. k8si checks that the sentinel exists both in the snapshot (before restoring) and on disk (after restoring).
+
+**Auto-init**: the backup cycle automatically runs `restic init` on first use. No manual init job needed.
+
+---
+
+## K8siBackup CRD reference
+
+```yaml
+apiVersion: k8si.io/v1
+kind: K8siBackup
+metadata:
+  name: <app>
+  namespace: <namespace>
+spec:
+  pvc: <pvc-claim-name>             # PVC to back up, mounted at /data
+  secret: <secret-name>             # Secret with RESTIC_* keys + SSH key
+  schedule: "0 2 * * *"            # Cron schedule (UTC)
+  tags: ["app=sonarr"]             # Optional restic tags
+
+  restore:
+    sentinels: ["config.xml"]      # Files that prove data integrity
+    required: false                # true = fail loud if no snapshot found
+    maxAge: "7d"                   # Skip restore if snapshot older than this
+    size:
+      min: "1Mi"                   # Skip if snapshot smaller than this
+      max: "50Gi"                  # Skip if snapshot larger than this
+    tags: ["app=sonarr"]          # Filter snapshots by tag on restore
+    snapshot: ""                   # Pin to a specific snapshot ID (override)
+
+  retention:
+    daily: 7
+    weekly: 4
+    monthly: 3
 ```
 
 ---
@@ -131,95 +201,17 @@ metadata:
   name: restic-<app>
   namespace: <namespace>
 stringData:
-  # Full restic repository URL (SFTP form)
   RESTIC_REPOSITORY: "sftp:u12345@u12345.your-storagebox.de:backup/<app>"
-
-  # Restic encryption password
   RESTIC_PASSWORD: "<password>"
-
-  # Full SSH command passed to restic via -o sftp.command=...
-  # Port 23 is Hetzner Storagebox's SFTP port.
-  # StrictHostKeyChecking=yes requires known_hosts below.
   RESTIC_SFTP_COMMAND: "ssh -i /restic-ssh/id_ed25519 -p 23 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/restic-ssh/known_hosts -o HostKeyAlgorithms=ecdsa-sha2-nistp521 u12345@u12345.your-storagebox.de -s sftp"
-
-  # ED25519 private key (no passphrase)
   id_ed25519: |
     -----BEGIN OPENSSH PRIVATE KEY-----
     ...
     -----END OPENSSH PRIVATE KEY-----
-
-  # Known hosts entry for the storagebox (obtain with ssh-keyscan -p 23 u12345.your-storagebox.de)
   known_hosts: "u12345.your-storagebox.de ecdsa-sha2-nistp521 AAAA..."
 ```
 
-The `id_ed25519` and `known_hosts` keys are projected to `/restic-ssh/` as files with mode `0400`. The `RESTIC_SFTP_COMMAND` path `/restic-ssh/id_ed25519` matches this mount.
-
----
-
-## `k8si generate` flag reference
-
-All flags are required unless marked optional.
-
-| Flag | Description |
-|------|-------------|
-| `--app` | App name, used for container names (`k8si-restore`, `k8si-backup`) |
-| `--pvc` | PVC claim name, mounted at `/data` in both containers |
-| `--secret` | Secret name (must contain all five keys above) |
-| `--sentinel` | Sentinel file path relative to PVC root (e.g. `config.xml`, `config/config.php`) |
-| `--schedule` | Cron expression for backup schedule (e.g. `"0 2 * * *"`) |
-| `--image` | k8si image to use (default: `ghcr.io/jaccoh/k8si:latest`) |
-| `--retention-daily` | Keep N daily snapshots (default: `7`) |
-| `--retention-weekly` | Keep N weekly snapshots (default: `4`) |
-| `--retention-monthly` | Keep N monthly snapshots (default: `3`) |
-| `--tags` | Comma-separated backup tags (optional, e.g. `app=sonarr`) |
-| `--no-sidecar` | Omit the backup sidecar (restore init container only) |
-
----
-
-## Restore behavior
-
-The restore init container (`MODE=restore`) runs once per pod start. Behavior depends on the sentinel file at `DATA_PATH/SENTINEL_FILE`.
-
-**Sentinel present** (`config.xml` exists on the PVC):
-The app was already initialized. k8si logs a skip message and exits 0 immediately. No restic calls are made.
-
-**Sentinel missing, no snapshots in the repository** (first deploy or empty repo):
-`restic restore latest` reports no matching snapshot. k8si catches this, logs "first deploy, starting fresh", and exits 0. The app starts with an empty PVC and writes the sentinel on its own first initialization.
-
-**Sentinel missing, snapshot found**:
-k8si runs `restic restore latest --target /`. This restores the snapshot to the filesystem root, preserving the original path structure (e.g. `/data/config.xml`). On success k8si exits 0 and the app starts with its previous state intact.
-
-**Restore fails** (SFTP unreachable, wrong password, corrupt snapshot, etc.):
-k8si logs the restic stderr and exits 1. The pod stays in `Init:Error`. The app container never starts. The PVC is not touched. Fix the underlying issue and delete the pod — a new pod will retry.
-
-The sentinel is written by the **app**, not by k8si. It represents "app fully initialized", not just "files present". Examples: Sonarr writes `config.xml`, Nextcloud writes `config/config.php`. Choose a file that only appears after the app has completed its first-run setup.
-
----
-
-## Backup behavior
-
-The backup sidecar (`MODE=backup`) runs as a Kubernetes native sidecar (`restartPolicy: Always` in `initContainers`). It requires Kubernetes 1.29+. Native sidecars start before app containers and are restarted independently — the app does not restart when the sidecar exits.
-
-**Cron loop**: k8si computes the next scheduled time using `croniter`, sleeps until then, then runs a backup cycle. The schedule follows standard cron syntax. Timezone is UTC.
-
-**Each backup cycle**:
-1. Optional pre-backup hook (`PRE_BACKUP_HOOK`) runs first. Hook failures are logged but do not abort the backup — the restic backup proceeds regardless.
-2. `restic backup /data [--tag ...]` runs.
-3. `restic forget --keep-daily N --keep-weekly N --keep-monthly N --prune` runs.
-4. A timestamp is written to `DATA_PATH/.k8si-last-backup` for external monitoring.
-
-**Error handling**: if `restic backup` or `restic forget` fails, the error is logged and the sidecar continues. It will retry at the next scheduled interval. The sidecar never exits voluntarily — it runs until the pod is deleted.
-
-**Pre-backup hook**: set `PRE_BACKUP_HOOK=/path/to/script.sh` to run a script before each backup. Useful for SQLite database dumps. The hook runs in the sidecar container (same filesystem as the PVC mount). A non-zero exit code is logged as an error but does not block the backup.
-
-**Verify backups are running**:
-```bash
-# Check the timestamp file on the PVC
-kubectl exec <pod> -c k8si-backup -- cat /data/.k8si-last-backup
-
-# List snapshots
-kubectl exec <pod> -c k8si-backup -- restic snapshots
-```
+The `id_ed25519` and `known_hosts` keys are projected to `/restic-ssh/` as files with mode `0400`.
 
 ---
 
@@ -229,86 +221,82 @@ kubectl exec <pod> -c k8si-backup -- restic snapshots
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MODE` | yes | — | `restore` or `backup` |
-| `DATA_PATH` | no | `/data` | Path where the PVC is mounted |
+| `MODE` | yes | — | `restore`, `backup`, or `job` |
+| `DATA_PATH` | no | `/data` | PVC mount path |
 | `RESTIC_REPOSITORY` | yes | — | Full restic repository URL |
 | `RESTIC_PASSWORD` | yes* | — | Restic encryption password |
-| `RESTIC_PASSWORD_FILE` | yes* | — | Path to file containing the password |
+| `RESTIC_PASSWORD_FILE` | yes* | — | Path to password file |
 
 *Either `RESTIC_PASSWORD` or `RESTIC_PASSWORD_FILE` must be set.
 
-The `RESTIC_SFTP_COMMAND` env var is passed through from the secret directly to restic via `-o sftp.command=...`.
-
-### Restore mode only (`MODE=restore`)
+### Restore mode (`MODE=restore`)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SENTINEL_FILE` | yes | — | Path relative to `DATA_PATH` (e.g. `config.xml`) |
+| `RESTORE_SENTINELS` | no | — | Comma-separated sentinel file paths |
+| `RESTORE_REQUIRED` | no | `false` | Fail if no snapshot found |
+| `RESTORE_MAX_AGE` | no | — | Max snapshot age (e.g. `7d`, `168h`) |
+| `RESTORE_SIZE_MIN` | no | — | Min snapshot size (e.g. `1Mi`, `500Ki`) |
+| `RESTORE_SIZE_MAX` | no | — | Max snapshot size (e.g. `50Gi`) |
+| `RESTORE_TAGS` | no | — | Comma-separated tags to filter snapshots |
+| `RESTORE_SNAPSHOT` | no | — | Pin to a specific snapshot ID |
 
-### Backup mode only (`MODE=backup`)
+### Backup mode (`MODE=backup` or `MODE=job`)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `BACKUP_SCHEDULE` | yes | — | Cron expression (e.g. `0 2 * * *`) |
+| `BACKUP_SCHEDULE` | yes (sidecar) | — | Cron expression (e.g. `0 2 * * *`) |
 | `RETENTION_DAILY` | no | `7` | Daily snapshots to keep |
 | `RETENTION_WEEKLY` | no | `4` | Weekly snapshots to keep |
 | `RETENTION_MONTHLY` | no | `3` | Monthly snapshots to keep |
 | `PRE_BACKUP_HOOK` | no | — | Absolute path to pre-backup script |
-| `BACKUP_TAGS` | no | — | Comma-separated tags (e.g. `app=sonarr,env=prod`) |
+| `BACKUP_TAGS` | no | — | Comma-separated tags (e.g. `app=sonarr`) |
+
+---
+
+## Backend plugins
+
+The `BackupBackend` protocol (`k8si.backend`) defines the interface. `k8si/backends/restic.py` is the default implementation using the [sh](https://sh.readthedocs.io/) library. To add a kopia backend, implement the same protocol in `k8si/backends/kopia.py` and pass it to `cli.py`.
+
+```python
+from k8si.backend import BackupBackend, BackupError, NoSnapshotsError
+
+class KopiaBackend:
+    def init(self) -> None: ...
+    def snapshots(self, tags=None) -> list[dict]: ...
+    def ls(self, snapshot_id: str) -> list[str]: ...
+    def snapshot_size(self, snapshot_id: str) -> int: ...
+    def restore(self, snapshot_id: str = "latest") -> None: ...
+    def backup(self, source, tags=None) -> None: ...
+    def forget(self, daily, weekly, monthly, prune=True) -> None: ...
+```
 
 ---
 
 ## Limitations
 
-**No alerting.** The sidecar writes `DATA_PATH/.k8si-last-backup` on each successful cycle. Monitoring (e.g. a Prometheus rule checking `file_mtime_seconds` via node-exporter) is left to the operator.
+**No alerting.** Check `DATA_PATH/.k8si-last-backup` for the timestamp of the last successful backup. Wire this into your monitoring (e.g. `file_mtime_seconds` via node-exporter).
 
-**No stale lock cleanup.** If a backup is interrupted (node killed, OOM), restic may leave a lock. The next backup cycle will fail with `repository is already locked`. Fix manually:
+**No stale lock cleanup.** If a backup is interrupted, restic may leave a lock. Fix manually:
 
 ```bash
 kubectl exec <pod> -c k8si-backup -- restic unlock
 ```
 
-**Runs as root.** The container runs as root so restic can preserve file ownership (`uid`/`gid`) on restore. Do not reduce this — non-root restore silently produces wrong permissions.
+**Runs as root.** Restic needs root to preserve file ownership on restore. Non-root restore produces wrong permissions silently.
 
-**Single backend.** Only SFTP (Hetzner Storagebox) is tested. Restic supports other backends (S3, B2, etc.) — set `RESTIC_REPOSITORY` and any backend-specific env vars. The SFTP-specific `-o sftp.command=...` flag is only injected when `RESTIC_SFTP_COMMAND` is set.
-
-**`restic init` is manual.** The repository must be initialized before first use. There is no automatic `restic init` in the current init container. Run it once as a Job or locally.
-
-**No restore verification.** k8si does not run `restic check` after restore. Verify periodically with `restic check` on the repository.
-
-**K8s 1.29+ required for sidecar.** The `restartPolicy: Always` field in `initContainers` (native sidecars) was promoted to stable in 1.29. On older clusters, use a separate container in `spec.containers` instead. The `--no-sidecar` flag generates only the restore init container for this case.
-
----
-
-## Operator (planned)
-
-A Kopf-based Kubernetes operator is planned to replace the backup sidecar. See `docs/operator-plan.md` for the design.
-
-The operator introduces a `K8siBackup` CRD. Instead of a long-running sidecar in every pod, the operator creates a CronJob per app and writes backup status back to the CRD:
-
-```bash
-kubectl get k8sibackups -A
-# NAMESPACE   NAME    LAST BACKUP           RESULT    NEXT BACKUP
-# downloads   sonarr  2026-05-07T02:00:00Z  success   2026-05-08T02:00:00Z
-```
-
-The restore init container stays unchanged — it lives in deployment YAML, generated once with `k8si generate --no-sidecar` and committed to git.
-
-Migration from the sidecar approach is non-destructive: both use the same restic repository, and restic handles concurrent access via locks.
+**K8s 1.29+ required** for native sidecar (`restartPolicy: Always` in `initContainers`).
 
 ---
 
 ## Development
 
 ```bash
-# Install dependencies
 uv sync
-
-# Run tests
 uv run pytest tests/ -v
 
-# Build image locally
+# Build image
 docker build -t k8si:dev .
 ```
 
-CI runs on every push: tests on all branches, multi-arch image push to `ghcr.io/jaccoh/k8si` on `main`.
+CI runs on every push: tests on all branches, multi-arch image push to `ghcr.io/jaccoh/k8si` on `main`. Releases are tagged `v*` and pushed with `v1.2.3 / v1.2 / v1 / latest` tags.

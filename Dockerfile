@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN pip install uv
 WORKDIR /build
@@ -7,7 +7,7 @@ COPY k8si/ k8si/
 RUN uv pip install --system --no-cache .
 
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # restic + openssh + sqlite3 for pre-backup hooks
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,7 +24,7 @@ RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VER
     | bunzip2 > /usr/local/bin/restic \
     && chmod +x /usr/local/bin/restic
 
-COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
+COPY --from=builder /usr/local/lib/python3.14 /usr/local/lib/python3.14
 COPY --from=builder /usr/local/bin/k8si /usr/local/bin/k8si
 
 ENTRYPOINT ["k8si"]

@@ -5,8 +5,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .backend import BackupBackend, BackupError
 from .config import Config
-from .restic import Restic, ResticError
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ NO_RESTORE_FILE = ".k8si-no-restore"
 LOCK_FILE = ".k8si-restore.lock"
 
 
-def run(config: Config, restic: Restic) -> None:
+def run(config: Config, backend: BackupBackend) -> None:
     data_path = config.data_path
 
     # Emergency override: file on the volume (survives ArgoCD, no git commit needed)
@@ -52,22 +52,21 @@ def run(config: Config, restic: Restic) -> None:
     snapshot_id = config.restore_snapshot
     if snapshot_id:
         log.info("Using pinned snapshot: %s", snapshot_id)
-        if not _sentinels_in_snapshot(restic, snapshot_id, config.restore_sentinels):
+        if not _sentinels_in_snapshot(backend, snapshot_id, config.restore_sentinels):
             log.error("Pinned snapshot %s is missing required sentinels, aborting", snapshot_id)
             raise SystemExit(1)
     else:
-        snapshot_id = _pick_snapshot(config, restic)
+        snapshot_id = _pick_snapshot(config, backend)
         if snapshot_id is None:
             return
 
-    _do_restore(restic, snapshot_id, data_path, sentinels, marker)
+    _do_restore(backend, snapshot_id, data_path, sentinels, marker)
 
 
-def _pick_snapshot(config: Config, restic: Restic) -> str | None:
+def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
     """Run all pre-restore checks and return an eligible snapshot ID, or None to skip."""
 
-    # Step 3: any snapshots exist?
-    snapshots = restic.snapshots(tags=config.restore_tags or None)
+    snapshots = backend.snapshots(tags=config.restore_tags or None)
     if not snapshots:
         if config.restore_required:
             log.error(
@@ -85,7 +84,7 @@ def _pick_snapshot(config: Config, restic: Restic) -> str | None:
     snapshot_id: str = latest.get("short_id") or latest["id"][:8]
     snap_time_str: str = latest["time"]
 
-    # Step 4: age check (opt-in)
+    # Age check (opt-in)
     if config.restore_max_age_hours is not None:
         snap_time = datetime.fromisoformat(snap_time_str.replace("Z", "+00:00"))
         age_hours = (datetime.now(timezone.utc) - snap_time).total_seconds() / 3600
@@ -98,9 +97,9 @@ def _pick_snapshot(config: Config, restic: Restic) -> str | None:
         log.info("Snapshot %s age: %.1fh (within %.0fh limit)", snapshot_id, age_hours,
                  config.restore_max_age_hours)
 
-    # Step 5: size check (opt-in)
+    # Size check (opt-in)
     if config.restore_size_min is not None or config.restore_size_max is not None:
-        size = restic.snapshot_size(snapshot_id)
+        size = backend.snapshot_size(snapshot_id)
         if config.restore_size_min is not None and size < config.restore_size_min:
             log.warning(
                 "Skipping restore: snapshot %s is %d bytes (min %d)",
@@ -115,19 +114,21 @@ def _pick_snapshot(config: Config, restic: Restic) -> str | None:
             return None
         log.info("Snapshot %s size: %d bytes (within bounds)", snapshot_id, size)
 
-    # Step 6: sentinels in snapshot (quality gate)
+    # Sentinel quality gate: verify sentinels are present in the snapshot
     if config.restore_sentinels:
-        if not _sentinels_in_snapshot(restic, snapshot_id, config.restore_sentinels):
+        if not _sentinels_in_snapshot(backend, snapshot_id, config.restore_sentinels):
             return None
 
     return snapshot_id
 
 
-def _sentinels_in_snapshot(restic: Restic, snapshot_id: str, sentinels: list[str]) -> bool:
+def _sentinels_in_snapshot(
+    backend: BackupBackend, snapshot_id: str, sentinels: list[str]
+) -> bool:
     if not sentinels:
         return True
     log.info("Checking sentinels in snapshot %s: %s", snapshot_id, sentinels)
-    paths = set(restic.ls(snapshot_id))
+    paths = set(backend.ls(snapshot_id))
     for sentinel in sentinels:
         # restic stores paths as absolute: /data/config.xml
         candidates = {f"/data/{sentinel}", sentinel}
@@ -142,7 +143,7 @@ def _sentinels_in_snapshot(restic: Restic, snapshot_id: str, sentinels: list[str
 
 
 def _do_restore(
-    restic: Restic,
+    backend: BackupBackend,
     snapshot_id: str,
     data_path: Path,
     sentinels: list[Path],
@@ -160,8 +161,8 @@ def _do_restore(
     try:
         log.info("Restoring from snapshot %s into %s", snapshot_id, data_path)
         try:
-            restic.restore(snapshot_id=snapshot_id)
-        except ResticError as e:
+            backend.restore(snapshot_id=snapshot_id)
+        except BackupError as e:
             log.error("Restore failed: %s", e.stderr)
             raise SystemExit(1) from e
 

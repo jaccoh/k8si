@@ -8,21 +8,21 @@ from pathlib import Path
 
 from croniter import croniter
 
+from .backend import BackupBackend, BackupError
 from .config import Config
-from .restic import Restic, ResticError
 
 log = logging.getLogger(__name__)
 
 LAST_BACKUP_FILE = ".k8si-last-backup"
 
 
-def run_once(config: Config, restic: Restic) -> None:
+def run_once(config: Config, backend: BackupBackend) -> None:
     """Single backup cycle — used by the operator CronJob (MODE=job)."""
     log.info("Backup job starting. Repo: %s", config.restic_repository)
-    _run_cycle(config, restic)
+    _run_cycle(config, backend)
 
 
-def run(config: Config, restic: Restic) -> None:
+def run(config: Config, backend: BackupBackend) -> None:
     assert config.backup_schedule is not None
     log.info(
         "Backup sidecar starting. Schedule: %s, repo: %s",
@@ -38,22 +38,22 @@ def run(config: Config, restic: Restic) -> None:
         log.info("Next backup at %s (in %.0fs)", next_run.isoformat(), delay)
         time.sleep(max(0, delay))
 
-        _run_cycle(config, restic)
+        _run_cycle(config, backend)
 
 
-def _run_cycle(config: Config, restic: Restic) -> None:
+def _run_cycle(config: Config, backend: BackupBackend) -> None:
     if config.pre_backup_hook:
         _run_hook(config.pre_backup_hook)
 
     try:
-        restic.backup(source=config.data_path, tags=config.backup_tags)
-    except ResticError as e:
+        backend.backup(source=config.data_path, tags=config.backup_tags)
+    except BackupError as e:
         if "repository does not exist" in e.stderr:
-            log.info("Repository not initialised, running restic init")
+            log.info("Repository not initialised, running init")
             try:
-                restic.init()
-                restic.backup(source=config.data_path, tags=config.backup_tags)
-            except ResticError as init_err:
+                backend.init()
+                backend.backup(source=config.data_path, tags=config.backup_tags)
+            except BackupError as init_err:
                 log.error("Backup failed after init: %s", init_err.stderr)
                 return
         else:
@@ -61,13 +61,13 @@ def _run_cycle(config: Config, restic: Restic) -> None:
             return
 
     try:
-        restic.forget(
+        backend.forget(
             daily=config.retention_daily,
             weekly=config.retention_weekly,
             monthly=config.retention_monthly,
             prune=True,
         )
-    except ResticError as e:
+    except BackupError as e:
         log.error("Forget/prune failed: %s", e.stderr)
         return
 

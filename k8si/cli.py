@@ -5,8 +5,8 @@ import logging
 import os
 import sys
 
+from .backends.restic import ResticBackend
 from .config import Config, ConfigError
-from .restic import Restic
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,17 +35,17 @@ def main() -> None:
         log.error("Configuration error: %s", e)
         sys.exit(1)
 
-    restic = Restic(env=_build_restic_env(config))
+    backend = ResticBackend(env=_build_restic_env(config))
 
     if config.mode == "restore":
         from . import restore
-        restore.run(config, restic)
+        restore.run(config, backend)
     elif config.mode == "job":
         from . import backup
-        backup.run_once(config, restic)
+        backup.run_once(config, backend)
     else:
         from . import backup
-        backup.run(config, restic)
+        backup.run(config, backend)
 
 
 def _build_restic_env(config: Config) -> dict[str, str]:
