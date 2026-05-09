@@ -1,8 +1,12 @@
 # k8si
 
-GitOps rebuilt your cluster. k8si extends that to your data.
+**Backup is a solved problem. Restore isn't.**
 
-Every pod gets an init container that asks one question on startup: *is my data here?* If yes, it exits in milliseconds. If no — fresh PVC, deleted namespace, botched migration — it pulls the latest restic snapshot and restores before the app ever sees an empty volume. No runbook. No operator paging at 2am. The pod comes up with its data intact, the same way the rest of your cluster does: automatically, from a declared source of truth.
+Every cluster has a backup solution. Few have a restore solution. When a PVC disappears, a namespace gets nuked, or a migration goes wrong — someone gets paged. Someone opens a runbook. Someone runs commands under pressure at 2am hoping they got it right.
+
+k8si makes restore automatic. Every pod gets an init container that asks one question on startup: *is my data here?* If yes, it exits in milliseconds. If no — fresh PVC, deleted namespace, botched migration — it finds the latest snapshot and restores before the app ever sees an empty volume. No runbook. No intervention. The pod comes up with its data intact.
+
+GitOps rebuilt your cluster. k8si extends that to your data.
 
 Backups are declared as a `K8siBackup` resource. The operator takes a consistent VolumeSnapshot on schedule — with optional DB quiescing for Postgres, MariaDB, and SQLite — clones it to an ephemeral PVC, runs a restic backup Job against the clone, then cleans up. Your live PVC is never touched during backup. `kubectl get k8sibackups` gives a live view of backup health across all apps.
 
