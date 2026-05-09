@@ -92,6 +92,10 @@ spec:
                 preBackupHook:
                   type: string
                   description: Path to a script to run inside the backup container before restic backup
+                preBackupHookRequired:
+                  type: boolean
+                  default: false
+                  description: If true, a non-zero hook exit code aborts the backup (fail-closed)
                 resources:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true

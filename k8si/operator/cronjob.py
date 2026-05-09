@@ -1,14 +1,15 @@
 """Build the CronJob body and restore patch for a K8siBackup resource."""
 
 import os
-import textwrap
 from typing import Any
+
+import yaml
 
 K8SI_IMAGE = os.environ.get("K8SI_IMAGE", "ghcr.io/jaccoh/k8si:latest")
 
 
 def build_restore_patch(spec: dict[str, Any]) -> str:
-    """Return a YAML snippet to paste into spec.initContainers of any Deployment."""
+    """Return a YAML snippet to paste into spec.initContainers and spec.volumes."""
     restic_secret = spec["resticSecret"]
     restore = spec.get("restore", {})
     sentinels = restore.get("sentinels", [])
@@ -16,63 +17,58 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
     max_age = restore.get("maxAge", "")
     size_min = restore.get("size", {}).get("min", "")
     size_max = restore.get("size", {}).get("max", "")
-    tags = restore.get("tags", [])
+    tags = restore.get("tags", spec.get("tags", []))
 
-    env_lines = [
-        "  - name: MODE\n    value: restore",
-    ]
+    env: list[dict[str, Any]] = [{"name": "MODE", "value": "restore"}]
     if sentinels:
-        env_lines.append(f"  - name: RESTORE_SENTINELS\n    value: {','.join(sentinels)}")
+        env.append({"name": "RESTORE_SENTINELS", "value": ",".join(sentinels)})
     if required:
-        env_lines.append("  - name: RESTORE_REQUIRED\n    value: \"true\"")
+        env.append({"name": "RESTORE_REQUIRED", "value": "true"})
     if max_age:
-        env_lines.append(f"  - name: RESTORE_MAX_AGE\n    value: {max_age}")
+        env.append({"name": "RESTORE_MAX_AGE", "value": str(max_age)})
     if size_min:
-        env_lines.append(f"  - name: RESTORE_SIZE_MIN\n    value: {size_min}")
+        env.append({"name": "RESTORE_SIZE_MIN", "value": str(size_min)})
     if size_max:
-        env_lines.append(f"  - name: RESTORE_SIZE_MAX\n    value: {size_max}")
+        env.append({"name": "RESTORE_SIZE_MAX", "value": str(size_max)})
     if tags:
-        env_lines.append(f"  - name: RESTORE_TAGS\n    value: {','.join(tags)}")
-
+        env.append({"name": "RESTORE_TAGS", "value": ",".join(tags)})
     for var, key in [
         ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY"),
         ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
         ("RESTIC_SFTP_COMMAND", "RESTIC_SFTP_COMMAND"),
     ]:
-        env_lines.append(
-            f"  - name: {var}\n"
-            f"    valueFrom:\n"
-            f"      secretKeyRef:\n"
-            f"        name: {restic_secret}\n"
-            f"        key: {key}"
-        )
+        env.append({
+            "name": var,
+            "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
+        })
 
-    env_block = "\n".join(f"  {line}" if not line.startswith("  ") else line
-                          for line in "\n".join(env_lines).splitlines())
-
-    return textwrap.dedent(f"""\
-        # --- paste into spec.initContainers ---
-        - name: k8si-restore
-          image: {K8SI_IMAGE}
-          env:
-        {env_block}
-          volumeMounts:
-          - name: data
-            mountPath: /data
-          - name: restic-ssh
-            mountPath: /restic-ssh
-            readOnly: true
-        # --- paste into spec.volumes (if not already present) ---
-        - name: restic-ssh
-          secret:
-            secretName: {restic_secret}
-            defaultMode: 0o400
-            items:
-            - key: id_ed25519
-              path: id_ed25519
-            - key: known_hosts
-              path: known_hosts
-    """)
+    patch: list[dict[str, Any]] = [
+        {
+            "name": "k8si-restore",
+            "image": K8SI_IMAGE,
+            "env": env,
+            "volumeMounts": [
+                {"name": "data", "mountPath": "/data"},
+                {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+            ],
+        },
+        {
+            "name": "restic-ssh",
+            "secret": {
+                "secretName": restic_secret,
+                "defaultMode": 0o400,
+                "items": [
+                    {"key": "id_ed25519", "path": "id_ed25519"},
+                    {"key": "known_hosts", "path": "known_hosts"},
+                ],
+            },
+        },
+    ]
+    header = (
+        "# First item: paste into spec.initContainers\n"
+        "# Second item: paste into spec.volumes (if not already present)\n"
+    )
+    return header + yaml.dump(patch, default_flow_style=False, sort_keys=False)
 
 
 def build_cronjob(
@@ -84,8 +80,7 @@ def build_cronjob(
 ) -> dict[str, Any]:
     restic_secret = spec["resticSecret"]
     retention = spec.get("retention", {})
-    restore = spec.get("restore", {})
-    tags = restore.get("tags", [])
+    tags = spec.get("tags", [])
 
     env: list[dict[str, Any]] = [
         {"name": "MODE", "value": "job"},
@@ -96,6 +91,8 @@ def build_cronjob(
     ]
     if spec.get("preBackupHook"):
         env.append({"name": "PRE_BACKUP_HOOK", "value": spec["preBackupHook"]})
+    if spec.get("preBackupHookRequired"):
+        env.append({"name": "PRE_BACKUP_HOOK_REQUIRED", "value": "true"})
     if tags:
         env.append({"name": "BACKUP_TAGS", "value": ",".join(tags)})
     for var, key in [

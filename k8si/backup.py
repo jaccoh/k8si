@@ -43,7 +43,7 @@ def run(config: Config, backend: BackupBackend) -> None:
 
 def _run_cycle(config: Config, backend: BackupBackend) -> None:
     if config.pre_backup_hook:
-        _run_hook(config.pre_backup_hook)
+        _run_hook(config.pre_backup_hook, required=config.pre_backup_hook_required)
 
     try:
         backend.backup(source=config.data_path, tags=config.backup_tags)
@@ -75,13 +75,16 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
     log.info("PVC backup complete.")
 
 
-def _run_hook(hook: Path) -> None:
+def _run_hook(hook: Path, *, required: bool = False) -> None:
     log.info("Running pre-backup hook: %s", hook)
     result = subprocess.run([str(hook)], capture_output=True, text=True)
     if result.stdout:
         log.info("hook stdout: %s", result.stdout.strip())
     if result.returncode != 0:
-        log.error("Pre-backup hook failed (exit %d): %s", result.returncode, result.stderr.strip())
+        msg = f"Pre-backup hook failed (exit {result.returncode}): {result.stderr.strip()}"
+        if required:
+            raise RuntimeError(msg)
+        log.error(msg)
 
 
 def _write_last_backup_timestamp(data_path: Path) -> None:
