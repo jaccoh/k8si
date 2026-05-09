@@ -1,18 +1,17 @@
 # k8si
 
-Your infra is cattle. Nuke the cluster, run `make bootstrap`, ArgoCD syncs it back. Data has always been the exception — until now.
+GitOps rebuilt your cluster. k8si extends that to your data.
 
-k8si extends the GitOps model to data. Every pod gets an init container that asks one question on startup: *is my data here?* If yes, it exits in milliseconds. If no — fresh PVC, deleted namespace, botched migration — it pulls the latest restic snapshot and restores before the app ever sees an empty volume. No runbook. No operator paging at 2am. The pod comes up with its data intact, the same way the rest of your cluster does: automatically, from a declared source of truth.
+Every pod gets an init container that asks one question on startup: *is my data here?* If yes, it exits in milliseconds. If no — fresh PVC, deleted namespace, botched migration — it pulls the latest restic snapshot and restores before the app ever sees an empty volume. No runbook. No operator paging at 2am. The pod comes up with its data intact, the same way the rest of your cluster does: automatically, from a declared source of truth.
 
-Backups are declared as a `K8siBackup` resource. The operator turns each one into a CronJob, keeps it pinned to the node where the PVC lives, and writes the result back to the CRD — so `kubectl get k8sibackups` gives a live view of backup health across all apps.
+Backups are declared as a `K8siBackup` resource. The operator takes a consistent VolumeSnapshot on schedule — with optional DB quiescing for Postgres, MariaDB, and SQLite — clones it to an ephemeral PVC, runs a restic backup Job against the clone, then cleans up. Your live PVC is never touched during backup. `kubectl get k8sibackups` gives a live view of backup health across all apps.
 
-Three components, one image:
+Two components, one image:
 
 | Component | Mode | Description |
 |-----------|------|-------------|
-| **Restore init container** | `MODE=restore` | Checks sentinel files on the PVC; restores from restic if data is missing or incomplete. Fails loud rather than letting the app start on corrupt or empty state. |
-| **Backup sidecar** | `MODE=backup` | Runs `restic backup` on a cron schedule inside the pod. Writes a timestamp file for external monitoring. |
-| **Operator** | Kopf + `K8siBackup` CRD | Reconciles `K8siBackup` resources into CronJobs. Pins each job to the node where the PVC is mounted (avoids Multi-Attach). Reports `lastBackupResult` on the CRD. |
+| **Restore init container** | `MODE=restore` | Checks sentinel files on the PVC on every pod start; restores from restic if data is missing or incomplete. Fails loud rather than letting the app start on empty or corrupt state. |
+| **Operator** | Kopf + `K8siBackup` CRD | Owns the full backup pipeline: scheduled VolumeSnapshot (with optional DB quiescing) → ephemeral PVC clone → restic Job → cleanup. Reports `lastBackupResult` on the CRD. |
 
 Backend is pluggable — restic over SFTP (Hetzner Storagebox) ships by default. Image: `ghcr.io/jaccoh/k8si` for `linux/amd64` and `linux/arm64`.
 
@@ -108,29 +107,30 @@ docker run --rm ghcr.io/jaccoh/k8si:latest generate \
   │  ┌──────────────────┐   reconciles    ┌──────────────────────────┐  │
   │  │ K8siBackup CRD   │────────────────►│ k8si operator (Kopf)    │  │
   │  │                  │◄────────────────│                          │  │
-  │  │ spec.schedule    │  status updates │ - creates CronJob        │  │
-  │  │ spec.pvc         │                 │ - pins to PVC node       │  │
-  │  │ spec.restore     │                 │ - reports lastBackup     │  │
-  │  └──────────────────┘                 └──────────────────────────┘  │
+  │  │ spec.schedule    │  status updates │ 1. quiesce DB (optional) │  │
+  │  │ spec.pvc         │                 │ 2. VolumeSnapshot        │  │
+  │  │ spec.database    │                 │ 3. clone → ephemeral PVC │  │
+  │  │ spec.restore     │                 │ 4. restic backup Job     │  │
+  │  └──────────────────┘                 │ 5. cleanup               │  │
+  │                                       └──────────────────────────┘  │
   │                                                 │                   │
-  │                                           CronJob fires             │
+  │                                        restic over SFTP             │
   │                                                 │                   │
-  │  ┌──────────────────────────────────────────────▼──────────────┐    │
-  │  │ Pod (your app)                                               │    │
-  │  │                                                              │    │
-  │  │  initContainers:                                             │    │
-  │  │    k8si-restore (restartPolicy: Always — native sidecar)    │    │
-  │  │      MODE=restore → checks sentinels → restores if needed   │    │
-  │  │                                                              │    │
-  │  │  containers:                                                 │    │
-  │  │    app                                                       │    │
-  │  │    /data PVC ─────────────────────────────────────────────  │    │
-  │  └──────────────────────────────────────────────────────────────┘    │
+  │                                                 ▼                   │
+  │                                       Hetzner Storagebox            │
+  │                                                                     │
+  │  ┌──────────────────────────────────────────────────────────────┐   │
+  │  │ Pod (your app)                                               │   │
+  │  │                                                              │   │
+  │  │  initContainers:                                             │   │
+  │  │    k8si-restore                                              │   │
+  │  │      checks sentinels → restores from restic if missing      │   │
+  │  │                                                              │   │
+  │  │  containers:                                                 │   │
+  │  │    app + /data PVC                                           │   │
+  │  └──────────────────────────────────────────────────────────────┘   │
   │                                                                     │
   └─────────────────────────────────────────────────────────────────────┘
-
-                    restic over SFTP
-  Pod ◄─────────────────────────────────► Hetzner Storagebox
 ```
 
 ---
@@ -249,7 +249,7 @@ The `id_ed25519` and `known_hosts` keys are projected to `/restic-ssh/` as files
 | `RETENTION_DAILY` | no | `7` | Daily snapshots to keep |
 | `RETENTION_WEEKLY` | no | `4` | Weekly snapshots to keep |
 | `RETENTION_MONTHLY` | no | `3` | Monthly snapshots to keep |
-| `PRE_BACKUP_HOOK` | no | — | Absolute path to pre-backup script |
+| `PRE_SNAPSHOT_HOOK` | no | — | Absolute path to script run before the VolumeSnapshot is taken |
 | `BACKUP_TAGS` | no | — | Comma-separated tags (e.g. `app=sonarr`) |
 
 ---
@@ -277,10 +277,10 @@ class KopiaBackend:
 
 **No alerting.** Check `DATA_PATH/.k8si-last-backup` for the timestamp of the last successful backup. Wire this into your monitoring (e.g. `file_mtime_seconds` via node-exporter).
 
-**No stale lock cleanup.** If a backup is interrupted, restic may leave a lock. Fix manually:
+**No stale lock cleanup.** If a backup Job is interrupted, restic may leave a lock. Fix manually:
 
 ```bash
-kubectl exec <pod> -c k8si-backup -- restic unlock
+kubectl exec -n <namespace> <backup-job-pod> -- restic unlock
 ```
 
 **Runs as root.** Restic needs root to preserve file ownership on restore. Non-root restore produces wrong permissions silently.
