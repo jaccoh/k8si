@@ -149,8 +149,9 @@ async def create_pvc_from_snapshot(
         _create_pvc_from_snapshot_sync,
         pvc_name, namespace, snapshot_name, access_mode, storage,
     )
-    await asyncio.to_thread(_wait_pvc_bound_sync, pvc_name, namespace)
-    log.info("Ephemeral PVC %s is bound", pvc_name)
+    # WaitForFirstConsumer: PVC stays Pending until the backup Job pod is scheduled.
+    # Longhorn then creates the volume on the same node as the pod. No wait here.
+    log.info("Ephemeral PVC %s created (pending pod scheduling)", pvc_name)
 
 
 async def delete_snapshot_and_pvc(
