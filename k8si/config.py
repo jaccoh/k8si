@@ -60,6 +60,7 @@ class Config:
         restore_snapshot: str | None = None
         backup_schedule: str | None = None
         pre_snapshot_hook: Path | None = None
+        pre_snapshot_hook_required = False
         backup_tags: list[str] = []
 
         if mode == "restore":
