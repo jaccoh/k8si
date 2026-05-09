@@ -19,7 +19,7 @@ def make_config(tmp_path: Path) -> Config:
         retention_daily=7,
         retention_weekly=4,
         retention_monthly=3,
-        pre_backup_hook=None,
+        pre_snapshot_hook=None,
         backup_tags=["app=sonarr"],
     )
 
@@ -48,7 +48,7 @@ def test_run_once_runs_single_cycle(tmp_path: Path) -> None:
     backend.forget.assert_called_once()
 
 
-def test_pre_backup_hook_called(tmp_path: Path) -> None:
+def test_pre_snapshot_hook_called(tmp_path: Path) -> None:
     hook = tmp_path / "hook.sh"
     hook.write_text("#!/bin/sh\ntrue")
     hook.chmod(0o755)
@@ -62,7 +62,7 @@ def test_pre_backup_hook_called(tmp_path: Path) -> None:
         retention_daily=7,
         retention_weekly=4,
         retention_monthly=3,
-        pre_backup_hook=hook,
+        pre_snapshot_hook=hook,
     )
     backend = MagicMock()
     with patch("k8si.backup.subprocess.run") as mock_run:

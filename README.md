@@ -1,8 +1,8 @@
 # k8si
 
-Kubernetes is good at keeping stateless workloads healthy. Stateful apps are harder: a deleted namespace, a misconfigured reclaimPolicy, or a botched migration can silently wipe a PVC and everything on it. Restoring from backup then becomes a manual, stressful event — find the snapshot, run the right restic command, remount the volume, restart the pod.
+Your infra is cattle. Nuke the cluster, run `make bootstrap`, ArgoCD syncs it back. Data has always been the exception — until now.
 
-k8si makes restore automatic. A permanent init container runs on every pod start and asks one question: *is my data here?* If yes, it exits immediately. If no, it pulls the latest snapshot from restic and restores it before the app container ever sees an empty volume. No operator intervention, no runbook. The pod just comes up with its data intact.
+k8si extends the GitOps model to data. Every pod gets an init container that asks one question on startup: *is my data here?* If yes, it exits in milliseconds. If no — fresh PVC, deleted namespace, botched migration — it pulls the latest restic snapshot and restores before the app ever sees an empty volume. No runbook. No operator paging at 2am. The pod comes up with its data intact, the same way the rest of your cluster does: automatically, from a declared source of truth.
 
 Backups are declared as a `K8siBackup` resource. The operator turns each one into a CronJob, keeps it pinned to the node where the PVC lives, and writes the result back to the CRD — so `kubectl get k8sibackups` gives a live view of backup health across all apps.
 

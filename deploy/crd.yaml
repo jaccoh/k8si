@@ -47,6 +47,10 @@ spec:
                 schedule:
                   type: string
                   description: Cron schedule for backups, e.g. "0 3 * * *"
+                volumeSnapshotClass:
+                  type: string
+                  default: longhorn
+                  description: VolumeSnapshotClass to use when creating snapshots
                 restore:
                   type: object
                   description: Restore init-container configuration and pre-restore sanity checks
@@ -74,7 +78,7 @@ spec:
                           description: Maximum snapshot restore size, e.g. "50Gi"
                     tags:
                       type: array
-                      description: Only consider snapshots with these tags (also applied when creating backup snapshots)
+                      description: Only consider snapshots with these tags
                       items:
                         type: string
                 retention:
@@ -89,13 +93,38 @@ spec:
                     monthly:
                       type: integer
                       default: 3
-                preBackupHook:
+                preSnapshotHook:
                   type: string
-                  description: Path to a script to run inside the backup container before restic backup
-                preBackupHookRequired:
+                  description: Path (inside the k8si image) to a script run before the VolumeSnapshot is taken
+                preSnapshotHookRequired:
                   type: boolean
                   default: false
                   description: If true, a non-zero hook exit code aborts the backup (fail-closed)
+                database:
+                  type: object
+                  description: Database-level quiescing before the VolumeSnapshot
+                  required: [type]
+                  properties:
+                    type:
+                      type: string
+                      enum: [mariadb, postgres, sqlite]
+                    secretRef:
+                      type: string
+                      description: Secret with DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME (mariadb/postgres)
+                    podSelector:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      description: Label selector to find the running pod for exec (sqlite)
+                    dbPaths:
+                      type: array
+                      description: Paths to SQLite DB files inside the pod (sqlite)
+                      items:
+                        type: string
+                tags:
+                  type: array
+                  description: Tags applied to backup snapshots
+                  items:
+                    type: string
                 resources:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true

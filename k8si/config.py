@@ -31,8 +31,8 @@ class Config:
     retention_daily: int = 7
     retention_weekly: int = 4
     retention_monthly: int = 3
-    pre_backup_hook: Path | None = None
-    pre_backup_hook_required: bool = False
+    pre_snapshot_hook: Path | None = None
+    pre_snapshot_hook_required: bool = False
     backup_tags: list[str] = field(default_factory=list)
 
     @classmethod
@@ -59,7 +59,7 @@ class Config:
         restore_tags: list[str] = []
         restore_snapshot: str | None = None
         backup_schedule: str | None = None
-        pre_backup_hook: Path | None = None
+        pre_snapshot_hook: Path | None = None
         backup_tags: list[str] = []
 
         if mode == "restore":
@@ -90,9 +90,9 @@ class Config:
         elif mode in ("backup", "job"):
             if mode == "backup":
                 backup_schedule = _require("BACKUP_SCHEDULE", "cron expression, e.g. '0 * * * *'")
-            hook_str = os.environ.get("PRE_BACKUP_HOOK")
-            pre_backup_hook = Path(hook_str) if hook_str else None
-            pre_backup_hook_required = os.environ.get("PRE_BACKUP_HOOK_REQUIRED", "false").lower() == "true"
+            hook_str = os.environ.get("PRE_SNAPSHOT_HOOK")
+            pre_snapshot_hook = Path(hook_str) if hook_str else None
+            pre_snapshot_hook_required = os.environ.get("PRE_SNAPSHOT_HOOK_REQUIRED", "false").lower() == "true"
             tags_str = os.environ.get("BACKUP_TAGS", "")
             backup_tags = [t.strip() for t in tags_str.split(",") if t.strip()]
 
@@ -113,8 +113,8 @@ class Config:
             retention_daily=int(os.environ.get("RETENTION_DAILY", "7")),
             retention_weekly=int(os.environ.get("RETENTION_WEEKLY", "4")),
             retention_monthly=int(os.environ.get("RETENTION_MONTHLY", "3")),
-            pre_backup_hook=pre_backup_hook,
-            pre_backup_hook_required=pre_backup_hook_required,
+            pre_snapshot_hook=pre_snapshot_hook,
+            pre_snapshot_hook_required=pre_snapshot_hook_required,
             backup_tags=backup_tags,
         )
 

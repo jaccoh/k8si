@@ -7,6 +7,8 @@ dependencies = [
     "croniter>=6.0",
     "kopf>=1.44",
     "kubernetes>=31.0",
+    "psycopg2-binary>=2.9",
+    "pymysql>=1.1",
     "sh>=2.0",
 ]
 
