@@ -80,16 +80,16 @@ def _mariadb_unlock_sync(conn: Any) -> None:
 
 
 def _postgres_checkpoint_sync(creds: dict[str, str]) -> None:
-    import psycopg2
+    import psycopg
 
-    conn = psycopg2.connect(
+    conn = psycopg.connect(
         host=creds.get("DB_HOST", "localhost"),
         port=int(creds.get("DB_PORT", "5432")),
         user=creds["DB_USER"],
         password=creds["DB_PASSWORD"],
         dbname=creds.get("DB_NAME", "postgres"),
+        autocommit=True,
     )
-    conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute("CHECKPOINT")
     conn.close()

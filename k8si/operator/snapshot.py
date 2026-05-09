@@ -18,15 +18,19 @@ _SNAPSHOT_READY_TIMEOUT = 300
 _PVC_BOUND_TIMEOUT = 120
 _JOB_GONE_TIMEOUT = 120
 
+# 1-replica, Delete-policy StorageClass for ephemeral backup PVCs.
+# Avoids the degraded-state issue that Longhorn multi-replica clones hit
+# while building their second replica before the backup job can attach.
+_EPHEMERAL_STORAGE_CLASS = "longhorn-k8si-ephemeral"
 
-def _get_pvc_info_sync(pvc_name: str, namespace: str) -> tuple[str, str, str]:
-    """Returns (storageClass, accessMode, storage) from source PVC."""
+
+def _get_pvc_info_sync(pvc_name: str, namespace: str) -> tuple[str, str]:
+    """Returns (accessMode, storage) from source PVC."""
     v1 = kubernetes.client.CoreV1Api()
     pvc = v1.read_namespaced_persistent_volume_claim(pvc_name, namespace)
-    storage_class = pvc.spec.storage_class_name or "longhorn"
     access_mode = (pvc.spec.access_modes or ["ReadWriteOnce"])[0]
     storage = pvc.spec.resources.requests["storage"]
-    return storage_class, access_mode, storage
+    return access_mode, storage
 
 
 def _create_volume_snapshot_sync(name: str, namespace: str, pvc: str, snapshot_class: str) -> None:
@@ -62,7 +66,6 @@ def _create_pvc_from_snapshot_sync(
     pvc_name: str,
     namespace: str,
     snapshot_name: str,
-    storage_class: str,
     access_mode: str,
     storage: str,
 ) -> None:
@@ -71,7 +74,7 @@ def _create_pvc_from_snapshot_sync(
         metadata=kubernetes.client.V1ObjectMeta(name=pvc_name, namespace=namespace),
         spec=kubernetes.client.V1PersistentVolumeClaimSpec(
             access_modes=[access_mode],
-            storage_class_name=storage_class,
+            storage_class_name=_EPHEMERAL_STORAGE_CLASS,
             resources=kubernetes.client.V1VolumeResourceRequirements(
                 requests={"storage": storage}
             ),
@@ -135,16 +138,16 @@ async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: s
 async def create_pvc_from_snapshot(
     pvc_name: str, namespace: str, snapshot_name: str, source_pvc: str
 ) -> None:
-    storage_class, access_mode, storage = await asyncio.to_thread(
+    access_mode, storage = await asyncio.to_thread(
         _get_pvc_info_sync, source_pvc, namespace
     )
     log.info(
         "Creating ephemeral PVC %s from snapshot %s (%s %s %s)",
-        pvc_name, snapshot_name, storage_class, access_mode, storage,
+        pvc_name, snapshot_name, _EPHEMERAL_STORAGE_CLASS, access_mode, storage,
     )
     await asyncio.to_thread(
         _create_pvc_from_snapshot_sync,
-        pvc_name, namespace, snapshot_name, storage_class, access_mode, storage,
+        pvc_name, namespace, snapshot_name, access_mode, storage,
     )
     await asyncio.to_thread(_wait_pvc_bound_sync, pvc_name, namespace)
     log.info("Ephemeral PVC %s is bound", pvc_name)
