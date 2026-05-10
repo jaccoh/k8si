@@ -8,6 +8,7 @@ dependencies = [
     "kopf>=1.44",
     "kubernetes>=31.0",
     "psycopg[binary]>=3.2",
+    "prometheus-client>=0.20",
     "pymysql>=1.1",
     "sh>=2.0",
 ]

@@ -8,7 +8,7 @@ import kubernetes.client
 
 from .cronjob import K8SI_IMAGE, build_restore_patch
 from .status import compute_next_backup
-from . import workflow
+from . import metrics, workflow
 from croniter import croniter
 from datetime import datetime, timezone
 
@@ -32,7 +32,24 @@ def _is_due(schedule: str, last_backup_time: str | None) -> bool:
 @kopf.on.startup()
 def startup(logger: logging.Logger, **_: object) -> None:
     kubernetes.config.load_incluster_config()
+    metrics.start()
+    _init_metrics(logger)
     logger.info("k8si operator started, image=%s", K8SI_IMAGE)
+
+
+def _init_metrics(logger: logging.Logger) -> None:
+    """Seed metrics from existing K8siBackup statuses so gauges aren't empty after restart."""
+    custom = kubernetes.client.CustomObjectsApi()
+    try:
+        items = custom.list_cluster_custom_object("k8si.io", "v1", "k8sibackups").get("items", [])
+    except Exception as e:
+        logger.warning("Could not list K8siBackups for metrics init: %s", e)
+        return
+    for obj in items:
+        name = obj["metadata"]["name"]
+        namespace = obj["metadata"]["namespace"]
+        status = obj.get("status", {})
+        metrics.record(name, namespace, status.get("lastBackupResult", ""), status.get("lastBackupTime"))
 
 
 # ── CRD lifecycle ──────────────────────────────────────────────────────────────
@@ -69,6 +86,7 @@ def on_update(
 @kopf.on.delete("k8si.io", "v1", "k8sibackups")
 def on_delete(name: str, namespace: str, logger: logging.Logger, **_: object) -> None:
     _running.discard((namespace, name))
+    metrics.remove(name, namespace)
     logger.info("K8siBackup %s/%s deleted", namespace, name)
 
 
@@ -97,13 +115,16 @@ async def backup_timer(
 
     _running.add(key)
     patch.status["lastBackupResult"] = "running"
+    metrics.record(name, namespace, "running", last_backup)
     try:
         result = await workflow.run_backup(name, namespace, spec, logger)
         patch.status.update(result)
         patch.status["nextBackupTime"] = compute_next_backup(schedule)
+        metrics.record(name, namespace, "success", result.get("lastBackupTime"))
     except Exception as e:
         logger.error("Backup %s/%s failed: %s", namespace, name, e)
         patch.status["lastBackupResult"] = "failed"
         patch.status["message"] = str(e)
+        metrics.record(name, namespace, "failed", last_backup)
     finally:
         _running.discard(key)
