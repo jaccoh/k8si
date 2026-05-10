@@ -60,6 +60,20 @@ async def run_backup(
     return {"lastBackupResult": "success", "lastBackupTime": now, "message": ""}
 
 
+def _find_pvc_node_sync(pvc_name: str, namespace: str) -> str | None:
+    """Return the node name where pvc_name is currently mounted, or None."""
+    v1 = kubernetes.client.CoreV1Api()
+    for pod in v1.list_namespaced_pod(namespace).items:
+        for vol in (pod.spec.volumes or []):
+            if (
+                vol.persistent_volume_claim
+                and vol.persistent_volume_claim.claim_name == pvc_name
+                and pod.spec.node_name
+            ):
+                return pod.spec.node_name
+    return None
+
+
 async def _run_hook_job(
     hook: str,
     required: bool,
@@ -67,8 +81,30 @@ async def _run_hook_job(
     pvc_name: str,
     logger: logging.Logger,
 ) -> None:
+    node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
+    if node:
+        logger.info("Pinning hook job to node %s (PVC %s)", node, pvc_name)
     ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f")[:17]
     job_name = f"k8si-hook-{ts}"
+    pod_spec: dict[str, Any] = {
+        "restartPolicy": "Never",
+        "volumes": [
+            {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
+        ],
+        "containers": [{
+            "name": "k8si-hook",
+            "image": K8SI_IMAGE,
+            "command": [hook],
+            "env": [{"name": "DATA_PATH", "value": "/data"}],
+            "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+            "resources": {
+                "requests": {"cpu": "50m", "memory": "64Mi"},
+                "limits": {"cpu": "200m", "memory": "256Mi"},
+            },
+        }],
+    }
+    if node:
+        pod_spec["nodeSelector"] = {"kubernetes.io/hostname": node}
     job_body = {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -76,25 +112,7 @@ async def _run_hook_job(
         "spec": {
             "backoffLimit": 0,
             "ttlSecondsAfterFinished": 300,
-            "template": {
-                "spec": {
-                    "restartPolicy": "Never",
-                    "volumes": [
-                        {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                    ],
-                    "containers": [{
-                        "name": "k8si-hook",
-                        "image": K8SI_IMAGE,
-                        "command": [hook],
-                        "env": [{"name": "DATA_PATH", "value": "/data"}],
-                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                        "resources": {
-                            "requests": {"cpu": "50m", "memory": "64Mi"},
-                            "limits": {"cpu": "200m", "memory": "256Mi"},
-                        },
-                    }],
-                }
-            },
+            "template": {"spec": pod_spec},
         },
     }
     try:
