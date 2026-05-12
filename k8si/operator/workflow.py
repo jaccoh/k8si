@@ -46,10 +46,13 @@ async def run_backup(
 
     # Phase 2: create ephemeral PVC from snapshot, run restic backup, clean up
     snap_pvc_created = False
+    node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
+    if node:
+        logger.info("Pinning backup job to node %s (PVC %s)", node, pvc_name)
     try:
         await snapshot.create_pvc_from_snapshot(snap_pvc, namespace, snap_name, pvc_name)
         snap_pvc_created = True
-        job_body = _build_backup_job(job_name, namespace, snap_pvc, restic_secret, spec, tags, retention)
+        job_body = _build_backup_job(job_name, namespace, snap_pvc, restic_secret, spec, tags, retention, node)
         await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
     finally:
         await snapshot.delete_snapshot_and_pvc(
@@ -131,6 +134,7 @@ def _build_backup_job(
     spec: dict[str, Any],
     tags: list[str],
     retention: dict[str, int],
+    node: str | None = None,
 ) -> dict[str, Any]:
     env: list[dict[str, Any]] = [
         {"name": "MODE", "value": "job"},
@@ -166,6 +170,7 @@ def _build_backup_job(
             "template": {
                 "spec": {
                     "restartPolicy": "Never",
+                    **({"nodeSelector": {"kubernetes.io/hostname": node}} if node else {}),
                     "volumes": [
                         {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
                         {
