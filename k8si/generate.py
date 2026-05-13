@@ -23,12 +23,37 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
 def run(args: argparse.Namespace) -> None:
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
+    print(_fix_ssh_perms_container(args.secret))
     print(_init_container(args, tags))
 
     if not args.no_sidecar:
         print(_sidecar(args, tags))
 
     print(_volume_hint(args))
+
+
+def _fix_ssh_perms_container(secret: str) -> str:
+    return (
+        "# ── initContainers (fix-ssh-perms must come before k8si-restore): ────────────\n"
+        f"      - name: fix-ssh-perms\n"
+        f"        image: busybox:1.37.0\n"
+        f"        securityContext:\n"
+        f"          runAsUser: 0\n"
+        f"        command:\n"
+        f"          - sh\n"
+        f"          - -c\n"
+        f"          - |\n"
+        f"            cp /restic-ssh-secret/id_ed25519 /restic-ssh/id_ed25519\n"
+        f"            cp /restic-ssh-secret/known_hosts /restic-ssh/known_hosts\n"
+        f"            chmod 400 /restic-ssh/id_ed25519\n"
+        f"            chmod 644 /restic-ssh/known_hosts\n"
+        f"        volumeMounts:\n"
+        f"          - name: restic-ssh-secret\n"
+        f"            mountPath: /restic-ssh-secret\n"
+        f"            readOnly: true\n"
+        f"          - name: restic-ssh\n"
+        f"            mountPath: /restic-ssh\n"
+    )
 
 
 def _secret_env(name: str, key: str, secret: str) -> str:
@@ -50,6 +75,9 @@ def _init_container(args: argparse.Namespace, tags: list[str]) -> str:
         "# ── initContainers: ───────────────────────────────────────────────────────────\n"
         f"      - name: k8si-restore\n"
         f"        image: {args.image}\n"
+        f"        securityContext:\n"
+        f"          runAsUser: 0\n"
+        f"          runAsGroup: 0\n"
         f"        env:\n"
         f"          - name: MODE\n"
         f"            value: restore\n"
@@ -121,7 +149,7 @@ def _volume_hint(args: argparse.Namespace) -> str:
 #       - name: {args.pvc}
 #         persistentVolumeClaim:
 #           claimName: {args.pvc}
-      - name: restic-ssh
+      - name: restic-ssh-secret
         secret:
           secretName: {args.secret}
           defaultMode: 0400
@@ -130,4 +158,6 @@ def _volume_hint(args: argparse.Namespace) -> str:
               path: id_ed25519
             - key: known_hosts
               path: known_hosts
+      - name: restic-ssh
+        emptyDir: {{}}
 """

@@ -6,6 +6,7 @@ backup.py, restore.py, or any other caller.
 
 import json
 import logging
+import subprocess
 from pathlib import Path
 
 import sh
@@ -20,9 +21,10 @@ class ResticBackend:
     converted to BackupError so callers never depend on sh internals."""
 
     def __init__(self, env: dict[str, str]) -> None:
+        self._env = env
         sftp_cmd = env.get("RESTIC_SFTP_COMMAND")
-        global_opts = ["-o", f"sftp.command={sftp_cmd}"] if sftp_cmd else []
-        self._r = sh.restic.bake(*global_opts, _env=env, _encoding="utf-8")
+        self._global_opts: list[str] = ["-o", f"sftp.command={sftp_cmd}"] if sftp_cmd else []
+        self._r = sh.restic.bake(*self._global_opts, _env=env, _encoding="utf-8")
 
     # ── BackupBackend protocol ─────────────────────────────────────────────────
 
@@ -31,10 +33,7 @@ class ResticBackend:
 
     def snapshots(self, tags: list[str] | None = None) -> list[dict]:
         tag_args = sum([["--tag", t] for t in (tags or [])], [])
-        try:
-            raw = self._invoke("snapshots", "--json", *tag_args)
-        except BackupError:
-            return []
+        raw = self._invoke("snapshots", "--json", *tag_args)
         data = json.loads(raw.strip() or "[]")
         return data if isinstance(data, list) else []
 
@@ -53,6 +52,55 @@ class ResticBackend:
             except (json.JSONDecodeError, KeyError):
                 pass
         return paths
+
+    def check_sentinels(self, snapshot_id: str, sentinels: list[str]) -> bool:
+        """Stream restic ls line by line; return True iff all sentinels exist (files or dirs).
+
+        Each sentinel like "data/foo" is matched against "/data/data/foo" (subPath layout),
+        "/data/foo" (flat layout), and "data/foo" (bare). Exits the stream early once all
+        sentinels are confirmed, avoiding full traversal of large snapshots.
+        """
+        if not sentinels:
+            return True
+
+        candidates: dict[str, set[str]] = {
+            s: {f"/data/{s}", f"/{s}", s} for s in sentinels
+        }
+        unfound = set(sentinels)
+
+        cmd = ["restic", "ls", "--json", snapshot_id, *self._global_opts]
+        with subprocess.Popen(
+            cmd, env=self._env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace",
+        ) as proc:
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                if not unfound:
+                    proc.kill()
+                    break
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    path = json.loads(raw).get("path", "")
+                except json.JSONDecodeError:
+                    continue
+                for sentinel in list(unfound):
+                    if path in candidates[sentinel]:
+                        unfound.discard(sentinel)
+            _, stderr = proc.communicate()
+            rc = proc.returncode
+            # rc == -9 means we killed it intentionally (all sentinels found early)
+            if rc not in (0, -9) and unfound:
+                raise BackupError(f"restic ls exited {rc}", rc, stderr.strip())
+
+        if unfound:
+            log.warning(
+                "Sentinels not found in snapshot %s: %s", snapshot_id, sorted(unfound)
+            )
+            return False
+        return True
 
     def snapshot_size(self, snapshot_id: str) -> int:
         """Return restore size in bytes (metadata only, no data transfer)."""

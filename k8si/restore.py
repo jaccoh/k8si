@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .backend import BackupBackend, BackupError
+from .backend import BackupBackend, BackupError, NoSnapshotsError
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def run(config: Config, backend: BackupBackend) -> None:
     snapshot_id = config.restore_snapshot
     if snapshot_id:
         log.info("Using pinned snapshot: %s", snapshot_id)
-        if not _sentinels_in_snapshot(backend, snapshot_id, config.restore_sentinels):
+        if config.restore_sentinels and not _sentinels_in_snapshot(backend, snapshot_id, config.restore_sentinels):
             log.error("Pinned snapshot %s is missing required sentinels, aborting", snapshot_id)
             raise SystemExit(1)
     else:
@@ -65,8 +65,12 @@ def run(config: Config, backend: BackupBackend) -> None:
 
 def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
     """Run all pre-restore checks and return an eligible snapshot ID, or None to skip."""
+    try:
+        snapshots = backend.snapshots(tags=config.restore_tags or None)
+    except BackupError as e:
+        log.error("Cannot reach backup repository: %s", e.stderr or e)
+        raise SystemExit(1) from e
 
-    snapshots = backend.snapshots(tags=config.restore_tags or None)
     if not snapshots:
         if config.restore_required:
             log.error(
@@ -128,18 +132,10 @@ def _sentinels_in_snapshot(
     if not sentinels:
         return True
     log.info("Checking sentinels in snapshot %s: %s", snapshot_id, sentinels)
-    paths = set(backend.ls(snapshot_id))
-    for sentinel in sentinels:
-        # restic stores paths as absolute: /data/config.xml
-        candidates = {f"/data/{sentinel}", sentinel}
-        if not candidates & paths:
-            log.warning(
-                "Sentinel %r not found in snapshot %s — skipping restore",
-                sentinel, snapshot_id,
-            )
-            return False
-    log.info("All sentinels confirmed in snapshot %s", snapshot_id)
-    return True
+    found = backend.check_sentinels(snapshot_id, sentinels)
+    if found:
+        log.info("All sentinels confirmed in snapshot %s", snapshot_id)
+    return found
 
 
 def _do_restore(

@@ -1,8 +1,9 @@
 """Tests for the restic backend plugin (k8si.backends.restic)."""
 
 import json
+import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import sh as _sh
@@ -102,11 +103,12 @@ def test_snapshots_passes_tag_filters() -> None:
     )
 
 
-def test_snapshots_returns_empty_list_on_error() -> None:
+def test_snapshots_raises_on_transport_error() -> None:
     backend, mock_cmd = _make_backend()
-    mock_cmd.side_effect = _sh_error(1, "repository not found")
-    result = backend.snapshots()
-    assert result == []
+    mock_cmd.side_effect = _sh_error(1, "ssh: connect to host backup.example.com port 22: Connection refused")
+    with pytest.raises(BackupError) as exc_info:
+        backend.snapshots()
+    assert "Connection refused" in exc_info.value.stderr
 
 
 def test_snapshots_returns_empty_on_empty_output() -> None:
@@ -145,6 +147,62 @@ def test_ls_tolerates_malformed_json_lines() -> None:
     mock_cmd.return_value = "not-json\n{bad}\n"
     result = backend.ls("snap1")
     assert result == []
+
+
+# ── check_sentinels ───────────────────────────────────────────────────────────
+
+def _popen_ctx(lines: list[str], returncode: int = 0) -> MagicMock:
+    """Return a context-manager mock that yields lines from stdout."""
+    proc = MagicMock()
+    proc.stdout = iter(lines)
+    proc.returncode = returncode
+    proc.communicate.return_value = ("", "")
+    ctx = MagicMock()
+    ctx.__enter__.return_value = proc
+    ctx.__exit__.return_value = False
+    return ctx
+
+
+def test_check_sentinels_finds_file_sentinel() -> None:
+    backend, _ = _make_backend()
+    lines = [
+        json.dumps({"type": "file", "path": "/data/config.xml"}) + "\n",
+        json.dumps({"type": "file", "path": "/data/other.txt"}) + "\n",
+    ]
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("abc1234", ["config.xml"]) is True
+
+
+def test_check_sentinels_finds_directory_sentinel() -> None:
+    backend, _ = _make_backend()
+    lines = [
+        json.dumps({"type": "dir", "path": "/data/data/hoeve/files"}) + "\n",
+    ]
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("abc1234", ["data/hoeve/files"]) is True
+
+
+def test_check_sentinels_returns_false_when_missing() -> None:
+    backend, _ = _make_backend()
+    lines = [
+        json.dumps({"type": "file", "path": "/data/other.txt"}) + "\n",
+    ]
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("abc1234", ["config.xml"]) is False
+
+
+def test_check_sentinels_raises_on_restic_error() -> None:
+    backend, _ = _make_backend()
+    lines: list[str] = []  # no output; restic exits non-zero
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines, returncode=1)):
+        with pytest.raises(BackupError):
+            backend.check_sentinels("abc1234", ["config.xml"])
+
+
+def test_check_sentinels_empty_sentinels_returns_true() -> None:
+    backend, _ = _make_backend()
+    with patch("subprocess.Popen", return_value=_popen_ctx([])):
+        assert backend.check_sentinels("abc1234", []) is True
 
 
 # ── snapshot_size ─────────────────────────────────────────────────────────────

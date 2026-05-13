@@ -42,10 +42,31 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
             "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
         })
 
+    fix_ssh_perms: dict[str, Any] = {
+        "name": "fix-ssh-perms",
+        "image": "busybox:1.37.0",
+        "securityContext": {"runAsUser": 0},
+        "command": [
+            "sh", "-c",
+            (
+                "cp /restic-ssh-secret/id_ed25519 /restic-ssh/id_ed25519\n"
+                "cp /restic-ssh-secret/known_hosts /restic-ssh/known_hosts\n"
+                "chmod 400 /restic-ssh/id_ed25519\n"
+                "chmod 644 /restic-ssh/known_hosts\n"
+            ),
+        ],
+        "volumeMounts": [
+            {"name": "restic-ssh-secret", "mountPath": "/restic-ssh-secret", "readOnly": True},
+            {"name": "restic-ssh", "mountPath": "/restic-ssh"},
+        ],
+    }
+
     patch: list[dict[str, Any]] = [
+        fix_ssh_perms,
         {
             "name": "k8si-restore",
             "image": K8SI_IMAGE,
+            "securityContext": {"runAsUser": 0, "runAsGroup": 0},
             "env": env,
             "volumeMounts": [
                 {"name": "data", "mountPath": "/data"},
@@ -53,7 +74,7 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
             ],
         },
         {
-            "name": "restic-ssh",
+            "name": "restic-ssh-secret",
             "secret": {
                 "secretName": restic_secret,
                 "defaultMode": 0o400,
@@ -63,9 +84,13 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
                 ],
             },
         },
+        {
+            "name": "restic-ssh",
+            "emptyDir": {},
+        },
     ]
     header = (
-        "# First item: paste into spec.initContainers\n"
-        "# Second item: paste into spec.volumes (if not already present)\n"
+        "# Items 0-1: paste into spec.initContainers (fix-ssh-perms must come first)\n"
+        "# Items 2-3: paste into spec.volumes (if not already present)\n"
     )
     return header + yaml.dump(patch, default_flow_style=False, sort_keys=False)

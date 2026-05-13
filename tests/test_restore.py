@@ -37,7 +37,7 @@ def make_config(
 
 
 def _backend_with_snapshot(
-    snapshot_id: str = "abc12345", paths: list[str] | None = None
+    snapshot_id: str = "abc12345", sentinels_present: bool = True
 ) -> MagicMock:
     backend = MagicMock()
     backend.snapshots.return_value = [{
@@ -46,7 +46,7 @@ def _backend_with_snapshot(
         "time": "2026-05-07T19:00:00Z",
         "tags": [],
     }]
-    backend.ls.return_value = paths if paths is not None else ["/data/config.xml"]
+    backend.check_sentinels.return_value = sentinels_present
     backend.snapshot_size.return_value = 10 * 1024 * 1024  # 10 MiB
     return backend
 
@@ -97,6 +97,14 @@ def test_fails_when_no_snapshots_and_required(tmp_path: Path) -> None:
         run(make_config(tmp_path, required=True), backend)
 
 
+def test_fails_when_snapshots_raises_transport_error(tmp_path: Path) -> None:
+    from k8si.backend import BackupError
+    backend = MagicMock()
+    backend.snapshots.side_effect = BackupError("connection refused", 1, "ssh: connect: Connection refused")
+    with pytest.raises(SystemExit):
+        run(make_config(tmp_path), backend)
+
+
 def test_fails_when_backend_restore_errors(tmp_path: Path) -> None:
     backend = _backend_with_snapshot()
     backend.restore.side_effect = BackupError("failed", 1, "connection refused")
@@ -107,7 +115,7 @@ def test_fails_when_backend_restore_errors(tmp_path: Path) -> None:
 # ── snapshot quality gates ─────────────────────────────────────────────────────
 
 def test_skips_when_sentinel_missing_from_snapshot(tmp_path: Path) -> None:
-    backend = _backend_with_snapshot(paths=["/data/other-file.txt"])
+    backend = _backend_with_snapshot(sentinels_present=False)
     run(make_config(tmp_path), backend)
     backend.restore.assert_not_called()
 

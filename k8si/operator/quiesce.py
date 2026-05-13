@@ -18,6 +18,16 @@ def _read_secret_sync(namespace: str, secret_name: str) -> dict[str, str]:
     return {k: base64.b64decode(v).decode() for k, v in (secret.data or {}).items()}
 
 
+def _expand_db_host(creds: dict[str, str], namespace: str) -> dict[str, str]:
+    """Expand a short DB_HOST to FQDN so the operator (in k8si-system) can resolve it."""
+    host = creds.get("DB_HOST", "")
+    if host and "." not in host:
+        creds = dict(creds)
+        creds["DB_HOST"] = f"{host}.{namespace}.svc.cluster.local"
+        log.info("Expanded DB_HOST to FQDN: %s", creds["DB_HOST"])
+    return creds
+
+
 def _find_pod_name_sync(namespace: str, selector: dict[str, str]) -> str:
     v1 = kubernetes.client.CoreV1Api()
     label_selector = ",".join(f"{k}={v}" for k, v in selector.items())
@@ -111,6 +121,7 @@ async def quiesce_context(
 
     if db_type == "mariadb":
         creds = await asyncio.to_thread(_read_secret_sync, namespace, db_spec["secretRef"])
+        creds = _expand_db_host(creds, namespace)
         conn = await asyncio.to_thread(_mariadb_ftwrl_sync, creds)
         try:
             yield
@@ -119,6 +130,7 @@ async def quiesce_context(
 
     elif db_type == "postgres":
         creds = await asyncio.to_thread(_read_secret_sync, namespace, db_spec["secretRef"])
+        creds = _expand_db_host(creds, namespace)
         await asyncio.to_thread(_postgres_checkpoint_sync, creds)
         logger.info("Postgres checkpointed; taking snapshot")
         yield

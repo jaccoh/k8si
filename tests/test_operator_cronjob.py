@@ -11,12 +11,17 @@ _BASE_SPEC: dict = {
 }
 
 
-def _patch_env(spec: dict) -> dict[str, str]:
-    """Parse the YAML restore patch and return the container env name→value dict."""
+def _parse_patch(spec: dict) -> list[dict]:
+    """Parse the YAML restore patch into a list of items."""
     raw = build_restore_patch(spec)
     clean = "\n".join(line for line in raw.splitlines() if not line.strip().startswith("#"))
-    items = yaml.safe_load(clean)
-    container = items[0]
+    return yaml.safe_load(clean)
+
+
+def _patch_env(spec: dict) -> dict[str, str]:
+    """Parse the YAML restore patch and return the k8si-restore container env as name→value dict."""
+    items = _parse_patch(spec)
+    container = next(i for i in items if isinstance(i, dict) and i.get("name") == "k8si-restore")
     result = {}
     for e in container["env"]:
         result[e["name"]] = e.get("value", "__secretRef__")
@@ -42,6 +47,39 @@ class TestBuildRestorePatchTags:
         spec = {**_BASE_SPEC, "tags": [], "restore": {"tags": []}}
         env = _patch_env(spec)
         assert "RESTORE_TAGS" not in env
+
+
+class TestBuildRestorePatchFixSshPerms:
+    def test_fix_ssh_perms_container_is_first(self):
+        items = _parse_patch(_BASE_SPEC)
+        assert items[0]["name"] == "fix-ssh-perms"
+
+    def test_k8si_restore_is_second(self):
+        items = _parse_patch(_BASE_SPEC)
+        assert items[1]["name"] == "k8si-restore"
+
+    def test_k8si_restore_has_security_context(self):
+        items = _parse_patch(_BASE_SPEC)
+        restore = items[1]
+        assert restore["securityContext"]["runAsUser"] == 0
+        assert restore["securityContext"]["runAsGroup"] == 0
+
+    def test_fix_ssh_perms_runs_as_root(self):
+        items = _parse_patch(_BASE_SPEC)
+        assert items[0]["securityContext"]["runAsUser"] == 0
+
+    def test_restic_ssh_emptydir_in_volumes(self):
+        items = _parse_patch(_BASE_SPEC)
+        volumes = [i for i in items if "emptyDir" in i or "secret" in i]
+        names = [v["name"] for v in volumes]
+        assert "restic-ssh" in names
+        assert "restic-ssh-secret" in names
+
+    def test_restic_ssh_secret_volume_renamed(self):
+        items = _parse_patch(_BASE_SPEC)
+        secret_vol = next(i for i in items if "secret" in i)
+        assert secret_vol["name"] == "restic-ssh-secret"
+        assert secret_vol["secret"]["secretName"] == "restic-myapp"
 
 
 class TestBuildRestorePatchStructure:
