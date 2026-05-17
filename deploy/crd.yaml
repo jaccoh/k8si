@@ -49,8 +49,7 @@ spec:
                   description: Cron schedule for backups, e.g. "0 3 * * *"
                 volumeSnapshotClass:
                   type: string
-                  default: longhorn
-                  description: VolumeSnapshotClass to use when creating snapshots
+                  description: VolumeSnapshotClass to use; omit to use the cluster-default VolumeSnapshotClass
                 restore:
                   type: object
                   description: Restore init-container configuration and pre-restore sanity checks
