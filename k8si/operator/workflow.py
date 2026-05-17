@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -12,6 +13,8 @@ import kubernetes.client.exceptions
 
 from . import quiesce, snapshot
 from .cronjob import K8SI_IMAGE
+
+_DEFAULT_SNAPSHOT_CLASS = os.environ.get("K8SI_DEFAULT_SNAPSHOT_CLASS", "longhorn")
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +29,7 @@ async def run_backup(
     """Run the full snapshot-first backup. Returns status fields on success."""
     pvc_name = spec["pvc"]
     restic_secret = spec["resticSecret"]
-    snapshot_class = spec.get("volumeSnapshotClass", "longhorn")
+    snapshot_class = spec.get("volumeSnapshotClass") or _DEFAULT_SNAPSHOT_CLASS
     db_spec = spec.get("database")
     hook = spec.get("preSnapshotHook")
     hook_required = spec.get("preSnapshotHookRequired", False)
