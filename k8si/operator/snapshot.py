@@ -18,31 +18,29 @@ _SNAPSHOT_READY_TIMEOUT = 300
 _PVC_BOUND_TIMEOUT = 120
 _JOB_GONE_TIMEOUT = 120
 
-# 1-replica, Delete-policy StorageClass for ephemeral backup PVCs.
-# Avoids the degraded-state issue that Longhorn multi-replica clones hit
-# while building their second replica before the backup job can attach.
-_EPHEMERAL_STORAGE_CLASS = "longhorn-k8si-ephemeral"
 
-
-def _get_pvc_info_sync(pvc_name: str, namespace: str) -> tuple[str, str]:
-    """Returns (accessMode, storage) from source PVC."""
+def _get_pvc_info_sync(pvc_name: str, namespace: str) -> tuple[str, str, str]:
+    """Returns (accessMode, storage, storageClassName) from source PVC."""
     v1 = kubernetes.client.CoreV1Api()
     pvc = v1.read_namespaced_persistent_volume_claim(pvc_name, namespace)
     access_mode = (pvc.spec.access_modes or ["ReadWriteOnce"])[0]
     storage = pvc.spec.resources.requests["storage"]
-    return access_mode, storage
+    storage_class = pvc.spec.storage_class_name or ""
+    return access_mode, storage, storage_class
 
 
-def _create_volume_snapshot_sync(name: str, namespace: str, pvc: str, snapshot_class: str) -> None:
+def _create_volume_snapshot_sync(
+    name: str, namespace: str, pvc: str, snapshot_class: str | None
+) -> None:
     custom = kubernetes.client.CustomObjectsApi()
+    spec: dict = {"source": {"persistentVolumeClaimName": pvc}}
+    if snapshot_class:
+        spec["volumeSnapshotClassName"] = snapshot_class
     body = {
         "apiVersion": f"{_SNAPSHOT_GROUP}/{_SNAPSHOT_VERSION}",
         "kind": "VolumeSnapshot",
         "metadata": {"name": name, "namespace": namespace},
-        "spec": {
-            "volumeSnapshotClassName": snapshot_class,
-            "source": {"persistentVolumeClaimName": pvc},
-        },
+        "spec": spec,
     }
     custom.create_namespaced_custom_object(
         _SNAPSHOT_GROUP, _SNAPSHOT_VERSION, namespace, _SNAPSHOT_PLURAL, body
@@ -68,13 +66,14 @@ def _create_pvc_from_snapshot_sync(
     snapshot_name: str,
     access_mode: str,
     storage: str,
+    storage_class: str,
 ) -> None:
     v1 = kubernetes.client.CoreV1Api()
     body = kubernetes.client.V1PersistentVolumeClaim(
         metadata=kubernetes.client.V1ObjectMeta(name=pvc_name, namespace=namespace),
         spec=kubernetes.client.V1PersistentVolumeClaimSpec(
             access_modes=[access_mode],
-            storage_class_name=_EPHEMERAL_STORAGE_CLASS,
+            storage_class_name=storage_class,
             resources=kubernetes.client.V1VolumeResourceRequirements(
                 requests={"storage": storage}
             ),
@@ -127,8 +126,8 @@ def _delete_volume_snapshot_sync(name: str, namespace: str) -> None:
             raise
 
 
-async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: str) -> None:
-    log.info("Creating VolumeSnapshot %s from PVC %s/%s", name, namespace, pvc)
+async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: str | None) -> None:
+    log.info("Creating VolumeSnapshot %s from PVC %s/%s (class=%s)", name, namespace, pvc, snapshot_class or "<cluster-default>")
     await asyncio.to_thread(_create_volume_snapshot_sync, name, namespace, pvc, snapshot_class)
     log.info("Waiting for VolumeSnapshot %s to be ready", name)
     await asyncio.to_thread(_wait_snapshot_ready_sync, name, namespace)
@@ -138,19 +137,17 @@ async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: s
 async def create_pvc_from_snapshot(
     pvc_name: str, namespace: str, snapshot_name: str, source_pvc: str
 ) -> None:
-    access_mode, storage = await asyncio.to_thread(
+    access_mode, storage, storage_class = await asyncio.to_thread(
         _get_pvc_info_sync, source_pvc, namespace
     )
     log.info(
-        "Creating ephemeral PVC %s from snapshot %s (%s %s %s)",
-        pvc_name, snapshot_name, _EPHEMERAL_STORAGE_CLASS, access_mode, storage,
+        "Creating ephemeral PVC %s from snapshot %s (sc=%s %s %s)",
+        pvc_name, snapshot_name, storage_class, access_mode, storage,
     )
     await asyncio.to_thread(
         _create_pvc_from_snapshot_sync,
-        pvc_name, namespace, snapshot_name, access_mode, storage,
+        pvc_name, namespace, snapshot_name, access_mode, storage, storage_class,
     )
-    # WaitForFirstConsumer: PVC stays Pending until the backup Job pod is scheduled.
-    # Longhorn then creates the volume on the same node as the pod. No wait here.
     log.info("Ephemeral PVC %s created (pending pod scheduling)", pvc_name)
 
 
