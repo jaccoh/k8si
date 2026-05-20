@@ -17,6 +17,18 @@ def wait_pod_phase(ns: str, pod_name: str, phase: str, timeout: int = 180) -> No
         try:
             pod = v1.read_namespaced_pod(pod_name, ns)
             if pod.status and pod.status.phase == phase:
+                # For Running, also verify no container is in a crash/error state
+                if phase == "Running":
+                    bad = [
+                        cs.state.waiting.reason
+                        for cs in (pod.status.container_statuses or [])
+                        if cs.state and cs.state.waiting
+                        and cs.state.waiting.reason in (
+                            "CrashLoopBackOff", "RunContainerError", "OOMKilled", "Error"
+                        )
+                    ]
+                    if bad:
+                        raise RuntimeError(f"Pod {ns}/{pod_name} container error: {bad}")
                 return
         except kubernetes.client.exceptions.ApiException as e:
             if e.status != 404:
