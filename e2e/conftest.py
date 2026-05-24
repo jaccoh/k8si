@@ -113,6 +113,7 @@ def rest_server_url(ns):
                     {
                         "name": "rest-server",
                         "image": "restic/rest-server:latest",
+                        "command": ["/usr/bin/rest-server"],
                         "args": ["--no-auth", "--path", "/data"],
                         "ports": [{"containerPort": 8000}],
                         "volumeMounts": [{"name": "data", "mountPath": "/data"}],
