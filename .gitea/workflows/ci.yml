@@ -88,6 +88,7 @@ jobs:
                   - --context=https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz
                   - --context-sub-path=k8si/
                   - --custom-platform=linux/arm64
+                  - --build-arg=TARGETARCH=arm64
                   - --destination=docker.hoeve.nu/k8si:${SHA}
                   - --destination=docker.hoeve.nu/k8si:latest
                   - --cache=true
