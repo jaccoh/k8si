@@ -234,16 +234,14 @@ def mariadb_env(ns):
                         "readinessProbe": {
                             "exec": {
                                 "command": [
-                                    "mysqladmin",
-                                    "ping",
-                                    "-h",
-                                    "127.0.0.1",
-                                    f"-p{_MARIADB_ROOT_PASSWORD}",
+                                    "healthcheck.sh",
+                                    "--connect",
+                                    "--innodb_initialized",
                                 ],
                             },
                             "initialDelaySeconds": 10,
                             "periodSeconds": 5,
-                            "failureThreshold": 12,
+                            "failureThreshold": 24,
                         },
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
