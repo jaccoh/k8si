@@ -112,7 +112,7 @@ def rest_server_url(ns):
                 "containers": [
                     {
                         "name": "rest-server",
-                        "image": "ghcr.io/restic/rest-server:latest",
+                        "image": "restic/rest-server:latest",
                         "args": ["--no-auth", "--path", "/data"],
                         "ports": [{"containerPort": 8000}],
                         "volumeMounts": [{"name": "data", "mountPath": "/data"}],
