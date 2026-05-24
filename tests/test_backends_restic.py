@@ -95,7 +95,7 @@ def test_snapshots_returns_parsed_list() -> None:
     mock_cmd.return_value = json.dumps(data)
     result = backend.snapshots()
     assert result == data
-    mock_cmd.assert_called_once_with("snapshots", "--json")
+    mock_cmd.assert_called_once_with("snapshots", "--json", _timeout=30)
 
 
 def test_snapshots_passes_tag_filters() -> None:
@@ -103,7 +103,7 @@ def test_snapshots_passes_tag_filters() -> None:
     mock_cmd.return_value = "[]"
     backend.snapshots(tags=["app=sonarr", "env=prod"])
     mock_cmd.assert_called_once_with(
-        "snapshots", "--json", "--tag", "app=sonarr", "--tag", "env=prod"
+        "snapshots", "--json", "--tag", "app=sonarr", "--tag", "env=prod", _timeout=30
     )
 
 
