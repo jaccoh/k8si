@@ -83,7 +83,7 @@ jobs:
                 - name: kaniko
                   image: gcr.io/kaniko-project/executor:latest
                   args:
-                  - --context=http://gitea.gitea.svc.cluster.local:3000/hoeve/k8si.git#${SHA}
+                  - --context=https://git.hoeve.nu/hoeve/k8si.git#${SHA}
                   - --destination=docker.hoeve.nu/k8si:${SHA}
                   - --destination=docker.hoeve.nu/k8si:latest
                   - --cache=true
