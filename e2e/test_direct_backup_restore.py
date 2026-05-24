@@ -9,6 +9,7 @@ import uuid
 
 import kubernetes.client
 
+from e2e.conftest import NODE_NAME, STORAGE_CLASS
 from e2e.helpers import wait_pod_deleted, wait_pod_phase
 from k8si.operator.workflow import run_backup
 
@@ -21,7 +22,7 @@ def _b64(s: str) -> str:
     return base64.b64encode(s.encode()).decode()
 
 
-def test_direct_backup_and_restore(ns, rest_server_url):
+def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
     v1 = kubernetes.client.CoreV1Api()
 
     # 1. Create a PVC for our test application
@@ -34,7 +35,7 @@ def test_direct_backup_and_restore(ns, rest_server_url):
             "metadata": {"name": pvc_name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "local-path",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "100Mi"}},
             },
         },
@@ -53,7 +54,7 @@ def test_direct_backup_and_restore(ns, rest_server_url):
                 "labels": {"app": "e2e-writer-direct"},
             },
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "orbstack"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
@@ -156,7 +157,7 @@ def test_direct_backup_and_restore(ns, rest_server_url):
             "metadata": {"name": pvc_name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "local-path",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "100Mi"}},
             },
         },
@@ -172,7 +173,7 @@ def test_direct_backup_and_restore(ns, rest_server_url):
             "kind": "Pod",
             "metadata": {"name": verifier_name, "namespace": ns},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "orbstack"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
@@ -191,8 +192,7 @@ def test_direct_backup_and_restore(ns, rest_server_url):
                 "initContainers": [
                     {
                         "name": "k8si-restore",
-                        "image": "k8si:dev",
-                        "imagePullPolicy": "Never",
+                        "image": k8si_image,
                         "env": [
                             {"name": "MODE", "value": "restore"},
                             {"name": "RESTORE_SENTINELS", "value": "test.db"},
