@@ -35,7 +35,7 @@ def _find_pod_name_sync(namespace: str, selector: dict[str, str]) -> str:
     running = [p for p in pods.items if p.status and p.status.phase == "Running"]
     if not running:
         raise RuntimeError(f"No running pod with selector {selector!r} in {namespace}")
-    return running[0].metadata.name
+    return running[0].metadata.name  # type: ignore[no-any-return]
 
 
 def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) -> None:

@@ -26,10 +26,10 @@ def _is_due(schedule: str, last_backup_time: str | None) -> bool:
     except ValueError:
         return True
     cron = croniter(schedule, last)
-    return now >= cron.get_next(datetime)  # type: ignore[arg-type]
+    return bool(now >= cron.get_next(datetime))  # type: ignore[arg-type]
 
 
-@kopf.on.startup()
+@kopf.on.startup()  # type: ignore[arg-type]
 def startup(logger: logging.Logger, **_: object) -> None:
     kubernetes.config.load_incluster_config()
     metrics.start()
@@ -60,7 +60,7 @@ def _init_metrics(logger: logging.Logger) -> None:
 # ── CRD lifecycle ──────────────────────────────────────────────────────────────
 
 
-@kopf.on.create("k8si.io", "v1", "k8sibackups")
+@kopf.on.create("k8si.io", "v1", "k8sibackups")  # type: ignore[arg-type]
 def on_create(
     spec: dict,
     name: str,
@@ -75,7 +75,7 @@ def on_create(
     logger.info("K8siBackup %s/%s registered", namespace, name)
 
 
-@kopf.on.update("k8si.io", "v1", "k8sibackups")
+@kopf.on.update("k8si.io", "v1", "k8sibackups")  # type: ignore[arg-type]
 def on_update(
     spec: dict,
     name: str,
@@ -89,7 +89,7 @@ def on_update(
     logger.info("K8siBackup %s/%s updated", namespace, name)
 
 
-@kopf.on.delete("k8si.io", "v1", "k8sibackups")
+@kopf.on.delete("k8si.io", "v1", "k8sibackups")  # type: ignore[arg-type]
 def on_delete(name: str, namespace: str, logger: logging.Logger, **_: object) -> None:
     _running.discard((namespace, name))
     metrics.remove(name, namespace)
@@ -99,7 +99,7 @@ def on_delete(name: str, namespace: str, logger: logging.Logger, **_: object) ->
 # ── Backup timer ───────────────────────────────────────────────────────────────
 
 
-@kopf.timer("k8si.io", "v1", "k8sibackups", interval=60.0, idle=60.0)
+@kopf.timer("k8si.io", "v1", "k8sibackups", interval=60.0, idle=60.0)  # type: ignore[arg-type]
 async def backup_timer(
     spec: dict,
     name: str,

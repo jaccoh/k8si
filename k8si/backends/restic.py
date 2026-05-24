@@ -104,7 +104,7 @@ class ResticBackend:
     def snapshot_size(self, snapshot_id: str) -> int:
         """Return restore size in bytes (metadata only, no data transfer)."""
         raw = self._invoke("stats", "--json", snapshot_id)
-        return json.loads(raw).get("total_size", 0)
+        return int(json.loads(raw).get("total_size", 0))
 
     def restore(self, snapshot_id: str = "latest") -> None:
         try:

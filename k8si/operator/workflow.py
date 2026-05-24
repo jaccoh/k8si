@@ -75,7 +75,7 @@ def _find_pvc_node_sync(pvc_name: str, namespace: str) -> str | None:
                 and vol.persistent_volume_claim.claim_name == pvc_name
                 and pod.spec.node_name
             ):
-                return pod.spec.node_name
+                return pod.spec.node_name  # type: ignore[no-any-return]
     return None
 
 
@@ -236,7 +236,7 @@ def _collect_job_logs(v1: Any, job_name: str, namespace: str) -> str:
     try:
         pods = v1.list_namespaced_pod(namespace, label_selector=f"job-name={job_name}")
         for pod in pods.items:
-            return v1.read_namespaced_pod_log(pod.metadata.name, namespace, tail_lines=50)
+            return v1.read_namespaced_pod_log(pod.metadata.name, namespace, tail_lines=50)  # type: ignore[no-any-return]
     except Exception:
         pass
     return ""
