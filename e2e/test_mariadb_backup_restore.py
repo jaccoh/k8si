@@ -38,6 +38,8 @@ def _mysql_exec(ns: str, pod_name: str, sql: str) -> subprocess.CompletedProcess
             ns,
             "--",
             "mysql",
+            "-u",
+            "root",
             f"-p{_MARIADB_ROOT_PASSWORD}",
             _MARIADB_DATABASE,
             "-e",
