@@ -89,6 +89,14 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
     wait_pod_phase(ns, writer_name, "Running", timeout=180)
     log.info("Writer pod running, KNOWN_VALUE=%s", KNOWN_VALUE)
 
+    # Give the writer a moment to finish the INSERT and commit, then stop it.
+    # OpenEBS LVM is single-attach (RWO): the backup Job cannot mount the PVC
+    # while the writer pod holds it. Delete the writer to release the mount.
+    time.sleep(5)
+    v1.delete_namespaced_pod(writer_name, ns)
+    wait_pod_deleted(ns, writer_name, timeout=60)
+    log.info("Writer pod deleted; PVC is now free for the backup job")
+
     # 3. Create the Restic secret pointing to our local rest-server
     secret_name = "e2e-restic-secret-direct"
     v1.create_namespaced_secret(
@@ -107,21 +115,17 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
         },
     )
 
-    # 4. Construct K8siBackup spec with backupMode: direct
+    # 4. Construct K8siBackup spec with backupMode: direct (no database quiesce needed —
+    #    writer pod is already stopped, PVC is idle)
     spec = {
         "pvc": pvc_name,
         "resticSecret": secret_name,
         "backupMode": "direct",
         "schedule": "0 0 1 1 *",
-        "database": {
-            "type": "sqlite",
-            "podSelector": {"app": "e2e-writer-direct"},
-            "dbPaths": ["/data/test.db"],
-        },
         "restore": {"sentinels": ["test.db"]},
     }
 
-    # 5. Run the direct backup pipeline using Kopia/Restic (default Restic here)
+    # 5. Run the direct backup pipeline
     body = {
         "apiVersion": "k8si.io/v1",
         "kind": "K8siBackup",
@@ -131,11 +135,7 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
     assert result["lastBackupResult"] == "success", f"Unexpected result: {result}"
     log.info("Direct backup succeeded: %s", result)
 
-    # 6. Delete the writer pod
-    v1.delete_namespaced_pod(writer_name, ns)
-    wait_pod_deleted(ns, writer_name, timeout=60)
-
-    # 7. Delete and recreate the PVC to simulate volume loss
+    # 6. Delete and recreate the PVC to simulate volume loss
     v1.delete_namespaced_persistent_volume_claim(pvc_name, ns)
     log.info("Waiting for PVC deletion")
     deadline = time.monotonic() + 120
@@ -164,7 +164,7 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
     )
     log.info("Created fresh empty PVC %s/%s for restore", ns, pvc_name)
 
-    # 8. Start a verifier pod equipped with k8si-restore init container (using local image k8si:dev)
+    # 7. Start a verifier pod equipped with k8si-restore init container
     verifier_name = "e2e-verifier-direct"
     v1.create_namespaced_pod(
         ns,
@@ -249,7 +249,7 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
     wait_pod_phase(ns, verifier_name, "Running", timeout=300)
     log.info("Restore verifier pod running")
 
-    # 9. Verify the SQLite database is successfully restored and populated with our known value
+    # 8. Verify the SQLite database is successfully restored and populated with our known value
     verify_script = (
         "import sqlite3; "
         "db = sqlite3.connect('/data/test.db'); "
