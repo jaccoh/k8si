@@ -61,11 +61,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, arm64]
     steps:
+      - uses: actions/checkout@v4
+
       - name: Build and push image (kaniko)
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
           JOB="kaniko-${SHORT}"
+          WORKDIR="$(pwd)"
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -78,17 +81,27 @@ jobs:
             backoffLimit: 0
             template:
               spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
                 restartPolicy: Never
+                volumes:
+                - name: context
+                  hostPath:
+                    path: ${WORKDIR}
+                    type: Directory
                 containers:
                 - name: kaniko
                   image: gcr.io/kaniko-project/executor:latest
                   args:
-                  - --context=https://git.hoeve.nu/hoeve/k8si.git#${SHA}
+                  - --context=dir:///workspace
                   - --destination=docker.hoeve.nu/k8si:${SHA}
                   - --destination=docker.hoeve.nu/k8si:latest
                   - --cache=true
                   - --cache-repo=docker.hoeve.nu/k8si/cache
                   - --skip-tls-verify-registry=docker.hoeve.nu
+                  volumeMounts:
+                  - name: context
+                    mountPath: /workspace
           YAML
 
           kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m
