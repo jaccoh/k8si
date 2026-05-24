@@ -130,3 +130,37 @@ jobs:
 
       - name: Run e2e tests
         run: uv run pytest e2e/ -v --tb=short
+
+  release:
+    needs: [e2e]
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Gitea release
+        run: |
+          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
+          TAG="v${VERSION}"
+          API="https://git.hoeve.nu/api/v1/repos/hoeve/k8si"
+
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${API}/releases/tags/${TAG}" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}")
+
+          if [ "$STATUS" = "200" ]; then
+            echo "Release ${TAG} already exists, skipping"
+            exit 0
+          fi
+
+          curl -s -X POST "${API}/releases" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"tag_name\": \"${TAG}\",
+              \"target_commitish\": \"${{ github.sha }}\",
+              \"name\": \"${TAG}\",
+              \"body\": \"Docker image: \`docker.hoeve.nu/k8si:${{ github.sha }}\`\"
+            }"
+
+          echo "Published release ${TAG}"
