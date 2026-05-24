@@ -1,4 +1,4 @@
-"""End-to-end integration test: direct backup of live PVC (non-CSI), restore via k8si:dev init container."""
+"""End-to-end: direct backup of live PVC (non-CSI), restore via k8si init container."""
 
 import asyncio
 import base64
@@ -8,7 +8,6 @@ import time
 import uuid
 
 import kubernetes.client
-import pytest
 
 from e2e.helpers import wait_pod_deleted, wait_pod_phase
 from k8si.operator.workflow import run_backup

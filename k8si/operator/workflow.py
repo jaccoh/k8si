@@ -21,15 +21,23 @@ _HOOK_JOB_TIMEOUT = 300
 _JOB_GONE_TIMEOUT = 120
 
 
-def _emit_event(body: dict[str, Any], type_str: str, reason: str, message: str) -> None:
+def _emit_event(
+    body: dict[str, Any] | None, type_str: str, reason: str, message: str
+) -> None:
+    if body is None:
+        return
     try:
-        kopf.event(body, type=type_str, reason=reason, message=message)
+        kopf.event(body, type=type_str, reason=reason, message=message)  # type: ignore[arg-type]
     except Exception:
         pass
 
 
 async def run_backup(
-    name: str, namespace: str, spec: dict[str, Any], logger: logging.Logger, body: dict[str, Any]
+    name: str,
+    namespace: str,
+    spec: dict[str, Any],
+    logger: logging.Logger,
+    body: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Run the full snapshot-first backup. Returns status fields on success."""
     pvc_name = spec["pvc"]
@@ -63,9 +71,9 @@ async def run_backup(
                 job_body = _build_backup_job(
                     job_name, namespace, pvc_name, restic_secret, spec, tags, retention, node
                 )
-                _emit_event(body, "Normal", "BackupJobStarted", f"Starting direct backup Job {job_name}")
+                _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
                 await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
-                _emit_event(body, "Normal", "BackupJobCompleted", f"Backup Job {job_name} completed")
+                _emit_event(body, "Normal", "BackupJobCompleted", f"Job {job_name} completed")
         except Exception as e:
             _emit_event(body, "Warning", "BackupFailed", f"Direct backup failed: {e}")
             raise
@@ -78,9 +86,9 @@ async def run_backup(
                 if hook:
                     _emit_event(body, "Normal", "HookStarted", f"Running pre-snapshot hook: {hook}")
                     await _run_hook_job(hook, hook_required, namespace, pvc_name, logger)
-                _emit_event(body, "Normal", "SnapshotStarted", f"Creating VolumeSnapshot {snap_name}")
+                _emit_event(body, "Normal", "SnapshotStarted", f"Creating snapshot {snap_name}")
                 await snapshot.create_snapshot(snap_name, namespace, pvc_name, snapshot_class)
-                _emit_event(body, "Normal", "SnapshotCreated", f"VolumeSnapshot {snap_name} is ready")
+                _emit_event(body, "Normal", "SnapshotCreated", f"Snapshot {snap_name} ready")
         except Exception as e:
             _emit_event(body, "Warning", "SnapshotFailed", f"Snapshot phase failed: {e}")
             raise

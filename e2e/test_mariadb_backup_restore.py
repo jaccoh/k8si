@@ -29,7 +29,7 @@ def _b64(s: str) -> str:
 
 
 def _mysql_exec(ns: str, pod_name: str, sql: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    result = subprocess.run(
         [
             "kubectl",
             "exec",
@@ -48,8 +48,15 @@ def _mysql_exec(ns: str, pod_name: str, sql: str) -> subprocess.CompletedProcess
         capture_output=True,
         text=True,
         timeout=30,
-        check=True,
+        check=False,
     )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"mysql exec failed (rc={result.returncode})\n"
+            f"stdout: {result.stdout!r}\n"
+            f"stderr: {result.stderr!r}"
+        )
+    return result
 
 
 def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image):
@@ -198,11 +205,9 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
                         "readinessProbe": {
                             "exec": {
                                 "command": [
-                                    "mysqladmin",
-                                    "ping",
-                                    "-h",
-                                    "127.0.0.1",
-                                    f"-p{_MARIADB_ROOT_PASSWORD}",
+                                    "healthcheck.sh",
+                                    "--connect",
+                                    "--innodb_initialized",
                                 ],
                             },
                             "initialDelaySeconds": 15,

@@ -9,7 +9,6 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import sh
 
@@ -22,16 +21,15 @@ class KopiaBackend:
     """Wraps the kopia CLI via sh. All exceptions are converted to BackupError."""
 
     def __init__(self, env: dict[str, str]) -> None:
-        self._env = env
         self._config_file = env.get("KOPIA_CONFIG_PATH", "/tmp/kopia.config")
-        self._password = env.get("RESTIC_PASSWORD") or env.get("KOPIA_PASSWORD", "")
         self._repo = env.get("RESTIC_REPOSITORY", "")
+        # Pass password via env var (not CLI arg) to avoid leaking it in /proc/*/cmdline
+        self._env = dict(env)
+        self._env["KOPIA_PASSWORD"] = env.get("RESTIC_PASSWORD") or env.get("KOPIA_PASSWORD", "")
         self._k = sh.kopia.bake(
             "--config-file",
             self._config_file,
-            "--password",
-            self._password,
-            _env=env,
+            _env=self._env,
             _encoding="utf-8",
         )
         self._connected = False
@@ -58,7 +56,10 @@ class KopiaBackend:
             self._invoke(*args)
             self._connected = True
         except BackupError as e:
-            if "repository not initialized" in e.stderr.lower() or "cannot open" in e.stderr.lower():
+            if (
+                "repository not initialized" in e.stderr.lower()
+                or "cannot open" in e.stderr.lower()
+            ):
                 raise BackupError("repository does not exist", e.returncode, e.stderr) from e
             raise
 
@@ -142,8 +143,8 @@ class KopiaBackend:
         candidates: dict[str, set[str]] = {s: {f"/data/{s}", f"/{s}", s} for s in sentinels}
         unfound = set(sentinels)
 
-        # Stream kopia ls recursively
-        cmd = ["kopia", "--config-file", self._config_file, "--password", self._password, "ls", "-r", snapshot_id]
+        # Stream kopia ls recursively (KOPIA_PASSWORD is in self._env)
+        cmd = ["kopia", "--config-file", self._config_file, "ls", "-r", snapshot_id]
         with subprocess.Popen(
             cmd,
             env=self._env,

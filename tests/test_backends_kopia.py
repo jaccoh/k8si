@@ -4,10 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import sh as _sh
 
-from k8si.backend import BackupError, NoSnapshotsError
 from k8si.backends.kopia import KopiaBackend
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -178,7 +176,9 @@ def test_forget_sets_policy_and_maintenance() -> None:
     mock_cmd.return_value = ""
     
     backend.forget(daily=7, weekly=4, monthly=3)
-    mock_cmd.assert_any_call("policy", "set", "--global", "--keep-daily=7", "--keep-weekly=4", "--keep-monthly=3")
+    mock_cmd.assert_any_call(
+        "policy", "set", "--global", "--keep-daily=7", "--keep-weekly=4", "--keep-monthly=3"
+    )
     mock_cmd.assert_any_call("maintenance", "run")
 
 

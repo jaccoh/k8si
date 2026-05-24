@@ -292,6 +292,31 @@ def mariadb_env(ns):
 
     wait_pod_phase(ns, "mariadb", "Running", timeout=300)
     wait_pod_condition(ns, "mariadb", "Ready", timeout=300)
+
+    # The readiness probe passes via the healthcheck user. Wait until root password
+    # auth also works — the Docker init SQL may still be running after innodb_initialized.
+    deadline = time.monotonic() + 60
+    auth_ok = False
+    while time.monotonic() < deadline:
+        r = subprocess.run(
+            [
+                "kubectl", "exec", "mariadb", "-n", ns, "--",
+                "mysql", "-u", "root", f"-p{_MARIADB_ROOT_PASSWORD}", _MARIADB_DATABASE,
+                "-e", "SELECT 1",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if r.returncode == 0:
+            auth_ok = True
+            break
+        log.debug("MariaDB root auth not ready yet: %s", r.stderr.strip())
+        time.sleep(3)
+    if not auth_ok:
+        raise RuntimeError(f"MariaDB root auth failed after 60s: {r.stderr!r}")
+
     log.info("MariaDB running and ready in %s", ns)
 
     yield pvc_name, secret_name
