@@ -58,26 +58,46 @@ jobs:
 
   docker-build:
     needs: [test]
+    if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, arm64]
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build image
+      - name: Build and push image (kaniko)
         run: |
-          docker build \
-            --build-arg BUILDKIT_INLINE_CACHE=1 \
-            --cache-from docker.hoeve.nu/k8si:latest \
-            -t docker.hoeve.nu/k8si:${{ github.sha }} \
-            .
+          SHA="${{ github.sha }}"
+          SHORT="${SHA::8}"
+          JOB="kaniko-${SHORT}"
 
-      - name: Push image
-        run: docker push docker.hoeve.nu/k8si:${{ github.sha }}
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                - name: kaniko
+                  image: gcr.io/kaniko-project/executor:latest
+                  args:
+                  - --context=http://gitea.gitea.svc.cluster.local:3000/hoeve/k8si.git#${SHA}
+                  - --destination=docker.hoeve.nu/k8si:${SHA}
+                  - --destination=docker.hoeve.nu/k8si:latest
+                  - --cache=true
+                  - --cache-repo=docker.hoeve.nu/k8si/cache
+                  - --skip-tls-verify-registry=docker.hoeve.nu
+          YAML
 
-      - name: Tag latest
-        if: github.ref == 'refs/heads/main'
+          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m
+
+      - name: Cleanup kaniko job
+        if: always()
         run: |
-          docker tag docker.hoeve.nu/k8si:${{ github.sha }} docker.hoeve.nu/k8si:latest
-          docker push docker.hoeve.nu/k8si:latest
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "kaniko-${SHA::8}" --ignore-not-found
 
   e2e:
     needs: [docker-build]
