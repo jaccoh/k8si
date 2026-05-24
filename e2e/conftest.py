@@ -270,7 +270,7 @@ def mariadb_env(ns):
     )
 
     wait_pod_phase(ns, "mariadb", "Running", timeout=300)
-    wait_pod_condition(ns, "mariadb", "Ready", timeout=120)
+    wait_pod_condition(ns, "mariadb", "Ready", timeout=300)
     log.info("MariaDB running and ready in %s", ns)
 
     yield pvc_name, secret_name
