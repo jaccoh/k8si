@@ -33,7 +33,7 @@ class ResticBackend:
 
     def snapshots(self, tags: list[str] | None = None) -> list[dict]:
         tag_args = sum([["--tag", t] for t in (tags or [])], [])
-        raw = self._invoke("snapshots", "--json", *tag_args)
+        raw = self._invoke("snapshots", "--json", *tag_args, timeout=30)
         data = json.loads(raw.strip() or "[]")
         return data if isinstance(data, list) else []
 
@@ -134,15 +134,21 @@ class ResticBackend:
 
     # ── internal ───────────────────────────────────────────────────────────────
 
-    def _invoke(self, *args: str) -> str:
+    def _invoke(self, *args: str, timeout: int | None = None) -> str:
         log.debug("restic %s", " ".join(args))
+        kwargs: dict[str, object] = {}
+        if timeout is not None:
+            kwargs["_timeout"] = timeout
         try:
-            result = self._r(*args)
+            result = self._r(*args, **kwargs)
             output = str(result)
             for line in output.splitlines():
                 if line.strip():
                     log.info("restic: %s", line)
             return output
+        except sh.TimeoutException:
+            log.error("restic %s timed out after %ds", args[0], timeout)
+            raise BackupError(f"restic {args[0]} timed out after {timeout}s", 1, "timeout")
         except sh.ErrorReturnCode as e:
             raw_stderr = e.stderr
             stderr = (
