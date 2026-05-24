@@ -93,7 +93,9 @@ class Config:
                 backup_schedule = _require("BACKUP_SCHEDULE", "cron expression, e.g. '0 * * * *'")
             hook_str = os.environ.get("PRE_SNAPSHOT_HOOK")
             pre_snapshot_hook = Path(hook_str) if hook_str else None
-            pre_snapshot_hook_required = os.environ.get("PRE_SNAPSHOT_HOOK_REQUIRED", "false").lower() == "true"
+            pre_snapshot_hook_required = (
+                os.environ.get("PRE_SNAPSHOT_HOOK_REQUIRED", "false").lower() == "true"
+            )
             tags_str = os.environ.get("BACKUP_TAGS", "")
             backup_tags = [t.strip() for t in tags_str.split(",") if t.strip()]
 

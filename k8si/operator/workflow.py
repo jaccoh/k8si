@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import kubernetes
@@ -33,7 +33,7 @@ async def run_backup(
     tags = spec.get("tags", [])
     retention = spec.get("retention", {})
 
-    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
     snap_name = f"k8si-{name}-{ts}"
     snap_pvc = f"k8si-snap-{name}-{ts}"
     job_name = f"k8si-{name}-{ts}"
@@ -52,14 +52,16 @@ async def run_backup(
     try:
         await snapshot.create_pvc_from_snapshot(snap_pvc, namespace, snap_name, pvc_name)
         snap_pvc_created = True
-        job_body = _build_backup_job(job_name, namespace, snap_pvc, restic_secret, spec, tags, retention, node)
+        job_body = _build_backup_job(
+            job_name, namespace, snap_pvc, restic_secret, spec, tags, retention, node
+        )
         await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
     finally:
         await snapshot.delete_snapshot_and_pvc(
             namespace, snap_name, snap_pvc if snap_pvc_created else None
         )
 
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     return {"lastBackupResult": "success", "lastBackupTime": now, "message": ""}
 
 
@@ -87,7 +89,7 @@ async def _run_hook_job(
     node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
     if node:
         logger.info("Pinning hook job to node %s (PVC %s)", node, pvc_name)
-    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f")[:17]
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S%f")[:17]
     job_name = f"k8si-hook-{ts}"
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",

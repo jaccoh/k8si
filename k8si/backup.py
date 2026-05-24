@@ -3,7 +3,7 @@
 import logging
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from croniter import croniter
@@ -30,11 +30,11 @@ def run(config: Config, backend: BackupBackend) -> None:
         config.restic_repository,
     )
 
-    cron = croniter(config.backup_schedule, datetime.now(tz=timezone.utc))
+    cron = croniter(config.backup_schedule, datetime.now(tz=UTC))
 
     while True:
         next_run: datetime = cron.get_next(datetime)  # type: ignore[assignment]
-        delay = (next_run - datetime.now(tz=timezone.utc)).total_seconds()
+        delay = (next_run - datetime.now(tz=UTC)).total_seconds()
         log.info("Next backup at %s (in %.0fs)", next_run.isoformat(), delay)
         time.sleep(max(0, delay))
 
@@ -90,6 +90,6 @@ def _run_hook(hook: Path, *, required: bool = False) -> None:
 def _write_last_backup_timestamp(data_path: Path) -> None:
     ts_file = data_path / LAST_BACKUP_FILE
     try:
-        ts_file.write_text(datetime.now(tz=timezone.utc).isoformat())
+        ts_file.write_text(datetime.now(tz=UTC).isoformat())
     except OSError as e:
         log.warning("Could not write last-backup timestamp: %s", e)

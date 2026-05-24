@@ -1,7 +1,6 @@
 """Generate init container + sidecar YAML for a deployment manifest."""
 
 import argparse
-import sys
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]

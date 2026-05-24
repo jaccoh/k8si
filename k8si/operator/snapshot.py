@@ -127,7 +127,10 @@ def _delete_volume_snapshot_sync(name: str, namespace: str) -> None:
 
 
 async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: str | None) -> None:
-    log.info("Creating VolumeSnapshot %s from PVC %s/%s (class=%s)", name, namespace, pvc, snapshot_class or "<cluster-default>")
+    log.info(
+        "Creating VolumeSnapshot %s from PVC %s/%s (class=%s)",
+        name, namespace, pvc, snapshot_class or "<cluster-default>",
+    )
     await asyncio.to_thread(_create_volume_snapshot_sync, name, namespace, pvc, snapshot_class)
     log.info("Waiting for VolumeSnapshot %s to be ready", name)
     await asyncio.to_thread(_wait_snapshot_ready_sync, name, namespace)

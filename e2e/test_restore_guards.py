@@ -107,7 +107,7 @@ def _make_restore_pod(
 
 
 def test_restore_required_fails_when_repo_unreachable(ns, k8si_image):
-    """Init container must exit non-zero when RESTORE_REQUIRED=true and restic repo is unreachable."""
+    """Init container must exit non-zero when RESTORE_REQUIRED=true and repo is unreachable."""
     v1 = kubernetes.client.CoreV1Api()
 
     pvc_name = "guard-required-pvc"

@@ -1,16 +1,16 @@
 """Kopf operator: reconciles K8siBackup CRDs and runs snapshot-first backup pipeline."""
 
 import logging
+from datetime import UTC, datetime
 
 import kopf
 import kubernetes
 import kubernetes.client
+from croniter import croniter
 
+from . import metrics, workflow
 from .cronjob import K8SI_IMAGE, build_restore_patch
 from .status import compute_next_backup
-from . import metrics, workflow
-from croniter import croniter
-from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ _running: set[tuple[str, str]] = set()
 
 
 def _is_due(schedule: str, last_backup_time: str | None) -> bool:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     if last_backup_time is None:
         return True
     try:
@@ -49,7 +49,10 @@ def _init_metrics(logger: logging.Logger) -> None:
         name = obj["metadata"]["name"]
         namespace = obj["metadata"]["namespace"]
         status = obj.get("status", {})
-        metrics.record(name, namespace, status.get("lastBackupResult", ""), status.get("lastBackupTime"))
+        metrics.record(
+            name, namespace,
+            status.get("lastBackupResult", ""), status.get("lastBackupTime"),
+        )
 
 
 # ── CRD lifecycle ──────────────────────────────────────────────────────────────

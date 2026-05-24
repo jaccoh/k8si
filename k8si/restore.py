@@ -2,7 +2,7 @@
 
 import fcntl
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .backend import BackupBackend, BackupError, NoSnapshotsError
@@ -91,7 +91,7 @@ def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
     # Age check (opt-in)
     if config.restore_max_age_hours is not None:
         snap_time = datetime.fromisoformat(snap_time_str.replace("Z", "+00:00"))
-        age_hours = (datetime.now(timezone.utc) - snap_time).total_seconds() / 3600
+        age_hours = (datetime.now(UTC) - snap_time).total_seconds() / 3600
         if age_hours > config.restore_max_age_hours:
             log.warning(
                 "Skipping restore: latest snapshot %s is %.1fh old (max %.0fh)",
