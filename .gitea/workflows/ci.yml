@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  lint:
     runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v4
@@ -15,6 +15,40 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy k8si/
+
+  test:
+    needs: [lint]
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ hashFiles('pyproject.toml') }}
 
       - name: Install dependencies
         run: uv sync
@@ -22,10 +56,36 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short
 
-  e2e:
+  docker-build:
     needs: [test]
     runs-on: [self-hosted, arm64]
-    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from docker.hoeve.nu/k8si:latest \
+            -t docker.hoeve.nu/k8si:${{ github.sha }} \
+            .
+
+      - name: Push image
+        run: docker push docker.hoeve.nu/k8si:${{ github.sha }}
+
+      - name: Tag latest
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag docker.hoeve.nu/k8si:${{ github.sha }} docker.hoeve.nu/k8si:latest
+          docker push docker.hoeve.nu/k8si:latest
+
+  e2e:
+    needs: [docker-build]
+    runs-on: [self-hosted, arm64]
+    timeout-minutes: 30
+    env:
+      IMAGE_TAG: ${{ github.sha }}
+      K8SI_IMAGE: docker.hoeve.nu/k8si:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +93,12 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ hashFiles('pyproject.toml') }}
 
       - name: Install dependencies
         run: uv sync

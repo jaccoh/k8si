@@ -37,6 +37,24 @@ def wait_pod_phase(ns: str, pod_name: str, phase: str, timeout: int = 180) -> No
     raise TimeoutError(f"Pod {ns}/{pod_name} did not reach phase {phase!r} within {timeout}s")
 
 
+def wait_pod_condition(ns: str, pod_name: str, condition_type: str = "Ready", timeout: int = 120) -> None:
+    v1 = kubernetes.client.CoreV1Api()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            pod = v1.read_namespaced_pod(pod_name, ns)
+            for cond in (pod.status.conditions or []):
+                if cond.type == condition_type and cond.status == "True":
+                    return
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status != 404:
+                raise
+        time.sleep(3)
+    raise TimeoutError(
+        f"Pod {ns}/{pod_name} condition {condition_type!r} not True within {timeout}s"
+    )
+
+
 def wait_pod_deleted(ns: str, pod_name: str, timeout: int = 60) -> None:
     v1 = kubernetes.client.CoreV1Api()
     deadline = time.monotonic() + timeout
@@ -49,6 +67,25 @@ def wait_pod_deleted(ns: str, pod_name: str, timeout: int = 60) -> None:
             raise
         time.sleep(3)
     raise TimeoutError(f"Pod {ns}/{pod_name} was not deleted within {timeout}s")
+
+
+def wait_init_container_failed(ns: str, pod_name: str, timeout: int = 120) -> int:
+    """Wait until an init container terminates with non-zero exit code. Returns the exit code."""
+    v1 = kubernetes.client.CoreV1Api()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            pod = v1.read_namespaced_pod(pod_name, ns)
+            for cs in (pod.status.init_container_statuses or []):
+                if cs.state and cs.state.terminated and cs.state.terminated.exit_code != 0:
+                    return cs.state.terminated.exit_code
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status != 404:
+                raise
+        time.sleep(3)
+    raise TimeoutError(
+        f"No failing init container in {ns}/{pod_name} within {timeout}s"
+    )
 
 
 def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:

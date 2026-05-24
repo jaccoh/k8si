@@ -20,7 +20,7 @@ def _b64(s: str) -> str:
     return base64.b64encode(s.encode()).decode()
 
 
-def test_sqlite_backup_and_restore(ns, rest_server_url, data_pvc):
+def test_sqlite_backup_and_restore(ns, rest_server_url, data_pvc, k8si_image):
     v1 = kubernetes.client.CoreV1Api()
 
     writer_name = "e2e-writer"
@@ -147,7 +147,7 @@ def test_sqlite_backup_and_restore(ns, rest_server_url, data_pvc):
                 ],
                 "initContainers": [{
                     "name": "k8si-restore",
-                    "image": "ghcr.io/jaccoh/k8si:latest",
+                    "image": k8si_image,
                     "env": [
                         {"name": "MODE", "value": "restore"},
                         {"name": "RESTORE_SENTINELS", "value": "test.db"},
