@@ -47,6 +47,11 @@ spec:
                 schedule:
                   type: string
                   description: Cron schedule for backups, e.g. "0 3 * * *"
+                backupMode:
+                  type: string
+                  enum: [snapshot, direct]
+                  default: snapshot
+                  description: Backup mode (snapshot = CSI VolumeSnapshot-first, direct = direct live volume backup)
                 volumeSnapshotClass:
                   type: string
                   description: VolumeSnapshotClass to use; omit to use the cluster-default VolumeSnapshotClass

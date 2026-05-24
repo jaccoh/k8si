@@ -356,3 +356,13 @@ def test_invoke_records_exit_code() -> None:
     with pytest.raises(BackupError) as exc_info:
         backend.init()
     assert exc_info.value.returncode == 3
+
+
+# ── unlock ────────────────────────────────────────────────────────────────────
+
+
+def test_unlock_calls_restic_unlock() -> None:
+    backend, mock_cmd = _make_backend()
+    mock_cmd.return_value = "unlocked"
+    backend.unlock()
+    mock_cmd.assert_called_once_with("unlock")

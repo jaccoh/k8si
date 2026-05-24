@@ -21,6 +21,27 @@ _POSTGRES_PASSWORD = "e2etest"
 _POSTGRES_DB = "testdb"
 
 
+def _detect_environment() -> tuple[str, str]:
+    """Detect cluster nodes and return (node_name, storage_class_name)."""
+    try:
+        import kubernetes.client
+        import kubernetes.config
+        try:
+            kubernetes.config.load_incluster_config()
+        except kubernetes.config.ConfigException:
+            kubernetes.config.load_kube_config()
+        v1 = kubernetes.client.CoreV1Api()
+        nodes = [n.metadata.name for n in v1.list_node().items]
+        if "orbstack" in nodes:
+            return "orbstack", "local-path"
+    except Exception:
+        pass
+    return "hoeve-worker01", "openebs-lvm-worker-thin"
+
+
+NODE_NAME, STORAGE_CLASS = _detect_environment()
+
+
 def _b64(s: str) -> str:
     return base64.b64encode(s.encode()).decode()
 
@@ -37,6 +58,8 @@ def k8si_image():
     tag = os.environ.get("IMAGE_TAG")
     if tag:
         return f"docker.hoeve.nu/k8si:{tag}"
+    if NODE_NAME == "orbstack":
+        return "k8si:dev"
     return "ghcr.io/jaccoh/k8si:latest"
 
 
@@ -90,7 +113,7 @@ def rest_server_url(ns):
             "metadata": {"name": pvc_name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "openebs-lvm-worker-thin",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "500Mi"}},
             },
         },
@@ -104,7 +127,7 @@ def rest_server_url(ns):
             "kind": "Pod",
             "metadata": {"name": pod_name, "namespace": ns, "labels": {"app": "restic-rest"}},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Always",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
@@ -161,7 +184,7 @@ def data_pvc(ns):
             "metadata": {"name": pvc_name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "openebs-lvm-worker-thin",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "100Mi"}},
             },
         },
@@ -189,7 +212,7 @@ def mariadb_env(ns):
             "metadata": {"name": pvc_name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "openebs-lvm-worker-thin",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "500Mi"}},
             },
         },
@@ -219,7 +242,7 @@ def mariadb_env(ns):
             "kind": "Pod",
             "metadata": {"name": "mariadb", "namespace": ns, "labels": {"app": "mariadb"}},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Always",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
                 "containers": [
@@ -269,6 +292,31 @@ def mariadb_env(ns):
 
     wait_pod_phase(ns, "mariadb", "Running", timeout=300)
     wait_pod_condition(ns, "mariadb", "Ready", timeout=300)
+
+    # The readiness probe passes via the healthcheck user. Wait until root password
+    # auth also works — the Docker init SQL may still be running after innodb_initialized.
+    deadline = time.monotonic() + 60
+    auth_ok = False
+    while time.monotonic() < deadline:
+        r = subprocess.run(
+            [
+                "kubectl", "exec", "mariadb", "-n", ns, "--",
+                "mysql", "-u", "root", f"-p{_MARIADB_ROOT_PASSWORD}", _MARIADB_DATABASE,
+                "-e", "SELECT 1",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if r.returncode == 0:
+            auth_ok = True
+            break
+        log.debug("MariaDB root auth not ready yet: %s", r.stderr.strip())
+        time.sleep(3)
+    if not auth_ok:
+        raise RuntimeError(f"MariaDB root auth failed after 60s: {r.stderr!r}")
+
     log.info("MariaDB running and ready in %s", ns)
 
     yield pvc_name, secret_name
@@ -293,7 +341,7 @@ def postgres_env(ns):
             "metadata": {"name": pvc_name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "openebs-lvm-worker-thin",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "500Mi"}},
             },
         },
@@ -323,7 +371,7 @@ def postgres_env(ns):
             "kind": "Pod",
             "metadata": {"name": "postgres", "namespace": ns, "labels": {"app": "postgres"}},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Always",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
                 "containers": [

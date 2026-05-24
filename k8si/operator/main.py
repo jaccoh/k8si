@@ -62,6 +62,7 @@ def _init_metrics(logger: logging.Logger) -> None:
 
 @kopf.on.create("k8si.io", "v1", "k8sibackups")  # type: ignore[arg-type]
 def on_create(
+    body: dict,
     spec: dict,
     name: str,
     namespace: str,
@@ -73,10 +74,12 @@ def on_create(
     patch.status["nextBackupTime"] = compute_next_backup(spec["schedule"])
     patch.status["restorePatch"] = build_restore_patch(spec)
     logger.info("K8siBackup %s/%s registered", namespace, name)
+    kopf.event(body, type="Normal", reason="Registered", message=f"K8siBackup {name} registered")
 
 
 @kopf.on.update("k8si.io", "v1", "k8sibackups")  # type: ignore[arg-type]
 def on_update(
+    body: dict,
     spec: dict,
     name: str,
     namespace: str,
@@ -87,6 +90,7 @@ def on_update(
     patch.status["nextBackupTime"] = compute_next_backup(spec["schedule"])
     patch.status["restorePatch"] = build_restore_patch(spec)
     logger.info("K8siBackup %s/%s updated", namespace, name)
+    kopf.event(body, type="Normal", reason="Updated", message=f"K8siBackup {name} updated")
 
 
 @kopf.on.delete("k8si.io", "v1", "k8sibackups")  # type: ignore[arg-type]
@@ -101,6 +105,7 @@ def on_delete(name: str, namespace: str, logger: logging.Logger, **_: object) ->
 
 @kopf.timer("k8si.io", "v1", "k8sibackups", interval=60.0, idle=60.0)  # type: ignore[arg-type]
 async def backup_timer(
+    body: dict,
     spec: dict,
     name: str,
     namespace: str,
@@ -123,15 +128,18 @@ async def backup_timer(
     _running.add(key)
     patch.status["lastBackupResult"] = "running"
     metrics.record(name, namespace, "running", last_backup)
+    kopf.event(body, type="Normal", reason="BackupStarted", message=f"PVC backup started for {name}")
     try:
-        result = await workflow.run_backup(name, namespace, spec, logger)
+        result = await workflow.run_backup(name, namespace, spec, logger, body)
         patch.status.update(result)
         patch.status["nextBackupTime"] = compute_next_backup(schedule)
         metrics.record(name, namespace, "success", result.get("lastBackupTime"))
+        kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"PVC backup succeeded for {name}")
     except Exception as e:
         logger.error("Backup %s/%s failed: %s", namespace, name, e)
         patch.status["lastBackupResult"] = "failed"
         patch.status["message"] = str(e)
         metrics.record(name, namespace, "failed", last_backup)
+        kopf.event(body, type="Warning", reason="BackupFailed", message=f"PVC backup failed: {e}")
     finally:
         _running.discard(key)

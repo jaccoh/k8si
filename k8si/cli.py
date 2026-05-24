@@ -5,6 +5,8 @@ import logging
 import os
 import sys
 
+from .backend import BackupBackend
+from .backends.kopia import KopiaBackend
 from .backends.restic import ResticBackend
 from .config import Config, ConfigError
 
@@ -35,7 +37,11 @@ def main() -> None:
         log.error("Configuration error: %s", e)
         sys.exit(1)
 
-    backend = ResticBackend(env=_build_restic_env(config))
+    backend: BackupBackend
+    if config.backend_type == "kopia":
+        backend = KopiaBackend(env=_build_restic_env(config))
+    else:
+        backend = ResticBackend(env=_build_restic_env(config))
 
     if config.mode == "restore":
         from . import restore

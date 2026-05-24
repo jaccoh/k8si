@@ -56,6 +56,14 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
             except BackupError as init_err:
                 log.error("Backup failed after init: %s", init_err.stderr)
                 return
+        elif "lock" in e.stderr.lower() or "locked" in e.stderr.lower():
+            log.warning("Repository is locked, attempting automated unlock and retry")
+            try:
+                backend.unlock()
+                backend.backup(source=config.data_path, tags=config.backup_tags)
+            except BackupError as retry_err:
+                log.error("Backup failed after unlock retry: %s", retry_err.stderr)
+                return
         else:
             log.error("Backup failed (will retry next cycle): %s", e.stderr)
             return
@@ -68,8 +76,22 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
             prune=True,
         )
     except BackupError as e:
-        log.error("Forget/prune failed: %s", e.stderr)
-        return
+        if "lock" in e.stderr.lower() or "locked" in e.stderr.lower():
+            log.warning("Repository is locked during forget, attempting automated unlock and retry")
+            try:
+                backend.unlock()
+                backend.forget(
+                    daily=config.retention_daily,
+                    weekly=config.retention_weekly,
+                    monthly=config.retention_monthly,
+                    prune=True,
+                )
+            except BackupError as retry_err:
+                log.error("Forget failed after unlock retry: %s", retry_err.stderr)
+                return
+        else:
+            log.error("Forget/prune failed: %s", e.stderr)
+            return
 
     _write_last_backup_timestamp(config.data_path)
     log.info("PVC backup complete.")

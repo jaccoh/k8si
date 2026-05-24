@@ -89,6 +89,34 @@ def test_forget_error_does_not_raise(tmp_path: Path) -> None:
     """Forget/prune failure is logged but doesn't crash the sidecar."""
     config = make_config(tmp_path)
     backend = MagicMock()
-    backend.forget.side_effect = BackupError("prune failed", 1, "locks held")
+    backend.forget.side_effect = BackupError("prune failed", 1, "other error")
     _run_cycle(config, backend)  # must not raise
     assert not (tmp_path / LAST_BACKUP_FILE).exists()
+
+
+def test_backup_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
+    """When backup fails with locked error, unlock is called and backup retried."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.backup.side_effect = [
+        BackupError("failed", 1, "repository is locked by another process"),
+        None,  # succeeds after unlock
+    ]
+    _run_cycle(config, backend)
+    backend.unlock.assert_called_once()
+    assert backend.backup.call_count == 2
+    assert (tmp_path / LAST_BACKUP_FILE).exists()
+
+
+def test_forget_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
+    """When forget fails with locked error, unlock is called and forget retried."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.forget.side_effect = [
+        BackupError("failed", 1, "repository is locked"),
+        None,  # succeeds after unlock
+    ]
+    _run_cycle(config, backend)
+    backend.unlock.assert_called_once()
+    assert backend.forget.call_count == 2
+    assert (tmp_path / LAST_BACKUP_FILE).exists()
