@@ -19,10 +19,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG RESTIC_VERSION=0.18.1
+ARG KOPIA_VERSION=0.15.0
 ARG TARGETARCH
 RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${TARGETARCH}.bz2" \
     | bunzip2 > /usr/local/bin/restic \
-    && chmod +x /usr/local/bin/restic
+    && chmod +x /usr/local/bin/restic \
+    && if [ "$TARGETARCH" = "amd64" ]; then KOPIA_ARCH="x64"; else KOPIA_ARCH="arm64"; fi \
+    && curl -fsSL "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
+    | tar -xz --strip-components=1 -C /usr/local/bin "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}/kopia" \
+    && chmod +x /usr/local/bin/kopia
 
 COPY --from=builder /usr/local/lib/python3.14 /usr/local/lib/python3.14
 COPY --from=builder /usr/local/bin/k8si /usr/local/bin/k8si

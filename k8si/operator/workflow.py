@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+import kopf
 import kubernetes
 import kubernetes.client
 import kubernetes.client.exceptions
@@ -20,8 +21,15 @@ _HOOK_JOB_TIMEOUT = 300
 _JOB_GONE_TIMEOUT = 120
 
 
+def _emit_event(body: dict[str, Any], type_str: str, reason: str, message: str) -> None:
+    try:
+        kopf.event(body, type=type_str, reason=reason, message=message)
+    except Exception:
+        pass
+
+
 async def run_backup(
-    name: str, namespace: str, spec: dict[str, Any], logger: logging.Logger
+    name: str, namespace: str, spec: dict[str, Any], logger: logging.Logger, body: dict[str, Any]
 ) -> dict[str, str]:
     """Run the full snapshot-first backup. Returns status fields on success."""
     pvc_name = spec["pvc"]
@@ -37,29 +45,67 @@ async def run_backup(
     snap_name = f"k8si-{name}-{ts}"
     snap_pvc = f"k8si-snap-{name}-{ts}"
     job_name = f"k8si-{name}-{ts}"
+    backup_mode = spec.get("backupMode", "snapshot")
 
-    # Phase 1: quiesce DB, run optional pre-snapshot hook, take snapshot, unquiesce
-    async with quiesce.quiesce_context(db_spec, namespace, logger):
-        if hook:
-            await _run_hook_job(hook, hook_required, namespace, pvc_name, logger)
-        await snapshot.create_snapshot(snap_name, namespace, pvc_name, snapshot_class)
+    if backup_mode == "direct":
+        if db_spec:
+            _emit_event(body, "Normal", "QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
+        try:
+            async with quiesce.quiesce_context(db_spec, namespace, logger):
+                if hook:
+                    _emit_event(body, "Normal", "HookStarted", f"Running pre-snapshot hook: {hook}")
+                    await _run_hook_job(hook, hook_required, namespace, pvc_name, logger)
+                
+                node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
+                if node:
+                    logger.info("Pinning backup job to node %s (PVC %s)", node, pvc_name)
+                
+                job_body = _build_backup_job(
+                    job_name, namespace, pvc_name, restic_secret, spec, tags, retention, node
+                )
+                _emit_event(body, "Normal", "BackupJobStarted", f"Starting direct backup Job {job_name}")
+                await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
+                _emit_event(body, "Normal", "BackupJobCompleted", f"Backup Job {job_name} completed")
+        except Exception as e:
+            _emit_event(body, "Warning", "BackupFailed", f"Direct backup failed: {e}")
+            raise
+    else:
+        if db_spec:
+            _emit_event(body, "Normal", "QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
+        # Phase 1: quiesce DB, run optional pre-snapshot hook, take snapshot, unquiesce
+        try:
+            async with quiesce.quiesce_context(db_spec, namespace, logger):
+                if hook:
+                    _emit_event(body, "Normal", "HookStarted", f"Running pre-snapshot hook: {hook}")
+                    await _run_hook_job(hook, hook_required, namespace, pvc_name, logger)
+                _emit_event(body, "Normal", "SnapshotStarted", f"Creating VolumeSnapshot {snap_name}")
+                await snapshot.create_snapshot(snap_name, namespace, pvc_name, snapshot_class)
+                _emit_event(body, "Normal", "SnapshotCreated", f"VolumeSnapshot {snap_name} is ready")
+        except Exception as e:
+            _emit_event(body, "Warning", "SnapshotFailed", f"Snapshot phase failed: {e}")
+            raise
 
-    # Phase 2: create ephemeral PVC from snapshot, run restic backup, clean up
-    snap_pvc_created = False
-    node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
-    if node:
-        logger.info("Pinning backup job to node %s (PVC %s)", node, pvc_name)
-    try:
-        await snapshot.create_pvc_from_snapshot(snap_pvc, namespace, snap_name, pvc_name)
-        snap_pvc_created = True
-        job_body = _build_backup_job(
-            job_name, namespace, snap_pvc, restic_secret, spec, tags, retention, node
-        )
-        await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
-    finally:
-        await snapshot.delete_snapshot_and_pvc(
-            namespace, snap_name, snap_pvc if snap_pvc_created else None
-        )
+        # Phase 2: create ephemeral PVC from snapshot, run restic backup, clean up
+        snap_pvc_created = False
+        node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
+        if node:
+            logger.info("Pinning backup job to node %s (PVC %s)", node, pvc_name)
+        try:
+            await snapshot.create_pvc_from_snapshot(snap_pvc, namespace, snap_name, pvc_name)
+            snap_pvc_created = True
+            job_body = _build_backup_job(
+                job_name, namespace, snap_pvc, restic_secret, spec, tags, retention, node
+            )
+            _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
+            await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
+            _emit_event(body, "Normal", "BackupJobCompleted", f"Backup Job {job_name} completed")
+        except Exception as e:
+            _emit_event(body, "Warning", "BackupFailed", f"Backup phase failed: {e}")
+            raise
+        finally:
+            await snapshot.delete_snapshot_and_pvc(
+                namespace, snap_name, snap_pvc if snap_pvc_created else None
+            )
 
     now = datetime.now(tz=UTC).isoformat()
     return {"lastBackupResult": "success", "lastBackupTime": now, "message": ""}

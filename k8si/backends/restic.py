@@ -132,6 +132,9 @@ class ResticBackend:
             args.append("--prune")
         self._invoke(*args)
 
+    def unlock(self) -> None:
+        self._invoke("unlock")
+
     # ── internal ───────────────────────────────────────────────────────────────
 
     def _invoke(self, *args: str, timeout: int | None = None) -> str:

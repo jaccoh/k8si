@@ -16,6 +16,7 @@ class Config:
     restic_repository: str
     restic_password: str | None
     restic_password_file: Path | None
+    backend_type: str = "restic"
 
     # restore
     restore_sentinels: list[str] = field(default_factory=list)
@@ -40,6 +41,10 @@ class Config:
         mode = _require("MODE", "restore | backup | job")
         if mode not in ("restore", "backup", "job"):
             raise ConfigError(f"MODE must be 'restore', 'backup', or 'job', got: {mode!r}")
+
+        backend_type = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
+        if backend_type not in ("restic", "kopia"):
+            raise ConfigError(f"BACKEND_TYPE must be 'restic' or 'kopia', got: {backend_type!r}")
 
         data_path = Path(os.environ.get("DATA_PATH", "/data"))
         restic_repository = _require("RESTIC_REPOSITORY", "restic repository URL")
@@ -105,6 +110,7 @@ class Config:
             restic_repository=restic_repository,
             restic_password=restic_password,
             restic_password_file=restic_password_file,
+            backend_type=backend_type,
             restore_sentinels=restore_sentinels,
             restore_required=restore_required,
             restore_max_age_hours=restore_max_age_hours,
