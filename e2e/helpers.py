@@ -22,10 +22,10 @@ def wait_pod_phase(ns: str, pod_name: str, phase: str, timeout: int = 180) -> No
                     bad = [
                         cs.state.waiting.reason
                         for cs in (pod.status.container_statuses or [])
-                        if cs.state and cs.state.waiting
-                        and cs.state.waiting.reason in (
-                            "CrashLoopBackOff", "RunContainerError", "OOMKilled", "Error"
-                        )
+                        if cs.state
+                        and cs.state.waiting
+                        and cs.state.waiting.reason
+                        in ("CrashLoopBackOff", "RunContainerError", "OOMKilled", "Error")
                     ]
                     if bad:
                         raise RuntimeError(f"Pod {ns}/{pod_name} container error: {bad}")
@@ -45,7 +45,7 @@ def wait_pod_condition(
     while time.monotonic() < deadline:
         try:
             pod = v1.read_namespaced_pod(pod_name, ns)
-            for cond in (pod.status.conditions or []):
+            for cond in pod.status.conditions or []:
                 if cond.type == condition_type and cond.status == "True":
                     return
         except kubernetes.client.exceptions.ApiException as e:
@@ -78,16 +78,14 @@ def wait_init_container_failed(ns: str, pod_name: str, timeout: int = 120) -> in
     while time.monotonic() < deadline:
         try:
             pod = v1.read_namespaced_pod(pod_name, ns)
-            for cs in (pod.status.init_container_statuses or []):
+            for cs in pod.status.init_container_statuses or []:
                 if cs.state and cs.state.terminated and cs.state.terminated.exit_code != 0:
                     return cs.state.terminated.exit_code
         except kubernetes.client.exceptions.ApiException as e:
             if e.status != 404:
                 raise
         time.sleep(3)
-    raise TimeoutError(
-        f"No failing init container in {ns}/{pod_name} within {timeout}s"
-    )
+    raise TimeoutError(f"No failing init container in {ns}/{pod_name} within {timeout}s")
 
 
 def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
@@ -104,9 +102,13 @@ def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
     if pv_name:
         subprocess.run(
             [
-                "kubectl", "delete", "lvmsnapshot",
-                "-n", "openebs",
-                "-l", f"openebs.io/persistent-volume={pv_name}",
+                "kubectl",
+                "delete",
+                "lvmsnapshot",
+                "-n",
+                "openebs",
+                "-l",
+                f"openebs.io/persistent-volume={pv_name}",
                 "--ignore-not-found",
             ],
             check=True,

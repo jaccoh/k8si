@@ -69,7 +69,7 @@ def _find_pvc_node_sync(pvc_name: str, namespace: str) -> str | None:
     """Return the node name where pvc_name is currently mounted, or None."""
     v1 = kubernetes.client.CoreV1Api()
     for pod in v1.list_namespaced_pod(namespace).items:
-        for vol in (pod.spec.volumes or []):
+        for vol in pod.spec.volumes or []:
             if (
                 vol.persistent_volume_claim
                 and vol.persistent_volume_claim.claim_name == pvc_name
@@ -96,17 +96,19 @@ async def _run_hook_job(
         "volumes": [
             {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
         ],
-        "containers": [{
-            "name": "k8si-hook",
-            "image": K8SI_IMAGE,
-            "command": [hook],
-            "env": [{"name": "DATA_PATH", "value": "/data"}],
-            "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-            "resources": {
-                "requests": {"cpu": "50m", "memory": "64Mi"},
-                "limits": {"cpu": "200m", "memory": "256Mi"},
-            },
-        }],
+        "containers": [
+            {
+                "name": "k8si-hook",
+                "image": K8SI_IMAGE,
+                "command": [hook],
+                "env": [{"name": "DATA_PATH", "value": "/data"}],
+                "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                "resources": {
+                    "requests": {"cpu": "50m", "memory": "64Mi"},
+                    "limits": {"cpu": "200m", "memory": "256Mi"},
+                },
+            }
+        ],
     }
     if node:
         pod_spec["nodeSelector"] = {"kubernetes.io/hostname": node}
@@ -152,15 +154,20 @@ def _build_backup_job(
         ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
         ("RESTIC_SFTP_COMMAND", "RESTIC_SFTP_COMMAND"),
     ]:
-        env.append({
-            "name": var,
-            "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
-        })
+        env.append(
+            {
+                "name": var,
+                "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
+            }
+        )
 
-    resources = spec.get("resources", {
-        "requests": {"cpu": "50m", "memory": "64Mi"},
-        "limits": {"cpu": "200m", "memory": "256Mi"},
-    })
+    resources = spec.get(
+        "resources",
+        {
+            "requests": {"cpu": "50m", "memory": "64Mi"},
+            "limits": {"cpu": "200m", "memory": "256Mi"},
+        },
+    )
 
     return {
         "apiVersion": "batch/v1",
@@ -187,16 +194,22 @@ def _build_backup_job(
                             },
                         },
                     ],
-                    "containers": [{
-                        "name": "k8si",
-                        "image": K8SI_IMAGE,
-                        "env": env,
-                        "volumeMounts": [
-                            {"name": "data", "mountPath": "/data"},
-                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
-                        ],
-                        "resources": resources,
-                    }],
+                    "containers": [
+                        {
+                            "name": "k8si",
+                            "image": K8SI_IMAGE,
+                            "env": env,
+                            "volumeMounts": [
+                                {"name": "data", "mountPath": "/data"},
+                                {
+                                    "name": "restic-ssh",
+                                    "mountPath": "/restic-ssh",
+                                    "readOnly": True,
+                                },
+                            ],
+                            "resources": resources,
+                        }
+                    ],
                 }
             },
         },

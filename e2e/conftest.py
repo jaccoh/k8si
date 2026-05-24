@@ -58,9 +58,13 @@ def ns():
             if pv_name:
                 subprocess.run(
                     [
-                        "kubectl", "delete", "lvmsnapshot",
-                        "-n", "openebs",
-                        "-l", f"openebs.io/persistent-volume={pv_name}",
+                        "kubectl",
+                        "delete",
+                        "lvmsnapshot",
+                        "-n",
+                        "openebs",
+                        "-l",
+                        f"openebs.io/persistent-volume={pv_name}",
                         "--ignore-not-found",
                     ],
                     check=False,
@@ -105,17 +109,19 @@ def rest_server_url(ns):
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
                 ],
-                "containers": [{
-                    "name": "rest-server",
-                    "image": "ghcr.io/restic/rest-server:latest",
-                    "args": ["--no-auth", "--path", "/data"],
-                    "ports": [{"containerPort": 8000}],
-                    "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                    "resources": {
-                        "requests": {"cpu": "50m", "memory": "64Mi"},
-                        "limits": {"cpu": "200m", "memory": "256Mi"},
-                    },
-                }],
+                "containers": [
+                    {
+                        "name": "rest-server",
+                        "image": "ghcr.io/restic/rest-server:latest",
+                        "args": ["--no-auth", "--path", "/data"],
+                        "ports": [{"containerPort": 8000}],
+                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "256Mi"},
+                        },
+                    }
+                ],
             },
         },
     )
@@ -215,31 +221,35 @@ def mariadb_env(ns):
                 "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
                 "restartPolicy": "Always",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
-                "containers": [{
-                    "name": "mariadb",
-                    "image": "mariadb:11",
-                    "env": [
-                        {"name": "MYSQL_ROOT_PASSWORD", "value": _MARIADB_ROOT_PASSWORD},
-                        {"name": "MYSQL_DATABASE", "value": _MARIADB_DATABASE},
-                    ],
-                    "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
-                    "readinessProbe": {
-                        "exec": {
-                            "command": [
-                                "mysqladmin", "ping",
-                                "-h", "127.0.0.1",
-                                f"-p{_MARIADB_ROOT_PASSWORD}",
-                            ],
+                "containers": [
+                    {
+                        "name": "mariadb",
+                        "image": "mariadb:11",
+                        "env": [
+                            {"name": "MYSQL_ROOT_PASSWORD", "value": _MARIADB_ROOT_PASSWORD},
+                            {"name": "MYSQL_DATABASE", "value": _MARIADB_DATABASE},
+                        ],
+                        "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
+                        "readinessProbe": {
+                            "exec": {
+                                "command": [
+                                    "mysqladmin",
+                                    "ping",
+                                    "-h",
+                                    "127.0.0.1",
+                                    f"-p{_MARIADB_ROOT_PASSWORD}",
+                                ],
+                            },
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 5,
+                            "failureThreshold": 12,
                         },
-                        "initialDelaySeconds": 10,
-                        "periodSeconds": 5,
-                        "failureThreshold": 12,
-                    },
-                    "resources": {
-                        "requests": {"cpu": "100m", "memory": "256Mi"},
-                        "limits": {"cpu": "500m", "memory": "512Mi"},
-                    },
-                }],
+                        "resources": {
+                            "requests": {"cpu": "100m", "memory": "256Mi"},
+                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                        },
+                    }
+                ],
             },
         },
     )
@@ -317,26 +327,28 @@ def postgres_env(ns):
                 "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
                 "restartPolicy": "Always",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
-                "containers": [{
-                    "name": "postgres",
-                    "image": "postgres:16",
-                    "env": [
-                        {"name": "POSTGRES_PASSWORD", "value": _POSTGRES_PASSWORD},
-                        {"name": "POSTGRES_DB", "value": _POSTGRES_DB},
-                        {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
-                    ],
-                    "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}],
-                    "readinessProbe": {
-                        "exec": {"command": ["pg_isready", "-U", "postgres"]},
-                        "initialDelaySeconds": 5,
-                        "periodSeconds": 5,
-                        "failureThreshold": 12,
-                    },
-                    "resources": {
-                        "requests": {"cpu": "100m", "memory": "256Mi"},
-                        "limits": {"cpu": "500m", "memory": "512Mi"},
-                    },
-                }],
+                "containers": [
+                    {
+                        "name": "postgres",
+                        "image": "postgres:16",
+                        "env": [
+                            {"name": "POSTGRES_PASSWORD", "value": _POSTGRES_PASSWORD},
+                            {"name": "POSTGRES_DB", "value": _POSTGRES_DB},
+                            {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
+                        ],
+                        "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}],
+                        "readinessProbe": {
+                            "exec": {"command": ["pg_isready", "-U", "postgres"]},
+                            "initialDelaySeconds": 5,
+                            "periodSeconds": 5,
+                            "failureThreshold": 12,
+                        },
+                        "resources": {
+                            "requests": {"cpu": "100m", "memory": "256Mi"},
+                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                        },
+                    }
+                ],
             },
         },
     )

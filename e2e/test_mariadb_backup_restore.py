@@ -31,8 +31,17 @@ def _b64(s: str) -> str:
 def _mysql_exec(ns: str, pod_name: str, sql: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [
-            "kubectl", "exec", pod_name, "-n", ns, "--",
-            "mysql", f"-p{_MARIADB_ROOT_PASSWORD}", _MARIADB_DATABASE, "-e", sql,
+            "kubectl",
+            "exec",
+            pod_name,
+            "-n",
+            ns,
+            "--",
+            "mysql",
+            f"-p{_MARIADB_ROOT_PASSWORD}",
+            _MARIADB_DATABASE,
+            "-e",
+            sql,
         ],
         capture_output=True,
         text=True,
@@ -46,7 +55,8 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
     v1 = kubernetes.client.CoreV1Api()
 
     _mysql_exec(
-        ns, "mariadb",
+        ns,
+        "mariadb",
         "CREATE TABLE IF NOT EXISTS items (v VARCHAR(255));"
         f" INSERT INTO items VALUES ('{KNOWN_VALUE}');",
     )
@@ -129,74 +139,80 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
                         },
                     },
                 ],
-                "initContainers": [{
-                    "name": "k8si-restore",
-                    "image": k8si_image,
-                    "securityContext": {"runAsUser": 0, "runAsGroup": 0},
-                    "env": [
-                        {"name": "MODE", "value": "restore"},
-                        {"name": "RESTORE_SENTINELS", "value": "ibdata1"},
-                        {
-                            "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "name": restic_secret_name,
-                                    "key": "RESTIC_REPOSITORY",
+                "initContainers": [
+                    {
+                        "name": "k8si-restore",
+                        "image": k8si_image,
+                        "securityContext": {"runAsUser": 0, "runAsGroup": 0},
+                        "env": [
+                            {"name": "MODE", "value": "restore"},
+                            {"name": "RESTORE_SENTINELS", "value": "ibdata1"},
+                            {
+                                "name": "RESTIC_REPOSITORY",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": restic_secret_name,
+                                        "key": "RESTIC_REPOSITORY",
+                                    },
                                 },
                             },
-                        },
-                        {
-                            "name": "RESTIC_PASSWORD",
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "name": restic_secret_name,
-                                    "key": "RESTIC_PASSWORD",
+                            {
+                                "name": "RESTIC_PASSWORD",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": restic_secret_name,
+                                        "key": "RESTIC_PASSWORD",
+                                    },
                                 },
                             },
-                        },
-                        {
-                            "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "name": restic_secret_name,
-                                    "key": "RESTIC_SFTP_COMMAND",
+                            {
+                                "name": "RESTIC_SFTP_COMMAND",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": restic_secret_name,
+                                        "key": "RESTIC_SFTP_COMMAND",
+                                    },
                                 },
                             },
+                        ],
+                        "volumeMounts": [
+                            {"name": "data", "mountPath": "/data"},
+                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                        ],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "256Mi"},
                         },
-                    ],
-                    "volumeMounts": [
-                        {"name": "data", "mountPath": "/data"},
-                        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
-                    ],
-                    "resources": {
-                        "requests": {"cpu": "50m", "memory": "64Mi"},
-                        "limits": {"cpu": "200m", "memory": "256Mi"},
-                    },
-                }],
-                "containers": [{
-                    "name": "mariadb",
-                    "image": "mariadb:11",
-                    "env": [
-                        {"name": "MYSQL_ROOT_PASSWORD", "value": _MARIADB_ROOT_PASSWORD},
-                    ],
-                    "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
-                    "readinessProbe": {
-                        "exec": {
-                            "command": [
-                                "mysqladmin", "ping",
-                                "-h", "127.0.0.1",
-                                f"-p{_MARIADB_ROOT_PASSWORD}",
-                            ],
+                    }
+                ],
+                "containers": [
+                    {
+                        "name": "mariadb",
+                        "image": "mariadb:11",
+                        "env": [
+                            {"name": "MYSQL_ROOT_PASSWORD", "value": _MARIADB_ROOT_PASSWORD},
+                        ],
+                        "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
+                        "readinessProbe": {
+                            "exec": {
+                                "command": [
+                                    "mysqladmin",
+                                    "ping",
+                                    "-h",
+                                    "127.0.0.1",
+                                    f"-p{_MARIADB_ROOT_PASSWORD}",
+                                ],
+                            },
+                            "initialDelaySeconds": 15,
+                            "periodSeconds": 5,
+                            "failureThreshold": 24,
                         },
-                        "initialDelaySeconds": 15,
-                        "periodSeconds": 5,
-                        "failureThreshold": 24,
-                    },
-                    "resources": {
-                        "requests": {"cpu": "100m", "memory": "256Mi"},
-                        "limits": {"cpu": "500m", "memory": "512Mi"},
-                    },
-                }],
+                        "resources": {
+                            "requests": {"cpu": "100m", "memory": "256Mi"},
+                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                        },
+                    }
+                ],
             },
         },
     )
@@ -206,7 +222,8 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
     log.info("MariaDB restore verifier pod running and ready")
 
     proc = _mysql_exec(
-        ns, verifier_name,
+        ns,
+        verifier_name,
         f"SELECT v FROM items WHERE v='{KNOWN_VALUE}';",
     )
     log.info("Verification stdout: %r", proc.stdout)
@@ -273,51 +290,61 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
                         },
                     },
                 ],
-                "initContainers": [{
-                    "name": "k8si-restore",
-                    "image": k8si_image,
-                    "securityContext": {"runAsUser": 0, "runAsGroup": 0},
-                    "env": [
-                        {"name": "MODE", "value": "restore"},
-                        {"name": "RESTORE_SENTINELS", "value": "ibdata1"},
-                        {"name": "RESTORE_REQUIRED", "value": "true"},
-                        {
-                            "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {
-                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_REPOSITORY"},
+                "initContainers": [
+                    {
+                        "name": "k8si-restore",
+                        "image": k8si_image,
+                        "securityContext": {"runAsUser": 0, "runAsGroup": 0},
+                        "env": [
+                            {"name": "MODE", "value": "restore"},
+                            {"name": "RESTORE_SENTINELS", "value": "ibdata1"},
+                            {"name": "RESTORE_REQUIRED", "value": "true"},
+                            {
+                                "name": "RESTIC_REPOSITORY",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": secret_name,
+                                        "key": "RESTIC_REPOSITORY",
+                                    },
+                                },
                             },
-                        },
-                        {
-                            "name": "RESTIC_PASSWORD",
-                            "valueFrom": {
-                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
+                            {
+                                "name": "RESTIC_PASSWORD",
+                                "valueFrom": {
+                                    "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
+                                },
                             },
-                        },
-                        {
-                            "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {
-                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_SFTP_COMMAND"},
+                            {
+                                "name": "RESTIC_SFTP_COMMAND",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": secret_name,
+                                        "key": "RESTIC_SFTP_COMMAND",
+                                    },
+                                },
                             },
+                        ],
+                        "volumeMounts": [
+                            {"name": "data", "mountPath": "/data"},
+                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                        ],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "256Mi"},
                         },
-                    ],
-                    "volumeMounts": [
-                        {"name": "data", "mountPath": "/data"},
-                        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
-                    ],
-                    "resources": {
-                        "requests": {"cpu": "50m", "memory": "64Mi"},
-                        "limits": {"cpu": "200m", "memory": "256Mi"},
-                    },
-                }],
-                "containers": [{
-                    "name": "never-starts",
-                    "image": "busybox:1.37.0",
-                    "command": ["sh", "-c", "sleep 86400"],
-                    "resources": {
-                        "requests": {"cpu": "10m", "memory": "16Mi"},
-                        "limits": {"cpu": "50m", "memory": "32Mi"},
-                    },
-                }],
+                    }
+                ],
+                "containers": [
+                    {
+                        "name": "never-starts",
+                        "image": "busybox:1.37.0",
+                        "command": ["sh", "-c", "sleep 86400"],
+                        "resources": {
+                            "requests": {"cpu": "10m", "memory": "16Mi"},
+                            "limits": {"cpu": "50m", "memory": "32Mi"},
+                        },
+                    }
+                ],
             },
         },
     )

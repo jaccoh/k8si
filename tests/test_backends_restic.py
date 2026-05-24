@@ -10,8 +10,8 @@ import sh as _sh
 from k8si.backend import BackupError, NoSnapshotsError
 from k8si.backends.restic import ResticBackend
 
-
 # ── helpers ────────────────────────────────────────────────────────────────────
+
 
 def _make_backend(
     env: dict[str, str] | None = None,
@@ -42,14 +42,17 @@ def _sh_error(exit_code: int = 1, stderr: str = "error") -> _sh.ErrorReturnCode:
 
 # ── constructor ────────────────────────────────────────────────────────────────
 
+
 def test_sftp_command_injected_as_global_opt() -> None:
     with patch("k8si.backends.restic.sh") as mock_sh:
         mock_sh.restic.bake.return_value = MagicMock()
-        ResticBackend(env={
-            "RESTIC_REPOSITORY": "fake",
-            "RESTIC_PASSWORD": "secret",
-            "RESTIC_SFTP_COMMAND": "ssh -i /key -p 23 host -s sftp",
-        })
+        ResticBackend(
+            env={
+                "RESTIC_REPOSITORY": "fake",
+                "RESTIC_PASSWORD": "secret",
+                "RESTIC_SFTP_COMMAND": "ssh -i /key -p 23 host -s sftp",
+            }
+        )
     bake_call = mock_sh.restic.bake.call_args
     args = bake_call[0]
     assert "-o" in args
@@ -67,6 +70,7 @@ def test_no_sftp_command_no_global_opt() -> None:
 
 # ── init ───────────────────────────────────────────────────────────────────────
 
+
 def test_init_calls_restic_init() -> None:
     backend, mock_cmd = _make_backend()
     mock_cmd.return_value = "created restic repository"
@@ -83,6 +87,7 @@ def test_init_raises_backup_error_on_failure() -> None:
 
 
 # ── snapshots ──────────────────────────────────────────────────────────────────
+
 
 def test_snapshots_returns_parsed_list() -> None:
     data = [{"id": "abc123", "short_id": "abc123", "time": "2026-05-07T19:00:00Z"}]
@@ -121,13 +126,16 @@ def test_snapshots_returns_empty_on_empty_output() -> None:
 
 # ── ls ────────────────────────────────────────────────────────────────────────
 
+
 def test_ls_returns_file_paths_only() -> None:
-    jsonl = "\n".join([
-        json.dumps({"message_type": "snapshot", "id": "abc"}),
-        json.dumps({"type": "file", "path": "/data/config.xml", "name": "config.xml"}),
-        json.dumps({"type": "dir",  "path": "/data/logs",       "name": "logs"}),
-        json.dumps({"type": "file", "path": "/data/logs/app.log","name": "app.log"}),
-    ])
+    jsonl = "\n".join(
+        [
+            json.dumps({"message_type": "snapshot", "id": "abc"}),
+            json.dumps({"type": "file", "path": "/data/config.xml", "name": "config.xml"}),
+            json.dumps({"type": "dir", "path": "/data/logs", "name": "logs"}),
+            json.dumps({"type": "file", "path": "/data/logs/app.log", "name": "app.log"}),
+        ]
+    )
     backend, mock_cmd = _make_backend()
     mock_cmd.return_value = jsonl
     paths = backend.ls("abc12345")
@@ -151,6 +159,7 @@ def test_ls_tolerates_malformed_json_lines() -> None:
 
 
 # ── check_sentinels ───────────────────────────────────────────────────────────
+
 
 def _popen_ctx(lines: list[str], returncode: int = 0) -> MagicMock:
     """Return a context-manager mock that yields lines from stdout."""
@@ -208,6 +217,7 @@ def test_check_sentinels_empty_sentinels_returns_true() -> None:
 
 # ── snapshot_size ─────────────────────────────────────────────────────────────
 
+
 def test_snapshot_size_returns_total_bytes() -> None:
     backend, mock_cmd = _make_backend()
     mock_cmd.return_value = json.dumps({"total_size": 8_198_041, "total_file_count": 42})
@@ -224,6 +234,7 @@ def test_snapshot_size_returns_zero_on_missing_key() -> None:
 
 
 # ── restore ───────────────────────────────────────────────────────────────────
+
 
 def test_restore_uses_latest_by_default() -> None:
     backend, mock_cmd = _make_backend()
@@ -263,6 +274,7 @@ def test_restore_re_raises_other_backup_errors() -> None:
 
 # ── backup ────────────────────────────────────────────────────────────────────
 
+
 def test_backup_passes_source_path() -> None:
     backend, mock_cmd = _make_backend()
     mock_cmd.return_value = "snapshot saved"
@@ -274,9 +286,7 @@ def test_backup_passes_tags() -> None:
     backend, mock_cmd = _make_backend()
     mock_cmd.return_value = "snapshot saved"
     backend.backup(Path("/data"), tags=["app=sonarr", "env=prod"])
-    mock_cmd.assert_called_once_with(
-        "backup", "/data", "--tag", "app=sonarr", "--tag", "env=prod"
-    )
+    mock_cmd.assert_called_once_with("backup", "/data", "--tag", "app=sonarr", "--tag", "env=prod")
 
 
 def test_backup_without_tags_omits_tag_flags() -> None:
@@ -296,6 +306,7 @@ def test_backup_raises_backup_error_on_failure() -> None:
 
 
 # ── forget ────────────────────────────────────────────────────────────────────
+
 
 def test_forget_includes_prune_by_default() -> None:
     backend, mock_cmd = _make_backend()
@@ -329,6 +340,7 @@ def test_forget_passes_all_retention_values() -> None:
 
 
 # ── error conversion ───────────────────────────────────────────────────────────
+
 
 def test_invoke_strips_stderr_whitespace() -> None:
     backend, mock_cmd = _make_backend()

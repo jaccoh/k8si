@@ -63,16 +63,17 @@ class ResticBackend:
         if not sentinels:
             return True
 
-        candidates: dict[str, set[str]] = {
-            s: {f"/data/{s}", f"/{s}", s} for s in sentinels
-        }
+        candidates: dict[str, set[str]] = {s: {f"/data/{s}", f"/{s}", s} for s in sentinels}
         unfound = set(sentinels)
 
         cmd = ["restic", "ls", "--json", snapshot_id, *self._global_opts]
         with subprocess.Popen(
-            cmd, env=self._env,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors="replace",
+            cmd,
+            env=self._env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
         ) as proc:
             assert proc.stdout is not None
             for raw in proc.stdout:
@@ -96,9 +97,7 @@ class ResticBackend:
                 raise BackupError(f"restic ls exited {rc}", rc, stderr.strip())
 
         if unfound:
-            log.warning(
-                "Sentinels not found in snapshot %s: %s", snapshot_id, sorted(unfound)
-            )
+            log.warning("Sentinels not found in snapshot %s: %s", snapshot_id, sorted(unfound))
             return False
         return True
 
@@ -112,9 +111,7 @@ class ResticBackend:
             self._invoke("restore", snapshot_id, "--target", "/")
         except BackupError as e:
             if "no matching snapshot" in e.stderr or "no snapshots found" in e.stderr:
-                raise NoSnapshotsError(
-                    "no snapshots in repository", e.returncode, e.stderr
-                ) from e
+                raise NoSnapshotsError("no snapshots in repository", e.returncode, e.stderr) from e
             raise
 
     def backup(self, source: Path, tags: list[str] | None = None) -> None:
@@ -124,9 +121,12 @@ class ResticBackend:
     def forget(self, daily: int, weekly: int, monthly: int, prune: bool = True) -> None:
         args = [
             "forget",
-            "--keep-daily", str(daily),
-            "--keep-weekly", str(weekly),
-            "--keep-monthly", str(monthly),
+            "--keep-daily",
+            str(daily),
+            "--keep-weekly",
+            str(weekly),
+            "--keep-monthly",
+            str(monthly),
         ]
         if prune:
             args.append("--prune")
@@ -146,11 +146,7 @@ class ResticBackend:
         except sh.ErrorReturnCode as e:
             raw_stderr = e.stderr
             stderr = (
-                raw_stderr
-                if isinstance(raw_stderr, str)
-                else raw_stderr.decode(errors="replace")
+                raw_stderr if isinstance(raw_stderr, str) else raw_stderr.decode(errors="replace")
             ).strip()
             log.error("restic error: %s", stderr)
-            raise BackupError(
-                f"restic exited {e.exit_code}", e.exit_code, stderr
-            ) from e
+            raise BackupError(f"restic exited {e.exit_code}", e.exit_code, stderr) from e

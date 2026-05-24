@@ -74,9 +74,7 @@ def _create_pvc_from_snapshot_sync(
         spec=kubernetes.client.V1PersistentVolumeClaimSpec(
             access_modes=[access_mode],
             storage_class_name=storage_class,
-            resources=kubernetes.client.V1VolumeResourceRequirements(
-                requests={"storage": storage}
-            ),
+            resources=kubernetes.client.V1VolumeResourceRequirements(requests={"storage": storage}),
             data_source=kubernetes.client.V1TypedLocalObjectReference(
                 api_group=_SNAPSHOT_GROUP,
                 kind="VolumeSnapshot",
@@ -129,7 +127,10 @@ def _delete_volume_snapshot_sync(name: str, namespace: str) -> None:
 async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: str | None) -> None:
     log.info(
         "Creating VolumeSnapshot %s from PVC %s/%s (class=%s)",
-        name, namespace, pvc, snapshot_class or "<cluster-default>",
+        name,
+        namespace,
+        pvc,
+        snapshot_class or "<cluster-default>",
     )
     await asyncio.to_thread(_create_volume_snapshot_sync, name, namespace, pvc, snapshot_class)
     log.info("Waiting for VolumeSnapshot %s to be ready", name)
@@ -145,18 +146,25 @@ async def create_pvc_from_snapshot(
     )
     log.info(
         "Creating ephemeral PVC %s from snapshot %s (sc=%s %s %s)",
-        pvc_name, snapshot_name, storage_class, access_mode, storage,
+        pvc_name,
+        snapshot_name,
+        storage_class,
+        access_mode,
+        storage,
     )
     await asyncio.to_thread(
         _create_pvc_from_snapshot_sync,
-        pvc_name, namespace, snapshot_name, access_mode, storage, storage_class,
+        pvc_name,
+        namespace,
+        snapshot_name,
+        access_mode,
+        storage,
+        storage_class,
     )
     log.info("Ephemeral PVC %s created (pending pod scheduling)", pvc_name)
 
 
-async def delete_snapshot_and_pvc(
-    namespace: str, snapshot_name: str, pvc_name: str | None
-) -> None:
+async def delete_snapshot_and_pvc(namespace: str, snapshot_name: str, pvc_name: str | None) -> None:
     if pvc_name:
         log.info("Deleting ephemeral PVC %s", pvc_name)
         await asyncio.to_thread(_delete_pvc_sync, pvc_name, namespace)

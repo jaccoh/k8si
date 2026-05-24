@@ -37,17 +37,20 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
         ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
         ("RESTIC_SFTP_COMMAND", "RESTIC_SFTP_COMMAND"),
     ]:
-        env.append({
-            "name": var,
-            "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
-        })
+        env.append(
+            {
+                "name": var,
+                "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
+            }
+        )
 
     fix_ssh_perms: dict[str, Any] = {
         "name": "fix-ssh-perms",
         "image": "busybox:1.37.0",
         "securityContext": {"runAsUser": 0},
         "command": [
-            "sh", "-c",
+            "sh",
+            "-c",
             (
                 "cp /restic-ssh-secret/id_ed25519 /restic-ssh/id_ed25519\n"
                 "cp /restic-ssh-secret/known_hosts /restic-ssh/known_hosts\n"

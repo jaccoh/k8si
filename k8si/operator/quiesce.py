@@ -44,7 +44,8 @@ def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) 
     v1 = kubernetes.client.CoreV1Api()
     for db_path in db_paths:
         cmd = [
-            "python3", "-c",
+            "python3",
+            "-c",
             (
                 f"import sqlite3; c = sqlite3.connect({db_path!r}); "
                 f"c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close(); "

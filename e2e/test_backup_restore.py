@@ -40,27 +40,30 @@ def test_sqlite_backup_and_restore(ns, rest_server_url, data_pvc, k8si_image):
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": data_pvc}},
                 ],
-                "containers": [{
-                    "name": "writer",
-                    "image": "python:3.13-slim",
-                    "command": [
-                        "python3", "-c",
-                        (
-                            "import sqlite3, time; "
-                            f"db = sqlite3.connect('/data/test.db'); "
-                            "db.execute('PRAGMA journal_mode=WAL'); "
-                            "db.execute('CREATE TABLE IF NOT EXISTS items (v TEXT)'); "
-                            f"db.execute('INSERT INTO items VALUES (?)', ({KNOWN_VALUE!r},)); "
-                            "db.commit(); db.close(); "
-                            "[time.sleep(3600) for _ in iter(int, 1)]"
-                        ),
-                    ],
-                    "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                    "resources": {
-                        "requests": {"cpu": "50m", "memory": "64Mi"},
-                        "limits": {"cpu": "200m", "memory": "256Mi"},
-                    },
-                }],
+                "containers": [
+                    {
+                        "name": "writer",
+                        "image": "python:3.13-slim",
+                        "command": [
+                            "python3",
+                            "-c",
+                            (
+                                "import sqlite3, time; "
+                                f"db = sqlite3.connect('/data/test.db'); "
+                                "db.execute('PRAGMA journal_mode=WAL'); "
+                                "db.execute('CREATE TABLE IF NOT EXISTS items (v TEXT)'); "
+                                f"db.execute('INSERT INTO items VALUES (?)', ({KNOWN_VALUE!r},)); "
+                                "db.commit(); db.close(); "
+                                "[time.sleep(3600) for _ in iter(int, 1)]"
+                            ),
+                        ],
+                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "256Mi"},
+                        },
+                    }
+                ],
             },
         },
     )
@@ -145,50 +148,60 @@ def test_sqlite_backup_and_restore(ns, rest_server_url, data_pvc, k8si_image):
                         },
                     },
                 ],
-                "initContainers": [{
-                    "name": "k8si-restore",
-                    "image": k8si_image,
-                    "env": [
-                        {"name": "MODE", "value": "restore"},
-                        {"name": "RESTORE_SENTINELS", "value": "test.db"},
-                        {
-                            "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {
-                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_REPOSITORY"},
+                "initContainers": [
+                    {
+                        "name": "k8si-restore",
+                        "image": k8si_image,
+                        "env": [
+                            {"name": "MODE", "value": "restore"},
+                            {"name": "RESTORE_SENTINELS", "value": "test.db"},
+                            {
+                                "name": "RESTIC_REPOSITORY",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": secret_name,
+                                        "key": "RESTIC_REPOSITORY",
+                                    },
+                                },
                             },
-                        },
-                        {
-                            "name": "RESTIC_PASSWORD",
-                            "valueFrom": {
-                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
+                            {
+                                "name": "RESTIC_PASSWORD",
+                                "valueFrom": {
+                                    "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
+                                },
                             },
-                        },
-                        {
-                            "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {
-                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_SFTP_COMMAND"},
+                            {
+                                "name": "RESTIC_SFTP_COMMAND",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": secret_name,
+                                        "key": "RESTIC_SFTP_COMMAND",
+                                    },
+                                },
                             },
+                        ],
+                        "volumeMounts": [
+                            {"name": "data", "mountPath": "/data"},
+                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                        ],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "256Mi"},
                         },
-                    ],
-                    "volumeMounts": [
-                        {"name": "data", "mountPath": "/data"},
-                        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
-                    ],
-                    "resources": {
-                        "requests": {"cpu": "50m", "memory": "64Mi"},
-                        "limits": {"cpu": "200m", "memory": "256Mi"},
-                    },
-                }],
-                "containers": [{
-                    "name": "verifier",
-                    "image": "python:3.13-slim",
-                    "command": ["sh", "-c", "sleep 86400"],
-                    "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                    "resources": {
-                        "requests": {"cpu": "50m", "memory": "64Mi"},
-                        "limits": {"cpu": "200m", "memory": "256Mi"},
-                    },
-                }],
+                    }
+                ],
+                "containers": [
+                    {
+                        "name": "verifier",
+                        "image": "python:3.13-slim",
+                        "command": ["sh", "-c", "sleep 86400"],
+                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "256Mi"},
+                        },
+                    }
+                ],
             },
         },
     )

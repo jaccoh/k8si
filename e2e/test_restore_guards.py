@@ -78,30 +78,34 @@ def _make_restore_pod(
                     },
                 },
             ],
-            "initContainers": [{
-                "name": "k8si-restore",
-                "image": k8si_image,
-                "securityContext": {"runAsUser": 0, "runAsGroup": 0},
-                "env": env,
-                "volumeMounts": [
-                    {"name": "data", "mountPath": "/data"},
-                    {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
-                ],
-                "resources": {
-                    "requests": {"cpu": "50m", "memory": "64Mi"},
-                    "limits": {"cpu": "200m", "memory": "256Mi"},
-                },
-            }],
-            "containers": [{
-                "name": "main",
-                "image": "busybox:1.37.0",
-                "command": ["sh", "-c", "sleep 86400"],
-                "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                "resources": {
-                    "requests": {"cpu": "10m", "memory": "16Mi"},
-                    "limits": {"cpu": "50m", "memory": "32Mi"},
-                },
-            }],
+            "initContainers": [
+                {
+                    "name": "k8si-restore",
+                    "image": k8si_image,
+                    "securityContext": {"runAsUser": 0, "runAsGroup": 0},
+                    "env": env,
+                    "volumeMounts": [
+                        {"name": "data", "mountPath": "/data"},
+                        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                    ],
+                    "resources": {
+                        "requests": {"cpu": "50m", "memory": "64Mi"},
+                        "limits": {"cpu": "200m", "memory": "256Mi"},
+                    },
+                }
+            ],
+            "containers": [
+                {
+                    "name": "main",
+                    "image": "busybox:1.37.0",
+                    "command": ["sh", "-c", "sleep 86400"],
+                    "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                    "resources": {
+                        "requests": {"cpu": "10m", "memory": "16Mi"},
+                        "limits": {"cpu": "50m", "memory": "32Mi"},
+                    },
+                }
+            ],
         },
     }
 
@@ -134,7 +138,11 @@ def test_restore_required_fails_when_repo_unreachable(ns, k8si_image):
     v1.create_namespaced_pod(
         ns,
         _make_restore_pod(
-            ns, pod_name, pvc_name, secret_name, k8si_image,
+            ns,
+            pod_name,
+            pvc_name,
+            secret_name,
+            k8si_image,
             extra_env=[{"name": "RESTORE_REQUIRED", "value": "true"}],
         ),
     )
@@ -163,16 +171,18 @@ def test_restore_skips_when_sentinel_present(ns, k8si_image):
                 "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
                 "restartPolicy": "Never",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
-                "containers": [{
-                    "name": "writer",
-                    "image": "busybox:1.37.0",
-                    "command": ["sh", "-c", "touch /data/sentinel-file && echo done"],
-                    "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                    "resources": {
-                        "requests": {"cpu": "10m", "memory": "16Mi"},
-                        "limits": {"cpu": "50m", "memory": "32Mi"},
-                    },
-                }],
+                "containers": [
+                    {
+                        "name": "writer",
+                        "image": "busybox:1.37.0",
+                        "command": ["sh", "-c", "touch /data/sentinel-file && echo done"],
+                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                        "resources": {
+                            "requests": {"cpu": "10m", "memory": "16Mi"},
+                            "limits": {"cpu": "50m", "memory": "32Mi"},
+                        },
+                    }
+                ],
             },
         },
     )
@@ -222,16 +232,18 @@ def test_restore_skips_with_no_restore_marker(ns, k8si_image):
                 "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
                 "restartPolicy": "Never",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
-                "containers": [{
-                    "name": "writer",
-                    "image": "busybox:1.37.0",
-                    "command": ["sh", "-c", "touch /data/.k8si-no-restore && echo done"],
-                    "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                    "resources": {
-                        "requests": {"cpu": "10m", "memory": "16Mi"},
-                        "limits": {"cpu": "50m", "memory": "32Mi"},
-                    },
-                }],
+                "containers": [
+                    {
+                        "name": "writer",
+                        "image": "busybox:1.37.0",
+                        "command": ["sh", "-c", "touch /data/.k8si-no-restore && echo done"],
+                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                        "resources": {
+                            "requests": {"cpu": "10m", "memory": "16Mi"},
+                            "limits": {"cpu": "50m", "memory": "32Mi"},
+                        },
+                    }
+                ],
             },
         },
     )

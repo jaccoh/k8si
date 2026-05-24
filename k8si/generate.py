@@ -68,7 +68,7 @@ def _secret_env(name: str, key: str, secret: str) -> str:
 def _init_container(args: argparse.Namespace, tags: list[str]) -> str:
     tag_env = ""
     if tags:
-        tag_env = f"\n          - name: BACKUP_TAGS\n            value: \"{','.join(tags)}\""
+        tag_env = f'\n          - name: BACKUP_TAGS\n            value: "{",".join(tags)}"'
 
     return (
         "# ── initContainers: ───────────────────────────────────────────────────────────\n"
@@ -100,7 +100,7 @@ def _init_container(args: argparse.Namespace, tags: list[str]) -> str:
 def _sidecar(args: argparse.Namespace, tags: list[str]) -> str:
     tag_env = ""
     if tags:
-        tag_env = f"\n          - name: BACKUP_TAGS\n            value: \"{','.join(tags)}\""
+        tag_env = f'\n          - name: BACKUP_TAGS\n            value: "{",".join(tags)}"'
 
     return (
         "# ── initContainers (native sidecar, K8s 1.29+): ─────────────────────────────\n"
@@ -115,13 +115,13 @@ def _sidecar(args: argparse.Namespace, tags: list[str]) -> str:
         "          - name: SENTINEL_FILE\n"
         f"            value: {args.sentinel}\n"
         "          - name: BACKUP_SCHEDULE\n"
-        f"            value: \"{args.schedule}\"\n"
+        f'            value: "{args.schedule}"\n'
         "          - name: RETENTION_DAILY\n"
-        f"            value: \"{args.retention_daily}\"\n"
+        f'            value: "{args.retention_daily}"\n'
         "          - name: RETENTION_WEEKLY\n"
-        f"            value: \"{args.retention_weekly}\"\n"
+        f'            value: "{args.retention_weekly}"\n'
         "          - name: RETENTION_MONTHLY\n"
-        f"            value: \"{args.retention_monthly}\""
+        f'            value: "{args.retention_monthly}"'
         f"{tag_env}\n"
         f"{_secret_env('RESTIC_REPOSITORY', 'RESTIC_REPOSITORY', args.secret)}\n"
         f"{_secret_env('RESTIC_PASSWORD', 'RESTIC_PASSWORD', args.secret)}\n"

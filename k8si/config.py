@@ -143,8 +143,14 @@ def _parse_duration_hours(s: str) -> float:
 def _parse_bytes(s: str) -> int:
     s = s.strip()
     for suffix, mult in [
-        ("Ti", 1024**4), ("Gi", 1024**3), ("Mi", 1024**2), ("Ki", 1024),
-        ("T", 1000**4), ("G", 1000**3), ("M", 1000**2), ("K", 1000),
+        ("Ti", 1024**4),
+        ("Gi", 1024**3),
+        ("Mi", 1024**2),
+        ("Ki", 1024),
+        ("T", 1000**4),
+        ("G", 1000**3),
+        ("M", 1000**2),
+        ("K", 1000),
     ]:
         if s.endswith(suffix):
             return int(float(s[: -len(suffix)]) * mult)

@@ -34,8 +34,18 @@ def _b64(s: str) -> str:
 def _psql_exec(ns: str, pod_name: str, sql: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [
-            "kubectl", "exec", pod_name, "-n", ns, "--",
-            "psql", "-U", "postgres", _POSTGRES_DB, "-c", sql,
+            "kubectl",
+            "exec",
+            pod_name,
+            "-n",
+            ns,
+            "--",
+            "psql",
+            "-U",
+            "postgres",
+            _POSTGRES_DB,
+            "-c",
+            sql,
         ],
         capture_output=True,
         text=True,
@@ -49,7 +59,8 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
     v1 = kubernetes.client.CoreV1Api()
 
     _psql_exec(
-        ns, "postgres",
+        ns,
+        "postgres",
         f"CREATE TABLE IF NOT EXISTS items (v TEXT); INSERT INTO items VALUES ('{KNOWN_VALUE}');",
     )
     log.info("Inserted KNOWN_VALUE=%s into Postgres", KNOWN_VALUE)
@@ -131,70 +142,74 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
                         },
                     },
                 ],
-                "initContainers": [{
-                    "name": "k8si-restore",
-                    "image": k8si_image,
-                    "securityContext": {"runAsUser": 0, "runAsGroup": 0},
-                    "env": [
-                        {"name": "MODE", "value": "restore"},
-                        {"name": "RESTORE_SENTINELS", "value": _SENTINEL},
-                        {
-                            "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "name": restic_secret_name,
-                                    "key": "RESTIC_REPOSITORY",
+                "initContainers": [
+                    {
+                        "name": "k8si-restore",
+                        "image": k8si_image,
+                        "securityContext": {"runAsUser": 0, "runAsGroup": 0},
+                        "env": [
+                            {"name": "MODE", "value": "restore"},
+                            {"name": "RESTORE_SENTINELS", "value": _SENTINEL},
+                            {
+                                "name": "RESTIC_REPOSITORY",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": restic_secret_name,
+                                        "key": "RESTIC_REPOSITORY",
+                                    },
                                 },
                             },
-                        },
-                        {
-                            "name": "RESTIC_PASSWORD",
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "name": restic_secret_name,
-                                    "key": "RESTIC_PASSWORD",
+                            {
+                                "name": "RESTIC_PASSWORD",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": restic_secret_name,
+                                        "key": "RESTIC_PASSWORD",
+                                    },
                                 },
                             },
-                        },
-                        {
-                            "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "name": restic_secret_name,
-                                    "key": "RESTIC_SFTP_COMMAND",
+                            {
+                                "name": "RESTIC_SFTP_COMMAND",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": restic_secret_name,
+                                        "key": "RESTIC_SFTP_COMMAND",
+                                    },
                                 },
                             },
+                        ],
+                        "volumeMounts": [
+                            {"name": "data", "mountPath": "/data"},
+                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                        ],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "256Mi"},
                         },
-                    ],
-                    "volumeMounts": [
-                        {"name": "data", "mountPath": "/data"},
-                        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
-                    ],
-                    "resources": {
-                        "requests": {"cpu": "50m", "memory": "64Mi"},
-                        "limits": {"cpu": "200m", "memory": "256Mi"},
-                    },
-                }],
-                "containers": [{
-                    "name": "postgres",
-                    "image": "postgres:16",
-                    "env": [
-                        {"name": "POSTGRES_PASSWORD", "value": _POSTGRES_PASSWORD},
-                        {"name": "POSTGRES_DB", "value": _POSTGRES_DB},
-                        {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
-                    ],
-                    "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}],
-                    "readinessProbe": {
-                        "exec": {"command": ["pg_isready", "-U", "postgres"]},
-                        "initialDelaySeconds": 10,
-                        "periodSeconds": 5,
-                        "failureThreshold": 24,
-                    },
-                    "resources": {
-                        "requests": {"cpu": "100m", "memory": "256Mi"},
-                        "limits": {"cpu": "500m", "memory": "512Mi"},
-                    },
-                }],
+                    }
+                ],
+                "containers": [
+                    {
+                        "name": "postgres",
+                        "image": "postgres:16",
+                        "env": [
+                            {"name": "POSTGRES_PASSWORD", "value": _POSTGRES_PASSWORD},
+                            {"name": "POSTGRES_DB", "value": _POSTGRES_DB},
+                            {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
+                        ],
+                        "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}],
+                        "readinessProbe": {
+                            "exec": {"command": ["pg_isready", "-U", "postgres"]},
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 5,
+                            "failureThreshold": 24,
+                        },
+                        "resources": {
+                            "requests": {"cpu": "100m", "memory": "256Mi"},
+                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                        },
+                    }
+                ],
             },
         },
     )
@@ -204,7 +219,8 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
     log.info("Postgres restore verifier pod running and ready")
 
     proc = _psql_exec(
-        ns, verifier_name,
+        ns,
+        verifier_name,
         f"SELECT v FROM items WHERE v='{KNOWN_VALUE}';",
     )
     log.info("Verification stdout: %r", proc.stdout)

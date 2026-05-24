@@ -50,12 +50,15 @@ def _init_metrics(logger: logging.Logger) -> None:
         namespace = obj["metadata"]["namespace"]
         status = obj.get("status", {})
         metrics.record(
-            name, namespace,
-            status.get("lastBackupResult", ""), status.get("lastBackupTime"),
+            name,
+            namespace,
+            status.get("lastBackupResult", ""),
+            status.get("lastBackupTime"),
         )
 
 
 # ── CRD lifecycle ──────────────────────────────────────────────────────────────
+
 
 @kopf.on.create("k8si.io", "v1", "k8sibackups")
 def on_create(
@@ -94,6 +97,7 @@ def on_delete(name: str, namespace: str, logger: logging.Logger, **_: object) ->
 
 
 # ── Backup timer ───────────────────────────────────────────────────────────────
+
 
 @kopf.timer("k8si.io", "v1", "k8sibackups", interval=60.0, idle=60.0)
 async def backup_timer(

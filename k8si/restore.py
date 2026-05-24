@@ -97,11 +97,17 @@ def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
         if age_hours > config.restore_max_age_hours:
             log.warning(
                 "Skipping restore: latest snapshot %s is %.1fh old (max %.0fh)",
-                snapshot_id, age_hours, config.restore_max_age_hours,
+                snapshot_id,
+                age_hours,
+                config.restore_max_age_hours,
             )
             return None
-        log.info("Snapshot %s age: %.1fh (within %.0fh limit)", snapshot_id, age_hours,
-                 config.restore_max_age_hours)
+        log.info(
+            "Snapshot %s age: %.1fh (within %.0fh limit)",
+            snapshot_id,
+            age_hours,
+            config.restore_max_age_hours,
+        )
 
     # Size check (opt-in)
     if config.restore_size_min is not None or config.restore_size_max is not None:
@@ -109,13 +115,17 @@ def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
         if config.restore_size_min is not None and size < config.restore_size_min:
             log.warning(
                 "Skipping restore: snapshot %s is %d bytes (min %d)",
-                snapshot_id, size, config.restore_size_min,
+                snapshot_id,
+                size,
+                config.restore_size_min,
             )
             return None
         if config.restore_size_max is not None and size > config.restore_size_max:
             log.warning(
                 "Skipping restore: snapshot %s is %d bytes (max %d)",
-                snapshot_id, size, config.restore_size_max,
+                snapshot_id,
+                size,
+                config.restore_size_max,
             )
             return None
         log.info("Snapshot %s size: %d bytes (within bounds)", snapshot_id, size)
@@ -128,9 +138,7 @@ def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
     return snapshot_id
 
 
-def _sentinels_in_snapshot(
-    backend: BackupBackend, snapshot_id: str, sentinels: list[str]
-) -> bool:
+def _sentinels_in_snapshot(backend: BackupBackend, snapshot_id: str, sentinels: list[str]) -> bool:
     if not sentinels:
         return True
     log.info("Checking sentinels in snapshot %s: %s", snapshot_id, sentinels)
