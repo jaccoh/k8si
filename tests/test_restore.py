@@ -100,7 +100,9 @@ def test_fails_when_no_snapshots_and_required(tmp_path: Path) -> None:
 def test_fails_when_snapshots_raises_transport_error(tmp_path: Path) -> None:
     from k8si.backend import BackupError
     backend = MagicMock()
-    backend.snapshots.side_effect = BackupError("connection refused", 1, "ssh: connect: Connection refused")
+    backend.snapshots.side_effect = BackupError(
+        "connection refused", 1, "ssh: connect: Connection refused"
+    )
     with pytest.raises(SystemExit):
         run(make_config(tmp_path), backend)
 

@@ -3,8 +3,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from k8si.backup import LAST_BACKUP_FILE, _run_cycle, run_once
 from k8si.backend import BackupError
+from k8si.backup import LAST_BACKUP_FILE, _run_cycle, run_once
 from k8si.config import Config
 
 

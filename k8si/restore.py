@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .backend import BackupBackend, BackupError, NoSnapshotsError
+from .backend import BackupBackend, BackupError
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -52,7 +52,9 @@ def run(config: Config, backend: BackupBackend) -> None:
     snapshot_id = config.restore_snapshot
     if snapshot_id:
         log.info("Using pinned snapshot: %s", snapshot_id)
-        if config.restore_sentinels and not _sentinels_in_snapshot(backend, snapshot_id, config.restore_sentinels):
+        if config.restore_sentinels and not _sentinels_in_snapshot(
+            backend, snapshot_id, config.restore_sentinels
+        ):
             log.error("Pinned snapshot %s is missing required sentinels, aborting", snapshot_id)
             raise SystemExit(1)
     else:

@@ -1,7 +1,6 @@
 """Tests for the restic backend plugin (k8si.backends.restic)."""
 
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -105,7 +104,9 @@ def test_snapshots_passes_tag_filters() -> None:
 
 def test_snapshots_raises_on_transport_error() -> None:
     backend, mock_cmd = _make_backend()
-    mock_cmd.side_effect = _sh_error(1, "ssh: connect to host backup.example.com port 22: Connection refused")
+    mock_cmd.side_effect = _sh_error(
+        1, "ssh: connect to host backup.example.com port 22: Connection refused"
+    )
     with pytest.raises(BackupError) as exc_info:
         backend.snapshots()
     assert "Connection refused" in exc_info.value.stderr
