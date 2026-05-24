@@ -108,15 +108,17 @@ class KopiaBackend:
         self._ensure_connected()
         raw = self._invoke("snapshot", "list", "--json")
         data = json.loads(raw.strip() or "[]")
-        
+
         # Map Kopia format to match restic return format: [ {id, short_id, time} ]
         results = []
         for snap in data:
-            results.append({
-                "id": snap["id"],
-                "short_id": snap["id"][:8],
-                "time": snap["startTime"],
-            })
+            results.append(
+                {
+                    "id": snap["id"],
+                    "short_id": snap["id"][:8],
+                    "time": snap["startTime"],
+                }
+            )
         return results
 
     def ls(self, snapshot_id: str) -> list[str]:

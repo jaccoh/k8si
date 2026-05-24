@@ -26,6 +26,7 @@ def _detect_environment() -> tuple[str, str]:
     try:
         import kubernetes.client
         import kubernetes.config
+
         try:
             kubernetes.config.load_incluster_config()
         except kubernetes.config.ConfigException:
@@ -300,9 +301,19 @@ def mariadb_env(ns):
     while time.monotonic() < deadline:
         r = subprocess.run(
             [
-                "kubectl", "exec", "mariadb", "-n", ns, "--",
-                "mysql", "-u", "root", f"-p{_MARIADB_ROOT_PASSWORD}", _MARIADB_DATABASE,
-                "-e", "SELECT 1",
+                "kubectl",
+                "exec",
+                "mariadb",
+                "-n",
+                ns,
+                "--",
+                "mysql",
+                "-u",
+                "root",
+                f"-p{_MARIADB_ROOT_PASSWORD}",
+                _MARIADB_DATABASE,
+                "-e",
+                "SELECT 1",
             ],
             capture_output=True,
             text=True,

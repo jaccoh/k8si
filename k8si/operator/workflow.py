@@ -21,9 +21,7 @@ _HOOK_JOB_TIMEOUT = 300
 _JOB_GONE_TIMEOUT = 120
 
 
-def _emit_event(
-    body: dict[str, Any] | None, type_str: str, reason: str, message: str
-) -> None:
+def _emit_event(body: dict[str, Any] | None, type_str: str, reason: str, message: str) -> None:
     if body is None:
         return
     try:
@@ -63,11 +61,11 @@ async def run_backup(
                 if hook:
                     _emit_event(body, "Normal", "HookStarted", f"Running pre-snapshot hook: {hook}")
                     await _run_hook_job(hook, hook_required, namespace, pvc_name, logger)
-                
+
                 node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
                 if node:
                     logger.info("Pinning backup job to node %s (PVC %s)", node, pvc_name)
-                
+
                 job_body = _build_backup_job(
                     job_name, namespace, pvc_name, restic_secret, spec, tags, retention, node
                 )
