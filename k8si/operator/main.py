@@ -128,13 +128,13 @@ async def backup_timer(
     _running.add(key)
     patch.status["lastBackupResult"] = "running"
     metrics.record(name, namespace, "running", last_backup)
-    kopf.event(body, type="Normal", reason="BackupStarted", message=f"PVC backup started for {name}")
+    kopf.event(body, type="Normal", reason="BackupStarted", message=f"Backup started for {name}")
     try:
         result = await workflow.run_backup(name, namespace, spec, logger, body)
         patch.status.update(result)
         patch.status["nextBackupTime"] = compute_next_backup(schedule)
         metrics.record(name, namespace, "success", result.get("lastBackupTime"))
-        kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"PVC backup succeeded for {name}")
+        kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup succeeded for {name}")
     except Exception as e:
         logger.error("Backup %s/%s failed: %s", namespace, name, e)
         patch.status["lastBackupResult"] = "failed"
