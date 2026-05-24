@@ -6,10 +6,10 @@ import os
 import subprocess
 import time
 
-import pytest
 import kubernetes.client
 import kubernetes.client.exceptions
 import kubernetes.config
+import pytest
 
 from e2e.helpers import wait_pod_condition, wait_pod_phase
 

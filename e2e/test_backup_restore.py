@@ -153,15 +153,21 @@ def test_sqlite_backup_and_restore(ns, rest_server_url, data_pvc, k8si_image):
                         {"name": "RESTORE_SENTINELS", "value": "test.db"},
                         {
                             "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_REPOSITORY"}},
+                            "valueFrom": {
+                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_REPOSITORY"},
+                            },
                         },
                         {
                             "name": "RESTIC_PASSWORD",
-                            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"}},
+                            "valueFrom": {
+                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
+                            },
                         },
                         {
                             "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_SFTP_COMMAND"}},
+                            "valueFrom": {
+                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_SFTP_COMMAND"},
+                            },
                         },
                     ],
                     "volumeMounts": [

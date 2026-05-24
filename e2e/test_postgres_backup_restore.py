@@ -140,15 +140,30 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
                         {"name": "RESTORE_SENTINELS", "value": _SENTINEL},
                         {
                             "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {"secretKeyRef": {"name": restic_secret_name, "key": "RESTIC_REPOSITORY"}},
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": restic_secret_name,
+                                    "key": "RESTIC_REPOSITORY",
+                                },
+                            },
                         },
                         {
                             "name": "RESTIC_PASSWORD",
-                            "valueFrom": {"secretKeyRef": {"name": restic_secret_name, "key": "RESTIC_PASSWORD"}},
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": restic_secret_name,
+                                    "key": "RESTIC_PASSWORD",
+                                },
+                            },
                         },
                         {
                             "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {"secretKeyRef": {"name": restic_secret_name, "key": "RESTIC_SFTP_COMMAND"}},
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": restic_secret_name,
+                                    "key": "RESTIC_SFTP_COMMAND",
+                                },
+                            },
                         },
                     ],
                     "volumeMounts": [

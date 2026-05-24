@@ -47,7 +47,8 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
 
     _mysql_exec(
         ns, "mariadb",
-        f"CREATE TABLE IF NOT EXISTS items (v VARCHAR(255)); INSERT INTO items VALUES ('{KNOWN_VALUE}');",
+        "CREATE TABLE IF NOT EXISTS items (v VARCHAR(255));"
+        f" INSERT INTO items VALUES ('{KNOWN_VALUE}');",
     )
     log.info("Inserted KNOWN_VALUE=%s into MariaDB", KNOWN_VALUE)
 
@@ -137,15 +138,30 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
                         {"name": "RESTORE_SENTINELS", "value": "ibdata1"},
                         {
                             "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {"secretKeyRef": {"name": restic_secret_name, "key": "RESTIC_REPOSITORY"}},
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": restic_secret_name,
+                                    "key": "RESTIC_REPOSITORY",
+                                },
+                            },
                         },
                         {
                             "name": "RESTIC_PASSWORD",
-                            "valueFrom": {"secretKeyRef": {"name": restic_secret_name, "key": "RESTIC_PASSWORD"}},
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": restic_secret_name,
+                                    "key": "RESTIC_PASSWORD",
+                                },
+                            },
                         },
                         {
                             "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {"secretKeyRef": {"name": restic_secret_name, "key": "RESTIC_SFTP_COMMAND"}},
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": restic_secret_name,
+                                    "key": "RESTIC_SFTP_COMMAND",
+                                },
+                            },
                         },
                     ],
                     "volumeMounts": [
@@ -267,15 +283,21 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
                         {"name": "RESTORE_REQUIRED", "value": "true"},
                         {
                             "name": "RESTIC_REPOSITORY",
-                            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_REPOSITORY"}},
+                            "valueFrom": {
+                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_REPOSITORY"},
+                            },
                         },
                         {
                             "name": "RESTIC_PASSWORD",
-                            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"}},
+                            "valueFrom": {
+                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
+                            },
                         },
                         {
                             "name": "RESTIC_SFTP_COMMAND",
-                            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_SFTP_COMMAND"}},
+                            "valueFrom": {
+                                "secretKeyRef": {"name": secret_name, "key": "RESTIC_SFTP_COMMAND"},
+                            },
                         },
                     ],
                     "volumeMounts": [

@@ -37,7 +37,9 @@ def wait_pod_phase(ns: str, pod_name: str, phase: str, timeout: int = 180) -> No
     raise TimeoutError(f"Pod {ns}/{pod_name} did not reach phase {phase!r} within {timeout}s")
 
 
-def wait_pod_condition(ns: str, pod_name: str, condition_type: str = "Ready", timeout: int = 120) -> None:
+def wait_pod_condition(
+    ns: str, pod_name: str, condition_type: str = "Ready", timeout: int = 120
+) -> None:
     v1 = kubernetes.client.CoreV1Api()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
