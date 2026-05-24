@@ -307,7 +307,7 @@ def mariadb_env(ns):
                 "-n",
                 ns,
                 "--",
-                "mysql",
+                "mariadb",
                 "-u",
                 "root",
                 f"-p{_MARIADB_ROOT_PASSWORD}",
