@@ -60,7 +60,7 @@ metadata:
   namespace: downloads
 spec:
   pvc: sonarr-config
-  secret: restic-sonarr-config
+  resticSecret: restic-sonarr-config
   schedule: "0 2 * * *"
   restore:
     sentinels: ["config.xml"]
@@ -172,8 +172,9 @@ metadata:
   namespace: <namespace>
 spec:
   pvc: <pvc-claim-name>             # PVC to back up, mounted at /data
-  secret: <secret-name>             # Secret with RESTIC_* keys + SSH key
+  resticSecret: <secret-name>       # Secret with RESTIC_* keys + SSH key
   schedule: "0 2 * * *"            # Cron schedule (UTC)
+  backupMode: snapshot              # snapshot (default) or direct
   tags: ["app=sonarr"]             # Optional restic tags
 
   restore:
@@ -260,12 +261,19 @@ The `id_ed25519` and `known_hosts` keys are projected to `/restic-ssh/` as files
 
 ## Backend plugins
 
-The `BackupBackend` protocol (`k8si.backend`) defines the interface. `k8si/backends/restic.py` is the default implementation using the [sh](https://sh.readthedocs.io/) library. To add a kopia backend, implement the same protocol in `k8si/backends/kopia.py` and pass it to `cli.py`.
+The `BackupBackend` protocol (`k8si.backend`) defines the interface. Two implementations ship:
+
+| Backend | Module | Selected when |
+|---------|--------|---------------|
+| **restic** (default) | `k8si/backends/restic.py` | `BACKEND_TYPE` unset or `restic` |
+| **kopia** | `k8si/backends/kopia.py` | `BACKEND_TYPE=kopia` |
+
+Both speak the same protocol — swap them in `cli.py` or add your own:
 
 ```python
 from k8si.backend import BackupBackend, BackupError, NoSnapshotsError
 
-class KopiaBackend:
+class MyBackend:
     def init(self) -> None: ...
     def snapshots(self, tags=None) -> list[dict]: ...
     def ls(self, snapshot_id: str) -> list[str]: ...
@@ -303,4 +311,4 @@ uv run pytest tests/ -v
 docker build -t k8si:dev .
 ```
 
-CI runs on every push: tests on all branches, multi-arch image push to `ghcr.io/jaccoh/k8si` on `main`. Releases are tagged `v*` and pushed with `v1.2.3 / v1.2 / v1 / latest` tags.
+CI runs on every push to `main`: lint → unit tests → kaniko image build (`docker.hoeve.nu/k8si:{sha}` + `latest`) → e2e tests against the real cluster → Gitea release tagged `v{version}` from `pyproject.toml`. Release is skipped if the tag already exists (idempotent on re-run).
