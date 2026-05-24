@@ -134,7 +134,7 @@ async def backup_timer(
         patch.status.update(result)
         patch.status["nextBackupTime"] = compute_next_backup(schedule)
         metrics.record(name, namespace, "success", result.get("lastBackupTime"))
-        kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup succeeded for {name}")
+        kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup done: {name}")
     except Exception as e:
         logger.error("Backup %s/%s failed: %s", namespace, name, e)
         patch.status["lastBackupResult"] = "failed"
