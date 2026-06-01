@@ -31,7 +31,7 @@ def _is_due(schedule: str, last_backup_time: str | None) -> bool:
 
 @kopf.on.login()  # type: ignore[arg-type]
 def login(**kwargs: object) -> kopf.ConnectionInfo:
-    return kopf.login_with_service_account(**kwargs)  # type: ignore[return-value]
+    return kopf.login_with_service_account(**kwargs)  # type: ignore[return-value, arg-type]
 
 
 @kopf.on.startup()  # type: ignore[arg-type]
