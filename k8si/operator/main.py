@@ -29,6 +29,11 @@ def _is_due(schedule: str, last_backup_time: str | None) -> bool:
     return bool(now >= cron.get_next(datetime))  # type: ignore[arg-type]
 
 
+@kopf.on.login()  # type: ignore[arg-type]
+def login(**kwargs: object) -> kopf.ConnectionInfo:
+    return kopf.login_with_service_account(**kwargs)  # type: ignore[return-value]
+
+
 @kopf.on.startup()  # type: ignore[arg-type]
 def startup(logger: logging.Logger, **_: object) -> None:
     kubernetes.config.load_incluster_config()
