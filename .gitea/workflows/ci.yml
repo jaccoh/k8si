@@ -61,6 +61,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, arm64]
     steps:
+      - uses: actions/checkout@v4
+
       - name: Build and push image (kaniko)
         run: |
           SHA="${{ github.sha }}"
