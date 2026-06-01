@@ -13,7 +13,7 @@ jobs:
 
       - name: Install uv
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Cache uv
@@ -41,7 +41,7 @@ jobs:
 
       - name: Install uv
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Cache uv
@@ -66,6 +66,7 @@ jobs:
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
           JOB="kaniko-${SHORT}"
+          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -90,6 +91,7 @@ jobs:
                   - --custom-platform=linux/arm64
                   - --build-arg=TARGETARCH=arm64
                   - --destination=docker.hoeve.nu/k8si:${SHA}
+                  - --destination=docker.hoeve.nu/k8si:v${VERSION}
                   - --destination=docker.hoeve.nu/k8si:latest
                   - --cache=true
                   - --cache-repo=docker.hoeve.nu/k8si/cache
@@ -116,7 +118,7 @@ jobs:
 
       - name: Install uv
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Cache uv
