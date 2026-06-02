@@ -7,7 +7,7 @@ ERRORS=0
 
 checkpoint_one() {
     db="$1"
-    if sqlite3 "$db" "PRAGMA wal_checkpoint(TRUNCATE);" > /dev/null 2>&1; then
+    if sqlite3 "$db" "PRAGMA wal_checkpoint(PASSIVE);" > /dev/null 2>&1; then
         echo "checkpointed: $db"
     else
         echo "checkpoint failed: $db" >&2
@@ -23,7 +23,7 @@ find "$DATA_PATH" -type f \( -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite
     -exec sh -c '
         db="$1"; errfile="$2"
         [ -f "${db}-wal" ] || exit 0
-        if sqlite3 "$db" "PRAGMA wal_checkpoint(TRUNCATE);" > /dev/null 2>&1; then
+        if sqlite3 "$db" "PRAGMA wal_checkpoint(PASSIVE);" > /dev/null 2>&1; then
             echo "checkpointed: $db"
         else
             echo "checkpoint failed: $db" >&2
