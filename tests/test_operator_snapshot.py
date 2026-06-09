@@ -9,6 +9,79 @@ import pytest
 import k8si.operator.snapshot as snap_mod
 
 
+def _make_snapshot_item(pvc: str, ready: bool) -> dict:
+    return {
+        "spec": {"source": {"persistentVolumeClaimName": pvc}},
+        "status": {"readyToUse": ready},
+    }
+
+
+class TestWaitNoSnapshotInProgress:
+    """_wait_no_snapshot_in_progress_sync waits until no unready snapshot targets the PVC."""
+
+    def test_proceeds_immediately_when_no_snapshots(self):
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api):
+            snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
+
+        assert mock_api.list_namespaced_custom_object.call_count == 1
+
+    def test_proceeds_immediately_when_only_ready_snapshots_for_pvc(self):
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.return_value = {
+            "items": [_make_snapshot_item("my-pvc", ready=True)]
+        }
+
+        with patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api):
+            snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
+
+        assert mock_api.list_namespaced_custom_object.call_count == 1
+
+    def test_ignores_in_progress_snapshots_for_other_pvcs(self):
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.return_value = {
+            "items": [_make_snapshot_item("other-pvc", ready=False)]
+        }
+
+        with patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api):
+            snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
+
+        assert mock_api.list_namespaced_custom_object.call_count == 1
+
+    def test_waits_until_conflict_clears(self):
+        responses = [
+            {"items": [_make_snapshot_item("my-pvc", ready=False)]},
+            {"items": [_make_snapshot_item("my-pvc", ready=False)]},
+            {"items": [_make_snapshot_item("my-pvc", ready=True)]},
+        ]
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.side_effect = responses
+
+        with (
+            patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api),
+            patch("k8si.operator.snapshot.time.sleep"),
+        ):
+            snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
+
+        assert mock_api.list_namespaced_custom_object.call_count == 3
+
+    def test_times_out_when_conflict_never_clears(self):
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.return_value = {
+            "items": [_make_snapshot_item("my-pvc", ready=False)]
+        }
+
+        with (
+            patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api),
+            patch("k8si.operator.snapshot.time.sleep"),
+            patch("k8si.operator.snapshot.time.monotonic", side_effect=[0.0, 0.0, 9999.0]),
+        ):
+            with pytest.raises(TimeoutError, match="my-pvc"):
+                snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
+
+
 class TestDeadCodeRemoved:
     def test_wait_pvc_bound_sync_removed(self):
         """_wait_pvc_bound_sync must not exist — it deadlocks on WaitForFirstConsumer volumes."""

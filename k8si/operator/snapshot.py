@@ -15,7 +15,38 @@ _SNAPSHOT_VERSION = "v1"
 _SNAPSHOT_PLURAL = "volumesnapshots"
 
 _SNAPSHOT_READY_TIMEOUT = 300
+_SNAPSHOT_CONFLICT_TIMEOUT = 600
 _JOB_GONE_TIMEOUT = 120
+
+
+def _wait_no_snapshot_in_progress_sync(pvc_name: str, namespace: str) -> None:
+    """Block until no unready VolumeSnapshot targeting pvc_name exists in namespace."""
+    custom = kubernetes.client.CustomObjectsApi()
+    deadline = time.monotonic() + _SNAPSHOT_CONFLICT_TIMEOUT
+    warned = False
+    while True:
+        items = custom.list_namespaced_custom_object(
+            _SNAPSHOT_GROUP, _SNAPSHOT_VERSION, namespace, _SNAPSHOT_PLURAL
+        ).get("items", [])
+        in_progress = [
+            obj for obj in items
+            if obj.get("spec", {}).get("source", {}).get("persistentVolumeClaimName") == pvc_name
+            and not obj.get("status", {}).get("readyToUse")
+        ]
+        if not in_progress:
+            return
+        if not warned:
+            log.warning(
+                "VolumeSnapshot conflict: %d unready snapshot(s) for PVC %s/%s — waiting",
+                len(in_progress), namespace, pvc_name,
+            )
+            warned = True
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Timed out waiting for in-progress VolumeSnapshot(s) on PVC {pvc_name} "
+                f"to clear after {_SNAPSHOT_CONFLICT_TIMEOUT}s"
+            )
+        time.sleep(15)
 
 
 def _get_pvc_info_sync(pvc_name: str, namespace: str) -> tuple[str, str, str]:
@@ -124,6 +155,7 @@ def _delete_volume_snapshot_sync(name: str, namespace: str) -> None:
 
 
 async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: str | None) -> None:
+    await asyncio.to_thread(_wait_no_snapshot_in_progress_sync, pvc, namespace)
     log.info(
         "Creating VolumeSnapshot %s from PVC %s/%s (class=%s)",
         name,
