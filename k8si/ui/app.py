@@ -1,14 +1,13 @@
 """k8si web UI — read-only backup status dashboard."""
 
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 import kubernetes
 import kubernetes.client
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
-
-app = FastAPI()
 
 GROUP = "k8si.io"
 VERSION = "v1"
@@ -22,9 +21,13 @@ def _load_k8s() -> None:
         kubernetes.config.load_kube_config()
 
 
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ANN201
     _load_k8s()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/api/backups")
