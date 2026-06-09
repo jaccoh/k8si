@@ -94,8 +94,7 @@ def test_mariadb_quiesce_logs_warning_before_yield():
     assert warning_records_before_yield, "Expected at least one WARNING before yield"
     messages = [r.getMessage() for r in warning_records_before_yield]
     assert any(
-        "lock" in m.lower() or "FTWRL" in m or "write lock" in m.lower()
-        for m in messages
+        "lock" in m.lower() or "FTWRL" in m or "write lock" in m.lower() for m in messages
     ), f"WARNING should mention the lock, got: {messages}"
 
 
@@ -183,9 +182,7 @@ def test_mariadb_unlock_called_on_exception():
             patch("k8si.operator.quiesce._mariadb_unlock_sync", side_effect=fake_unlock),
         ):
             with pytest.raises(RuntimeError, match="boom"):
-                async with quiesce_context(
-                    _MARIADB_SPEC, "default", logging.getLogger("test_exc")
-                ):
+                async with quiesce_context(_MARIADB_SPEC, "default", logging.getLogger("test_exc")):
                     raise RuntimeError("boom")
 
     _run(_inner())

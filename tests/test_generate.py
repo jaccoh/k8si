@@ -41,6 +41,7 @@ def _capture_run(args: argparse.Namespace) -> str:
 
 # ── Test 1: init container uses RESTORE_SENTINELS, not SENTINEL_FILE ──────────
 
+
 def test_init_container_uses_restore_sentinels():
     output = _capture_run(_make_args(sentinel="config.xml"))
     assert "RESTORE_SENTINELS" in output, "RESTORE_SENTINELS must appear in init container output"
@@ -49,12 +50,14 @@ def test_init_container_uses_restore_sentinels():
 
 # ── Test 2: sidecar does NOT contain SENTINEL_FILE ────────────────────────────
 
+
 def test_sidecar_does_not_contain_sentinel_file():
     output = _capture_run(_make_args(sentinel="config.xml"))
     assert "SENTINEL_FILE" not in output, "SENTINEL_FILE must NOT appear in sidecar output"
 
 
 # ── Test 3: RESTORE_SENTINELS value matches the --sentinel argument ────────────
+
 
 def test_restore_sentinels_value_matches_sentinel_arg():
     output = _capture_run(_make_args(sentinel="config.xml"))
@@ -72,6 +75,7 @@ def test_restore_sentinels_value_matches_sentinel_arg():
 
 
 # ── Test 4: --no-sidecar emits init container only ────────────────────────────
+
 
 def test_no_sidecar_omits_backup_container():
     output = _capture_run(_make_args(no_sidecar=True))

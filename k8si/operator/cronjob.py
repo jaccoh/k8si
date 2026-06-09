@@ -96,4 +96,5 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
         "# Items 0-1: paste into spec.initContainers (fix-ssh-perms must come first)\n"
         "# Items 2-3: paste into spec.volumes (if not already present)\n"
     )
-    return header + yaml.dump(patch, default_flow_style=False, sort_keys=False)  # type: ignore[no-any-return]
+    dumped: str = yaml.dump(patch, default_flow_style=False, sort_keys=False)
+    return header + dumped

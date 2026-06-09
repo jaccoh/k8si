@@ -29,7 +29,8 @@ def _wait_no_snapshot_in_progress_sync(pvc_name: str, namespace: str) -> None:
             _SNAPSHOT_GROUP, _SNAPSHOT_VERSION, namespace, _SNAPSHOT_PLURAL
         ).get("items", [])
         in_progress = [
-            obj for obj in items
+            obj
+            for obj in items
             if obj.get("spec", {}).get("source", {}).get("persistentVolumeClaimName") == pvc_name
             and not obj.get("status", {}).get("readyToUse")
         ]
@@ -38,7 +39,9 @@ def _wait_no_snapshot_in_progress_sync(pvc_name: str, namespace: str) -> None:
         if not warned:
             log.warning(
                 "VolumeSnapshot conflict: %d unready snapshot(s) for PVC %s/%s — waiting",
-                len(in_progress), namespace, pvc_name,
+                len(in_progress),
+                namespace,
+                pvc_name,
             )
             warned = True
         if time.monotonic() >= deadline:
@@ -88,7 +91,7 @@ def _wait_snapshot_ready_sync(name: str, namespace: str) -> None:
         except kubernetes.client.exceptions.ApiException as e:
             if e.status >= 500:
                 log.warning(
-                    "Transient K8s API error (HTTP %s) while waiting for VolumeSnapshot %s; retrying",
+                    "Transient K8s API error (HTTP %s) waiting for VolumeSnapshot %s; retrying",
                     e.status,
                     name,
                 )

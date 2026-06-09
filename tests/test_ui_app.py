@@ -2,9 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -102,9 +100,7 @@ def test_list_backups_returns_shaped_items(mock_api_cls: MagicMock) -> None:
     """GET /api/backups returns a list of shaped dicts for each CRD item."""
     mock_api = MagicMock()
     mock_api_cls.return_value = mock_api
-    mock_api.list_cluster_custom_object.return_value = {
-        "items": [FULL_ITEM, MINIMAL_ITEM]
-    }
+    mock_api.list_cluster_custom_object.return_value = {"items": [FULL_ITEM, MINIMAL_ITEM]}
 
     client = _make_client()
     response = client.get("/api/backups")

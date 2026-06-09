@@ -1,0 +1,241 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - navigation "Navigation Bar" [ref=e3]:
+      - generic [ref=e4]:
+        - link "Home" [ref=e5] [cursor=pointer]:
+          - /url: /
+          - img [ref=e6]
+        - link "Explore" [ref=e7] [cursor=pointer]:
+          - /url: /explore/repos
+        - link "Help" [ref=e8] [cursor=pointer]:
+          - /url: https://docs.gitea.com
+      - generic [ref=e9]:
+        - link "Register" [ref=e10] [cursor=pointer]:
+          - /url: /user/sign_up
+          - img [ref=e11]
+          - generic [ref=e13]: Register
+        - link "Sign In" [ref=e14] [cursor=pointer]:
+          - /url: /user/login
+          - img [ref=e15]
+          - generic [ref=e17]: Sign In
+    - generic [ref=e18]:
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]:
+            - generic [ref=e22]:
+              - img [ref=e24]
+              - generic [ref=e27]:
+                - link "hoeve" [ref=e28] [cursor=pointer]:
+                  - /url: /hoeve
+                - text: /
+                - link "k8si" [ref=e29] [cursor=pointer]:
+                  - /url: /hoeve/k8si
+            - generic [ref=e30]:
+              - link "RSS Feed" [ref=e31] [cursor=pointer]:
+                - /url: /hoeve/k8si.rss
+                - img [ref=e32]
+              - generic "Sign in to watch this repository." [ref=e35] [cursor=pointer]:
+                - button "Watch" [disabled]:
+                  - img
+                  - generic: Watch
+                - link "1" [ref=e36]:
+                  - /url: /hoeve/k8si/watchers
+              - generic "Sign in to star this repository." [ref=e38] [cursor=pointer]:
+                - button "Star" [disabled]:
+                  - img
+                  - generic: Star
+                - link "0" [ref=e39]:
+                  - /url: /hoeve/k8si/stars
+              - generic "Sign in to fork this repository.":
+                - generic:
+                  - img
+                  - generic: Fork
+                - link "0":
+                  - /url: /hoeve/k8si/forks
+          - generic [ref=e40]:
+            - text: mirror of
+            - link "https://github.com/jaccoh/k8si" [ref=e41] [cursor=pointer]:
+              - /url: https://github.com/jaccoh/k8si
+            - text: synced 2026-06-09 11:04:36 +00:0019 minutes ago
+        - navigation [ref=e43]:
+          - generic [ref=e44]:
+            - link "Code" [ref=e45] [cursor=pointer]:
+              - /url: /hoeve/k8si/src/
+              - img [ref=e46]
+              - generic [ref=e48]: Code
+            - link "Issues" [ref=e49] [cursor=pointer]:
+              - /url: /hoeve/k8si/issues
+              - img [ref=e50]
+              - generic [ref=e53]: Issues
+            - link "Actions" [ref=e54] [cursor=pointer]:
+              - /url: /hoeve/k8si/actions
+              - img [ref=e55]
+              - generic [ref=e57]: Actions
+            - link "Packages" [ref=e58] [cursor=pointer]:
+              - /url: /hoeve/k8si/packages
+              - img [ref=e59]
+              - generic [ref=e61]: Packages
+            - link "Projects" [ref=e62] [cursor=pointer]:
+              - /url: /hoeve/k8si/projects
+              - img [ref=e63]
+              - generic [ref=e65]: Projects
+            - link "Releases 4" [ref=e66] [cursor=pointer]:
+              - /url: /hoeve/k8si/releases
+              - img [ref=e67]
+              - generic [ref=e69]: Releases
+              - generic [ref=e70]: "4"
+            - link "Wiki" [ref=e71] [cursor=pointer]:
+              - /url: /hoeve/k8si/wiki
+              - img [ref=e72]
+              - generic [ref=e74]: Wiki
+            - link "Activity" [ref=e75] [cursor=pointer]:
+              - /url: /hoeve/k8si/activity
+              - img [ref=e76]
+              - generic [ref=e78]: Activity
+      - generic [ref=e81]:
+        - generic [ref=e82]:
+          - generic [ref=e84]:
+            - generic "Failure" [ref=e85]:
+              - img [ref=e86]
+            - 'heading "docs: update README for v0.4.1 — k8si-ui, recentBackups, conflict handling" [level=2] [ref=e88]'
+          - generic [ref=e89]:
+            - generic [ref=e90]:
+              - link "ci.yml" [ref=e91] [cursor=pointer]:
+                - /url: /hoeve/k8si/actions/?workflow=ci.yml
+              - text: ":"
+            - text: Commit
+            - link "3f871f0e4f" [ref=e92] [cursor=pointer]:
+              - /url: /hoeve/k8si/commit/3f871f0e4f95ab2b576d4d91d0504576e1bc7fd8
+            - text: pushed by
+            - link "hoeve" [ref=e93] [cursor=pointer]:
+              - /url: /hoeve
+            - link "main" [ref=e95] [cursor=pointer]:
+              - /url: /hoeve/k8si/src/branch/main
+        - generic [ref=e96]:
+          - generic [ref=e97]:
+            - link "Summary" [ref=e98] [cursor=pointer]:
+              - /url: /hoeve/k8si/actions/runs/219
+              - img [ref=e99]
+              - generic [ref=e101]: Summary
+            - generic [ref=e103]: All jobs
+            - list [ref=e104]:
+              - listitem [ref=e105]:
+                - link "Failure lint 7s" [ref=e106] [cursor=pointer]:
+                  - /url: /hoeve/k8si/actions/runs/219/jobs/1297
+                  - generic "Failure" [ref=e107]:
+                    - img [ref=e108]
+                  - generic [ref=e110]: lint
+                  - generic [ref=e111]: 7s
+              - listitem [ref=e112]:
+                - link "Skipped test 0s" [ref=e113] [cursor=pointer]:
+                  - /url: /hoeve/k8si/actions/runs/219/jobs/1298
+                  - generic "Skipped" [ref=e114]:
+                    - img [ref=e115]
+                  - generic [ref=e117]: test
+                  - generic [ref=e118]: 0s
+              - listitem [ref=e119]:
+                - link "Skipped docker-build 0s" [ref=e120] [cursor=pointer]:
+                  - /url: /hoeve/k8si/actions/runs/219/jobs/1299
+                  - generic "Skipped" [ref=e121]:
+                    - img [ref=e122]
+                  - generic [ref=e124]: docker-build
+                  - generic [ref=e125]: 0s
+              - listitem [ref=e126]:
+                - link "Skipped e2e 0s" [ref=e127] [cursor=pointer]:
+                  - /url: /hoeve/k8si/actions/runs/219/jobs/1300
+                  - generic "Skipped" [ref=e128]:
+                    - img [ref=e129]
+                  - generic [ref=e131]: e2e
+                  - generic [ref=e132]: 0s
+              - listitem [ref=e133]:
+                - link "Skipped release 0s" [ref=e134] [cursor=pointer]:
+                  - /url: /hoeve/k8si/actions/runs/219/jobs/1301
+                  - generic "Skipped" [ref=e135]:
+                    - img [ref=e136]
+                  - generic [ref=e138]: release
+                  - generic [ref=e139]: 0s
+            - generic [ref=e141]: Run Details
+            - list [ref=e142]:
+              - listitem [ref=e143]:
+                - link "Workflow file" [ref=e144] [cursor=pointer]:
+                  - /url: /hoeve/k8si/actions/runs/219/workflow
+                  - img [ref=e145]
+                  - generic [ref=e147]: Workflow file
+          - generic [ref=e148]:
+            - generic [ref=e149]:
+              - generic [ref=e150]:
+                - heading "lint" [level=3] [ref=e151]
+                - paragraph [ref=e152]: Failure
+              - button [ref=e155] [cursor=pointer]:
+                - img [ref=e156]
+            - generic [ref=e158]:
+              - generic [ref=e160] [cursor=pointer]:
+                - img [ref=e161]
+                - generic "success" [ref=e163]:
+                  - img [ref=e164]
+                - generic [ref=e166]: Set up job
+                - generic [ref=e167]: 3s
+              - generic [ref=e169] [cursor=pointer]:
+                - img [ref=e170]
+                - generic "success" [ref=e172]:
+                  - img [ref=e173]
+                - generic [ref=e175]: Run actions/checkout@v4
+                - generic [ref=e176]: 0s
+              - generic [ref=e178] [cursor=pointer]:
+                - img [ref=e179]
+                - generic "success" [ref=e181]:
+                  - img [ref=e182]
+                - generic [ref=e184]: Install uv
+                - generic [ref=e185]: 2s
+              - generic [ref=e187] [cursor=pointer]:
+                - img [ref=e188]
+                - generic "success" [ref=e190]:
+                  - img [ref=e191]
+                - generic [ref=e193]: Cache uv
+                - generic [ref=e194]: 0s
+              - generic [ref=e196] [cursor=pointer]:
+                - img [ref=e197]
+                - generic "success" [ref=e199]:
+                  - img [ref=e200]
+                - generic [ref=e202]: Install dependencies
+                - generic [ref=e203]: 1s
+              - generic [ref=e205] [cursor=pointer]:
+                - img [ref=e206]
+                - generic "failure" [ref=e208]:
+                  - img [ref=e209]
+                - generic [ref=e211]: Lint
+                - generic [ref=e212]: 0s
+              - generic [ref=e214]:
+                - generic "skipped" [ref=e215]:
+                  - img [ref=e216]
+                - generic [ref=e218]: Type check
+                - generic [ref=e219]: 0s
+              - generic [ref=e221] [cursor=pointer]:
+                - img [ref=e222]
+                - generic "failure" [ref=e224]:
+                  - img [ref=e225]
+                - generic [ref=e227]: Complete job
+                - generic [ref=e228]: 1s
+  - group "Footer" [ref=e229]:
+    - contentinfo "About Software" [ref=e230]:
+      - link "Powered by Gitea" [ref=e231] [cursor=pointer]:
+        - /url: https://about.gitea.com
+      - generic [ref=e232]: "Version: 1.26.2"
+      - generic [ref=e233]:
+        - text: "Page:"
+        - strong [ref=e234]: 1ms
+        - text: "Template:"
+        - strong [ref=e235]: 0ms
+    - group "Links" [ref=e236]:
+      - menu [ref=e237] [cursor=pointer]:
+        - generic [ref=e239]:
+          - img [ref=e240]
+          - text: Auto
+      - menu [ref=e242] [cursor=pointer]:
+        - generic [ref=e243]:
+          - img [ref=e244]
+          - text: English
+      - link "Licenses" [ref=e246] [cursor=pointer]:
+        - /url: /assets/licenses.txt
+      - link "API" [ref=e247] [cursor=pointer]:
+        - /url: /api/swagger

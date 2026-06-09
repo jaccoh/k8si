@@ -288,7 +288,9 @@ def _collect_job_logs(v1: Any, job_name: str, namespace: str) -> str:
     try:
         pods = v1.list_namespaced_pod(namespace, label_selector=f"job-name={job_name}")
         for pod in pods.items:
-            return v1.read_namespaced_pod_log(pod.metadata.name, namespace, tail_lines=50)  # type: ignore[no-any-return]
+            return v1.read_namespaced_pod_log(  # type: ignore[no-any-return]
+                pod.metadata.name, namespace, tail_lines=50
+            )
     except Exception:
         pass
     return ""

@@ -1,12 +1,13 @@
 """Tests for k8si/operator/snapshot.py."""
 
-import time
 from unittest.mock import MagicMock, patch
 
 import kubernetes.client.exceptions
 import pytest
 
 import k8si.operator.snapshot as snap_mod
+
+_CUSTOM_API = "k8si.operator.snapshot.kubernetes.client.CustomObjectsApi"
 
 
 def _make_snapshot_item(pvc: str, ready: bool) -> dict:
@@ -23,7 +24,7 @@ class TestWaitNoSnapshotInProgress:
         mock_api = MagicMock()
         mock_api.list_namespaced_custom_object.return_value = {"items": []}
 
-        with patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api):
+        with patch(_CUSTOM_API, return_value=mock_api):
             snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
 
         assert mock_api.list_namespaced_custom_object.call_count == 1
@@ -34,7 +35,7 @@ class TestWaitNoSnapshotInProgress:
             "items": [_make_snapshot_item("my-pvc", ready=True)]
         }
 
-        with patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api):
+        with patch(_CUSTOM_API, return_value=mock_api):
             snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
 
         assert mock_api.list_namespaced_custom_object.call_count == 1
@@ -45,7 +46,7 @@ class TestWaitNoSnapshotInProgress:
             "items": [_make_snapshot_item("other-pvc", ready=False)]
         }
 
-        with patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api):
+        with patch(_CUSTOM_API, return_value=mock_api):
             snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
 
         assert mock_api.list_namespaced_custom_object.call_count == 1
@@ -60,7 +61,7 @@ class TestWaitNoSnapshotInProgress:
         mock_api.list_namespaced_custom_object.side_effect = responses
 
         with (
-            patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api),
+            patch(_CUSTOM_API, return_value=mock_api),
             patch("k8si.operator.snapshot.time.sleep"),
         ):
             snap_mod._wait_no_snapshot_in_progress_sync("my-pvc", "default")
@@ -74,7 +75,7 @@ class TestWaitNoSnapshotInProgress:
         }
 
         with (
-            patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_api),
+            patch(_CUSTOM_API, return_value=mock_api),
             patch("k8si.operator.snapshot.time.sleep"),
             patch("k8si.operator.snapshot.time.monotonic", side_effect=[0.0, 0.0, 9999.0]),
         ):
@@ -114,7 +115,7 @@ class TestWaitSnapshotReadySyncRetry:
         mock_custom_api.get_namespaced_custom_object.side_effect = side_effect
 
         with (
-            patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_custom_api),
+            patch(_CUSTOM_API, return_value=mock_custom_api),
             patch("k8si.operator.snapshot.time.sleep"),
         ):
             # Must complete without raising
@@ -128,7 +129,7 @@ class TestWaitSnapshotReadySyncRetry:
         mock_custom_api.get_namespaced_custom_object.side_effect = self._make_api_exception(404)
 
         with (
-            patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_custom_api),
+            patch(_CUSTOM_API, return_value=mock_custom_api),
             patch("k8si.operator.snapshot.time.sleep"),
         ):
             with pytest.raises(kubernetes.client.exceptions.ApiException) as exc_info:
@@ -157,7 +158,7 @@ class TestWaitSnapshotReadySyncRetry:
         mock_custom_api.get_namespaced_custom_object.side_effect = side_effect
 
         with (
-            patch("k8si.operator.snapshot.kubernetes.client.CustomObjectsApi", return_value=mock_custom_api),
+            patch(_CUSTOM_API, return_value=mock_custom_api),
             patch("k8si.operator.snapshot.time.sleep"),
         ):
             snap_mod._wait_snapshot_ready_sync("test-snap", "default")
