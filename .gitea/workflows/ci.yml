@@ -108,8 +108,60 @@ jobs:
           SHA="${{ github.sha }}"
           kubectl -n gitea delete job "kaniko-${SHA::8}" --ignore-not-found
 
+  docker-build-ui:
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push UI image (kaniko)
+        run: |
+          SHA="${{ github.sha }}"
+          SHORT="${SHA::8}"
+          JOB="kaniko-ui-${SHORT}"
+          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: kaniko
+                  image: gcr.io/kaniko-project/executor:latest
+                  args:
+                  - --context=https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz
+                  - --context-sub-path=k8si/ui/
+                  - --custom-platform=linux/arm64
+                  - --build-arg=TARGETARCH=arm64
+                  - --destination=docker.hoeve.nu/k8si-ui:${SHA}
+                  - --destination=docker.hoeve.nu/k8si-ui:v${VERSION}
+                  - --destination=docker.hoeve.nu/k8si-ui:latest
+                  - --cache=true
+                  - --cache-repo=docker.hoeve.nu/k8si-ui/cache
+                  - --skip-tls-verify-registry=docker.hoeve.nu
+          YAML
+
+          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m
+
+      - name: Cleanup kaniko UI job
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "kaniko-ui-${SHA::8}" --ignore-not-found
+
   e2e:
-    needs: [docker-build]
+    needs: [docker-build, docker-build-ui]
     runs-on: [self-hosted, arm64]
     timeout-minutes: 30
     env:
