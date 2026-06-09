@@ -15,7 +15,6 @@ _SNAPSHOT_VERSION = "v1"
 _SNAPSHOT_PLURAL = "volumesnapshots"
 
 _SNAPSHOT_READY_TIMEOUT = 300
-_PVC_BOUND_TIMEOUT = 120
 _JOB_GONE_TIMEOUT = 120
 
 
@@ -51,9 +50,20 @@ def _wait_snapshot_ready_sync(name: str, namespace: str) -> None:
     custom = kubernetes.client.CustomObjectsApi()
     deadline = time.monotonic() + _SNAPSHOT_READY_TIMEOUT
     while time.monotonic() < deadline:
-        obj = custom.get_namespaced_custom_object(
-            _SNAPSHOT_GROUP, _SNAPSHOT_VERSION, namespace, _SNAPSHOT_PLURAL, name
-        )
+        try:
+            obj = custom.get_namespaced_custom_object(
+                _SNAPSHOT_GROUP, _SNAPSHOT_VERSION, namespace, _SNAPSHOT_PLURAL, name
+            )
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status >= 500:
+                log.warning(
+                    "Transient K8s API error (HTTP %s) while waiting for VolumeSnapshot %s; retrying",
+                    e.status,
+                    name,
+                )
+                time.sleep(5)
+                continue
+            raise
         if obj.get("status", {}).get("readyToUse"):
             return
         time.sleep(5)
@@ -83,17 +93,6 @@ def _create_pvc_from_snapshot_sync(
         ),
     )
     v1.create_namespaced_persistent_volume_claim(namespace, body)
-
-
-def _wait_pvc_bound_sync(pvc_name: str, namespace: str) -> None:
-    v1 = kubernetes.client.CoreV1Api()
-    deadline = time.monotonic() + _PVC_BOUND_TIMEOUT
-    while time.monotonic() < deadline:
-        pvc = v1.read_namespaced_persistent_volume_claim(pvc_name, namespace)
-        if pvc.status and pvc.status.phase == "Bound":
-            return
-        time.sleep(5)
-    raise TimeoutError(f"PVC {pvc_name} not bound after {_PVC_BOUND_TIMEOUT}s")
 
 
 def _delete_pvc_sync(pvc_name: str, namespace: str) -> None:

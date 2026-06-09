@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>k8si — Backup Status</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1d23;
+    color: #c9d1d9;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Top bar */
+  .topbar {
+    background: #0d1117;
+    border-bottom: 1px solid #30363d;
+    padding: 0 24px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .topbar-logo {
+    font-size: 18px;
+    font-weight: 700;
+    color: #58a6ff;
+    letter-spacing: -0.3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .topbar-logo svg { opacity: 0.85; }
+  .topbar-subtitle {
+    font-size: 12px;
+    color: #6e7681;
+    border-left: 1px solid #30363d;
+    padding-left: 16px;
+    margin-left: 4px;
+  }
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .topbar-cluster {
+    font-size: 12px;
+    color: #8b949e;
+    background: #21262d;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid #30363d;
+  }
+  .topbar-refresh {
+    font-size: 12px;
+    color: #6e7681;
+  }
+  .topbar-refresh.error {
+    color: #f85149;
+  }
+
+  /* Layout */
+  .layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px;
+    background: #161b22;
+    border-right: 1px solid #30363d;
+    padding: 20px 0;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .sidebar-section {
+    margin-bottom: 8px;
+  }
+  .sidebar-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #6e7681;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 0 16px 6px;
+  }
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 16px;
+    font-size: 13px;
+    color: #8b949e;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    user-select: none;
+  }
+  .sidebar-item:hover {
+    color: #c9d1d9;
+    background: #1c2128;
+  }
+  .sidebar-item.active {
+    color: #e6edf3;
+    background: #21262d;
+    border-left-color: #58a6ff;
+  }
+  .sidebar-item .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.5;
+    flex-shrink: 0;
+  }
+  .sidebar-item.active .dot { opacity: 1; }
+  .sidebar-badge {
+    margin-left: auto;
+    font-size: 10px;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 1px 6px;
+    color: #6e7681;
+  }
+  .sidebar-item.active .sidebar-badge {
+    background: #1f3a5c;
+    border-color: #2d6db4;
+    color: #58a6ff;
+  }
+
+  /* Main content */
+  .main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+  }
+
+  /* Summary strip */
+  .summary-strip {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 14px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+  .stat-card.healthy { border-top: 2px solid #3fb950; }
+  .stat-card.failed  { border-top: 2px solid #f85149; }
+  .stat-card.running { border-top: 2px solid #58a6ff; }
+  .stat-card.pending { border-top: 2px solid #6e7681; }
+  .stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .stat-card.healthy .stat-value { color: #3fb950; }
+  .stat-card.failed  .stat-value { color: #f85149; }
+  .stat-card.running .stat-value { color: #58a6ff; }
+  .stat-card.pending .stat-value { color: #8b949e; }
+  .stat-label { font-size: 12px; color: #6e7681; }
+
+  /* Section header */
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e6edf3;
+  }
+  .section-count {
+    font-size: 12px;
+    color: #6e7681;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 1px 8px;
+  }
+  .section-search {
+    margin-left: auto;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: #8b949e;
+    width: 180px;
+    outline: none;
+  }
+  .section-search:focus {
+    border-color: #58a6ff;
+    color: #c9d1d9;
+  }
+  .section-search::placeholder { color: #484f58; }
+
+  /* Table */
+  .backup-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .backup-table thead tr {
+    background: #0d1117;
+    border-bottom: 1px solid #30363d;
+  }
+  .backup-table th {
+    padding: 10px 16px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6e7681;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .backup-table tbody tr {
+    border-bottom: 1px solid #21262d;
+    transition: background 0.1s;
+  }
+  .backup-table tbody tr:last-child { border-bottom: none; }
+  .backup-table tbody tr:hover { background: #1c2128; }
+  .backup-table td { padding: 12px 16px; vertical-align: middle; }
+
+  /* Status badge */
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 12px;
+    white-space: nowrap;
+  }
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status.success {
+    background: #0d2818;
+    color: #3fb950;
+    border: 1px solid #1a4428;
+  }
+  .status.success .status-dot { background: #3fb950; }
+  .status.failed {
+    background: #2d0f0f;
+    color: #f85149;
+    border: 1px solid #4a1515;
+  }
+  .status.failed .status-dot { background: #f85149; }
+  .status.running {
+    background: #0d2340;
+    color: #58a6ff;
+    border: 1px solid #1a3a6e;
+  }
+  .status.running .status-dot { background: #58a6ff; animation: pulse 1.2s infinite; }
+  .status.pending {
+    background: #21262d;
+    color: #8b949e;
+    border: 1px solid #30363d;
+  }
+  .status.pending .status-dot { background: #6e7681; }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* App + namespace cell */
+  .app-cell { display: flex; flex-direction: column; gap: 2px; }
+  .app-name { font-weight: 600; color: #e6edf3; font-size: 13px; }
+  .app-ns {
+    font-size: 11px;
+    color: #6e7681;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .app-ns::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #6e7681;
+  }
+
+  /* PVC tag */
+  .pvc-tag {
+    font-size: 11px;
+    color: #8b949e;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+  }
+
+  /* Time */
+  .time-cell { display: flex; flex-direction: column; gap: 2px; }
+  .time-main { color: #c9d1d9; font-size: 13px; }
+  .time-ago { font-size: 11px; color: #6e7681; }
+  .time-never { font-size: 13px; color: #484f58; font-style: italic; }
+
+  /* Schedule */
+  .schedule-tag {
+    font-size: 11px;
+    color: #8b949e;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 2px 7px;
+  }
+
+  /* Message */
+  .msg-cell {
+    font-size: 11px;
+    color: #6e7681;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .msg-cell.error { color: #f85149; }
+
+  /* Sparkline / mini history */
+  .history {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 20px;
+  }
+  .history-bar {
+    width: 6px;
+    border-radius: 1px;
+    flex-shrink: 0;
+  }
+  .history-bar.ok  { background: #3fb950; height: 16px; }
+  .history-bar.err { background: #f85149; height: 10px; }
+  .history-bar.run { background: #58a6ff; height: 16px; }
+  .history-bar.dim { background: #21262d; height: 6px; }
+
+  /* Namespace divider */
+  .ns-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 20px 0 10px;
+  }
+  .ns-divider:first-child { margin-top: 0; }
+  .ns-divider-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6e7681;
+    white-space: nowrap;
+  }
+  .ns-divider-line {
+    flex: 1;
+    height: 1px;
+    background: #21262d;
+  }
+
+  /* Empty / loading states */
+  .state-message {
+    text-align: center;
+    padding: 48px 24px;
+    color: #6e7681;
+    font-size: 14px;
+  }
+  .state-message.error { color: #f85149; }
+
+  /* Footer */
+  .footer {
+    background: #0d1117;
+    border-top: 1px solid #21262d;
+    padding: 8px 24px;
+    font-size: 11px;
+    color: #6e7681;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .footer-dot { color: #30363d; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-logo">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <rect x="2" y="2" width="7" height="7" rx="1.5" fill="#58a6ff"/>
+      <rect x="11" y="2" width="7" height="7" rx="1.5" fill="#58a6ff" opacity="0.6"/>
+      <rect x="2" y="11" width="7" height="7" rx="1.5" fill="#58a6ff" opacity="0.6"/>
+      <rect x="11" y="11" width="7" height="7" rx="1.5" fill="#3fb950"/>
+    </svg>
+    k8si
+  </div>
+  <span class="topbar-subtitle">Backup Status</span>
+  <div class="topbar-right">
+    <span class="topbar-cluster">homelab-prod</span>
+    <span class="topbar-refresh" id="refresh-status">Loading…</span>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Views</div>
+      <div class="sidebar-item active" data-filter="all" onclick="setFilter('all')">
+        <span class="dot"></span> All backups
+        <span class="sidebar-badge" id="badge-all">0</span>
+      </div>
+      <div class="sidebar-item" data-filter="success" onclick="setFilter('success')">
+        <span class="dot"></span> Healthy
+        <span class="sidebar-badge" id="badge-success">0</span>
+      </div>
+      <div class="sidebar-item" data-filter="failed" onclick="setFilter('failed')">
+        <span class="dot"></span> Failed
+        <span class="sidebar-badge" id="badge-failed">0</span>
+      </div>
+      <div class="sidebar-item" data-filter="running" onclick="setFilter('running')">
+        <span class="dot"></span> Running now
+        <span class="sidebar-badge" id="badge-running">0</span>
+      </div>
+    </div>
+    <div class="sidebar-section" style="margin-top: 16px;">
+      <div class="sidebar-label">Namespaces</div>
+      <div id="sidebar-namespaces"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Summary strip -->
+    <div class="summary-strip">
+      <div class="stat-card healthy">
+        <span class="stat-value" id="stat-healthy">0</span>
+        <span class="stat-label">Healthy</span>
+      </div>
+      <div class="stat-card failed">
+        <span class="stat-value" id="stat-failed">0</span>
+        <span class="stat-label">Failed</span>
+      </div>
+      <div class="stat-card running">
+        <span class="stat-value" id="stat-running">0</span>
+        <span class="stat-label">Running</span>
+      </div>
+      <div class="stat-card pending">
+        <span class="stat-value" id="stat-pending">0</span>
+        <span class="stat-label">Pending</span>
+      </div>
+    </div>
+
+    <!-- Section header -->
+    <div class="section-header">
+      <span class="section-title" id="section-title">All backups</span>
+      <span class="section-count" id="section-count">0</span>
+      <input class="section-search" id="search-input" placeholder="Filter backups…" oninput="applySearch()">
+    </div>
+
+    <!-- Namespace-grouped tables rendered here -->
+    <div id="tables-container">
+      <div class="state-message">Loading backups…</div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <span>k8si</span>
+  <span class="footer-dot">·</span>
+  <span id="footer-summary">Loading…</span>
+  <span class="footer-dot">·</span>
+  <span>Reads live from K8siBackup CRDs</span>
+</div>
+
+<script>
+  // State
+  let allBackups = [];
+  let activeFilter = 'all';
+  let searchQuery = '';
+  let lastFetchTime = null;
+  let refreshCounterInterval = null;
+
+  // ── Utility: relative time ──────────────────────────────────────────────────
+
+  function relativeTime(isoString) {
+    if (!isoString) return null;
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+
+    if (diffSec < 60) return 'just now';
+    if (diffMin < 60) return diffMin === 1 ? '1 minute ago' : diffMin + ' minutes ago';
+    if (diffHour < 24) return diffHour === 1 ? '1 hour ago' : diffHour + ' hours ago';
+    if (diffDay === 1) return 'yesterday';
+    if (diffDay < 30) return diffDay + ' days ago';
+    const diffMonth = Math.floor(diffDay / 30);
+    return diffMonth === 1 ? '1 month ago' : diffMonth + ' months ago';
+  }
+
+  function relativeFuture(isoString) {
+    if (!isoString) return null;
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = date - now;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+
+    if (diffMs < 0) return 'overdue';
+    if (diffSec < 60) return 'in moments';
+    if (diffMin < 60) return 'in ' + diffMin + (diffMin === 1 ? ' minute' : ' minutes');
+    if (diffHour < 24) return 'in ' + diffHour + (diffHour === 1 ? ' hour' : ' hours');
+    return 'in ' + diffDay + (diffDay === 1 ? ' day' : ' days');
+  }
+
+  function formatDateTime(isoString) {
+    if (!isoString) return null;
+    const date = new Date(isoString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const month = monthNames[date.getMonth()];
+    const hours = String(date.getHours()).padStart(2, '0');
+    const mins = String(date.getMinutes()).padStart(2, '0');
+    return day + ' ' + month + ' ' + hours + ':' + mins;
+  }
+
+  function secondsSinceLastFetch() {
+    if (!lastFetchTime) return null;
+    return Math.floor((Date.now() - lastFetchTime) / 1000);
+  }
+
+  function refreshLabel(seconds) {
+    if (seconds === null) return 'Loading…';
+    if (seconds < 5) return 'Updated just now';
+    if (seconds < 60) return 'Updated ' + seconds + 's ago';
+    const mins = Math.floor(seconds / 60);
+    return 'Updated ' + mins + (mins === 1 ? ' minute ago' : ' minutes ago');
+  }
+
+  // ── Sparkline builder ───────────────────────────────────────────────────────
+
+  function resultToClass(result) {
+    if (result === 'success') return 'ok';
+    if (result === 'failed') return 'err';
+    if (result === 'running') return 'run';
+    return 'dim';
+  }
+
+  function buildSparkline(recentBackups) {
+    const TARGET = 7;
+    // Take up to 7, newest-first from API, so reverse to get oldest-first
+    const entries = (recentBackups || []).slice(0, TARGET).reverse();
+    const bars = [];
+
+    // Pad with dim bars on the left if fewer than 7 entries
+    const padCount = TARGET - entries.length;
+    for (let i = 0; i < padCount; i++) {
+      bars.push('<div class="history-bar dim"></div>');
+    }
+    for (const entry of entries) {
+      const cls = resultToClass(entry.result);
+      bars.push('<div class="history-bar ' + cls + '"></div>');
+    }
+
+    return '<div class="history">' + bars.join('') + '</div>';
+  }
+
+  // ── HTML builders ───────────────────────────────────────────────────────────
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function buildRow(backup) {
+    const statusClass = escapeHtml(backup.lastBackupResult || 'pending');
+    const statusLabel = escapeHtml(backup.lastBackupResult || 'pending');
+
+    const lastTime = backup.lastBackupTime ? formatDateTime(backup.lastBackupTime) : null;
+    const lastAgo  = backup.lastBackupTime ? relativeTime(backup.lastBackupTime) : null;
+    const nextTime = backup.nextBackupTime ? formatDateTime(backup.nextBackupTime) : null;
+    const nextIn   = backup.nextBackupTime ? relativeFuture(backup.nextBackupTime) : null;
+
+    const lastCell = lastTime
+      ? '<div class="time-cell"><span class="time-main">' + escapeHtml(lastTime) + '</span><span class="time-ago">' + escapeHtml(lastAgo) + '</span></div>'
+      : '<span class="time-never">never</span>';
+
+    const nextCell = nextTime
+      ? '<div class="time-cell"><span class="time-main">' + escapeHtml(nextTime) + '</span><span class="time-ago">' + escapeHtml(nextIn) + '</span></div>'
+      : '<span class="time-never">—</span>';
+
+    const msgClass = (backup.lastBackupResult === 'failed') ? 'msg-cell error' : 'msg-cell';
+    const msgText  = escapeHtml(backup.message || '');
+
+    return '<tr data-result="' + statusClass + '" data-name="' + escapeHtml(backup.name) + '" data-ns="' + escapeHtml(backup.namespace) + '">'
+      + '<td><div class="app-cell">'
+      + '<span class="app-name">' + escapeHtml(backup.name) + '</span>'
+      + '<span class="app-ns">' + escapeHtml(backup.namespace) + '</span>'
+      + '</div></td>'
+      + '<td><span class="status ' + statusClass + '"><span class="status-dot"></span>' + statusLabel + '</span></td>'
+      + '<td>' + lastCell + '</td>'
+      + '<td>' + nextCell + '</td>'
+      + '<td><span class="schedule-tag">' + escapeHtml(backup.schedule || '—') + '</span></td>'
+      + '<td>' + buildSparkline(backup.recentBackups) + '</td>'
+      + '<td><span class="' + msgClass + '" title="' + msgText + '">' + msgText + '</span></td>'
+      + '</tr>';
+  }
+
+  function buildTable(backups) {
+    const rows = backups.map(buildRow).join('');
+    return '<table class="backup-table">'
+      + '<thead><tr>'
+      + '<th>Name</th>'
+      + '<th>Status</th>'
+      + '<th>Last backup</th>'
+      + '<th>Next backup</th>'
+      + '<th>Schedule</th>'
+      + '<th>History</th>'
+      + '<th>Message</th>'
+      + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody>'
+      + '</table>';
+  }
+
+  // ── Filter + search helpers ─────────────────────────────────────────────────
+
+  function filteredBackups() {
+    let items = allBackups;
+
+    if (activeFilter !== 'all') {
+      items = items.filter(b => b.lastBackupResult === activeFilter);
+    }
+
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      items = items.filter(b =>
+        (b.name || '').toLowerCase().includes(q) ||
+        (b.namespace || '').toLowerCase().includes(q) ||
+        (b.pvc || '').toLowerCase().includes(q)
+      );
+    }
+
+    return items;
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  function render() {
+    const visible = filteredBackups();
+
+    // Section header
+    const filterLabel = activeFilter === 'all' ? 'All backups'
+      : activeFilter === 'success' ? 'Healthy backups'
+      : activeFilter === 'failed' ? 'Failed backups'
+      : 'Running backups';
+    document.getElementById('section-title').textContent = filterLabel;
+    document.getElementById('section-count').textContent = visible.length;
+
+    // Group by namespace, sorted alphabetically
+    const byNs = {};
+    for (const b of visible) {
+      const ns = b.namespace || 'default';
+      if (!byNs[ns]) byNs[ns] = [];
+      byNs[ns].push(b);
+    }
+    const namespaces = Object.keys(byNs).sort();
+
+    const container = document.getElementById('tables-container');
+
+    if (visible.length === 0) {
+      if (allBackups.length === 0) {
+        container.innerHTML = '<div class="state-message">No backups found.</div>';
+      } else {
+        container.innerHTML = '<div class="state-message">No backups match the current filter.</div>';
+      }
+      return;
+    }
+
+    let html = '';
+    for (const ns of namespaces) {
+      html += '<div class="ns-divider">'
+        + '<span class="ns-divider-label">' + escapeHtml(ns) + '</span>'
+        + '<div class="ns-divider-line"></div>'
+        + '</div>';
+      html += buildTable(byNs[ns]);
+    }
+    container.innerHTML = html;
+  }
+
+  function renderSidebar() {
+    // Counts for views
+    const total   = allBackups.length;
+    const healthy = allBackups.filter(b => b.lastBackupResult === 'success').length;
+    const failed  = allBackups.filter(b => b.lastBackupResult === 'failed').length;
+    const running = allBackups.filter(b => b.lastBackupResult === 'running').length;
+
+    document.getElementById('badge-all').textContent     = total;
+    document.getElementById('badge-success').textContent = healthy;
+    document.getElementById('badge-failed').textContent  = failed;
+    document.getElementById('badge-running').textContent = running;
+
+    // Stat cards
+    document.getElementById('stat-healthy').textContent = healthy;
+    document.getElementById('stat-failed').textContent  = failed;
+    document.getElementById('stat-running').textContent = running;
+    const pending = allBackups.filter(b => b.lastBackupResult === 'pending' || !b.lastBackupResult).length;
+    document.getElementById('stat-pending').textContent = pending;
+
+    // Namespace list in sidebar
+    const nsCounts = {};
+    for (const b of allBackups) {
+      const ns = b.namespace || 'default';
+      nsCounts[ns] = (nsCounts[ns] || 0) + 1;
+    }
+    const nsNames = Object.keys(nsCounts).sort();
+    let nsHtml = '';
+    for (const ns of nsNames) {
+      nsHtml += '<div class="sidebar-item">'
+        + '<span class="dot"></span> ' + escapeHtml(ns)
+        + '<span class="sidebar-badge">' + nsCounts[ns] + '</span>'
+        + '</div>';
+    }
+    document.getElementById('sidebar-namespaces').innerHTML = nsHtml;
+
+    // Footer
+    const nsCount = nsNames.length;
+    document.getElementById('footer-summary').textContent =
+      total + ' backup' + (total !== 1 ? 's' : '')
+      + ' across ' + nsCount + ' namespace' + (nsCount !== 1 ? 's' : '');
+  }
+
+  function renderRefreshStatus(isError) {
+    const el = document.getElementById('refresh-status');
+    if (isError) {
+      el.textContent = 'Connection error — retrying…';
+      el.className = 'topbar-refresh error';
+    } else {
+      el.textContent = refreshLabel(secondsSinceLastFetch());
+      el.className = 'topbar-refresh';
+    }
+  }
+
+  // ── Sidebar filter ──────────────────────────────────────────────────────────
+
+  function setFilter(filter) {
+    activeFilter = filter;
+
+    // Update active state on sidebar items
+    document.querySelectorAll('.sidebar-item[data-filter]').forEach(function(el) {
+      if (el.dataset.filter === filter) {
+        el.classList.add('active');
+      } else {
+        el.classList.remove('active');
+      }
+    });
+
+    render();
+  }
+
+  // ── Search ──────────────────────────────────────────────────────────────────
+
+  function applySearch() {
+    searchQuery = document.getElementById('search-input').value.trim();
+    render();
+  }
+
+  // ── Data fetching ───────────────────────────────────────────────────────────
+
+  let fetchError = false;
+
+  function loadBackups() {
+    fetch('/api/backups')
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('HTTP ' + response.status);
+        }
+        return response.json();
+      })
+      .then(function(data) {
+        fetchError = false;
+        allBackups = Array.isArray(data) ? data : [];
+        lastFetchTime = Date.now();
+        renderSidebar();
+        render();
+        renderRefreshStatus(false);
+      })
+      .catch(function() {
+        fetchError = true;
+        renderRefreshStatus(true);
+      });
+  }
+
+  // ── Refresh counter tick ────────────────────────────────────────────────────
+
+  function startRefreshCounter() {
+    if (refreshCounterInterval) clearInterval(refreshCounterInterval);
+    refreshCounterInterval = setInterval(function() {
+      if (!fetchError) {
+        renderRefreshStatus(false);
+      }
+    }, 5000);
+  }
+
+  // ── Bootstrap ───────────────────────────────────────────────────────────────
+
+  loadBackups();
+  setInterval(loadBackups, 30000);
+  startRefreshCounter();
+</script>
+
+</body>
+</html>

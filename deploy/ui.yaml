@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8si-ui
+  namespace: k8si
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8si-ui
+rules:
+  - apiGroups: ["k8si.io"]
+    resources: ["k8sibackups"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8si-ui
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8si-ui
+subjects:
+  - kind: ServiceAccount
+    name: k8si-ui
+    namespace: k8si
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8si-ui
+  namespace: k8si
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8si-ui
+  template:
+    metadata:
+      labels:
+        app: k8si-ui
+    spec:
+      serviceAccountName: k8si-ui
+      containers:
+        - name: ui
+          image: ghcr.io/jaccoh/k8si-ui:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: CLUSTER_NAME
+              value: homelab-prod
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8si-ui
+  namespace: k8si
+spec:
+  type: NodePort
+  selector:
+    app: k8si-ui
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080

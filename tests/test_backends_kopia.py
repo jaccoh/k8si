@@ -172,11 +172,27 @@ def test_backup_calls_snapshot_create() -> None:
 # ── forget & unlock ────────────────────────────────────────────────────────────
 
 
-def test_forget_sets_policy_and_maintenance() -> None:
+def test_forget_sets_per_source_policy_and_maintenance() -> None:
     backend, mock_cmd = _make_backend()
     backend._connected = True
     mock_cmd.return_value = ""
 
+    # Simulate backup was called first
+    backend._last_source = "/data"
+
+    backend.forget(daily=7, weekly=4, monthly=3)
+    mock_cmd.assert_any_call(
+        "policy", "set", "/data", "--keep-daily=7", "--keep-weekly=4", "--keep-monthly=3"
+    )
+    mock_cmd.assert_any_call("maintenance", "run")
+
+
+def test_forget_uses_global_when_backup_not_called_first() -> None:
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = ""
+
+    # No prior backup() call — _last_source is None
     backend.forget(daily=7, weekly=4, monthly=3)
     mock_cmd.assert_any_call(
         "policy", "set", "--global", "--keep-daily=7", "--keep-weekly=4", "--keep-monthly=3"

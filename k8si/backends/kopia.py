@@ -33,6 +33,7 @@ class KopiaBackend:
             _encoding="utf-8",
         )
         self._connected = False
+        self._last_source: str | None = None
 
     def _ensure_connected(self) -> None:
         if self._connected:
@@ -198,6 +199,7 @@ class KopiaBackend:
 
     def backup(self, source: Path, tags: list[str] | None = None) -> None:
         self._ensure_connected()
+        self._last_source = str(source)  # store for forget()
         # Set tags if specified (Kopia tags are set per source policy or on snapshot)
         args = ["snapshot", "create", str(source)]
         if tags:
@@ -207,12 +209,12 @@ class KopiaBackend:
 
     def forget(self, daily: int, weekly: int, monthly: int, prune: bool = True) -> None:
         self._ensure_connected()
-        # Kopia sets retention via policy:
-        # kopia policy set --global --keep-daily X --keep-weekly Y --keep-monthly Z
+        # Use per-source policy if a backup was done this session; fall back to --global.
+        policy_target = self._last_source or "--global"
         self._invoke(
             "policy",
             "set",
-            "--global",
+            policy_target,
             f"--keep-daily={daily}",
             f"--keep-weekly={weekly}",
             f"--keep-monthly={monthly}",

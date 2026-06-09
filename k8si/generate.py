@@ -82,7 +82,7 @@ def _init_container(args: argparse.Namespace, tags: list[str]) -> str:
         "            value: restore\n"
         "          - name: DATA_PATH\n"
         "            value: /data\n"
-        "          - name: SENTINEL_FILE\n"
+        "          - name: RESTORE_SENTINELS\n"
         f"            value: {args.sentinel}"
         f"{tag_env}\n"
         f"{_secret_env('RESTIC_REPOSITORY', 'RESTIC_REPOSITORY', args.secret)}\n"
@@ -112,8 +112,6 @@ def _sidecar(args: argparse.Namespace, tags: list[str]) -> str:
         "            value: backup\n"
         "          - name: DATA_PATH\n"
         "            value: /data\n"
-        "          - name: SENTINEL_FILE\n"
-        f"            value: {args.sentinel}\n"
         "          - name: BACKUP_SCHEDULE\n"
         f'            value: "{args.schedule}"\n'
         "          - name: RETENTION_DAILY\n"

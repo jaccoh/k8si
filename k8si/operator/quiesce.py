@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -124,9 +125,15 @@ async def quiesce_context(
         creds = await asyncio.to_thread(_read_secret_sync, namespace, db_spec["secretRef"])
         creds = _expand_db_host(creds, namespace)
         conn = await asyncio.to_thread(_mariadb_ftwrl_sync, creds)
+        log.warning(
+            "MariaDB: write lock acquired (FTWRL) — held until snapshot completes, max ~300s"
+        )
+        _lock_start = time.monotonic()
         try:
             yield
         finally:
+            _elapsed = time.monotonic() - _lock_start
+            log.info("MariaDB: releasing write lock after %.1fs", _elapsed)
             await asyncio.to_thread(_mariadb_unlock_sync, conn)
 
     elif db_type == "postgres":

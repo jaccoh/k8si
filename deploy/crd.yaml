@@ -135,3 +135,23 @@ spec:
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
+              properties:
+                lastBackupTime:
+                  type: string
+                lastBackupResult:
+                  type: string
+                nextBackupTime:
+                  type: string
+                message:
+                  type: string
+                restorePatch:
+                  type: string
+                recentBackups:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      time:
+                        type: string
+                      result:
+                        type: string

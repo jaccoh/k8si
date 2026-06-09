@@ -6,7 +6,7 @@
 
 **Root cause**: `spec.tags` tags the backup snapshots. `spec.restore.tags` filters which snapshots are eligible for restore. If they differ (or restore.tags is set but spec.tags is not), no snapshots match.
 
-**Fix needed**: the operator should default `restore.tags` to `spec.tags` when `restore.tags` is not explicitly provided. A user setting `spec.tags: [app=foo]` almost certainly wants restore to filter by the same tag.
+**Status: Fixed**. `operator/cronjob.py` now defaults `restore.tags` to `spec.tags` when `restore.tags` is not explicitly provided (`tags = restore.get("tags", spec.get("tags", []))`). Covered by `tests/test_operator_cronjob.py::TestBuildRestorePatchTags`.
 
 ## 2. Restore init container must mount PVC at /data, not at the app's native path
 
@@ -16,4 +16,10 @@
 
 **Fix needed**: the operator-generated `restorePatch` should always emit `mountPath: /data` for the restore init container's PVC volume, regardless of where the app itself mounts the volume. The operator knows DATA_PATH; it should use it.
 
-**Workaround**: always use `mountPath: /data` in the restore init container volumeMount.
+**Workaround**: always use `mountPath: /data` in the restore init container's `volumeMounts`, regardless of where the app itself mounts the PVC. For example:
+
+```yaml
+volumeMounts:
+  - name: data
+    mountPath: /data   # must be /data — not the app's native mount path
+```
