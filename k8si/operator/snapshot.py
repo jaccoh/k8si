@@ -15,7 +15,7 @@ _SNAPSHOT_VERSION = "v1"
 _SNAPSHOT_PLURAL = "volumesnapshots"
 
 _SNAPSHOT_READY_TIMEOUT = 300
-_SNAPSHOT_CONFLICT_TIMEOUT = 600
+_SNAPSHOT_CONFLICT_TIMEOUT = 1800
 _JOB_GONE_TIMEOUT = 120
 
 
@@ -46,7 +46,7 @@ def _wait_no_snapshot_in_progress_sync(pvc_name: str, namespace: str) -> None:
                 f"Timed out waiting for in-progress VolumeSnapshot(s) on PVC {pvc_name} "
                 f"to clear after {_SNAPSHOT_CONFLICT_TIMEOUT}s"
             )
-        time.sleep(15)
+        time.sleep(60)
 
 
 def _get_pvc_info_sync(pvc_name: str, namespace: str) -> tuple[str, str, str]:
