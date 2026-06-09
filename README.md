@@ -10,12 +10,13 @@ GitOps rebuilt your cluster. k8si extends that to your data.
 
 Backups are declared as a `K8siBackup` resource. The operator takes a consistent VolumeSnapshot on schedule — with optional DB quiescing for Postgres, MariaDB, and SQLite — clones it to an ephemeral PVC, runs a restic backup Job against the clone, then cleans up. Your live PVC is never touched during backup. `kubectl get k8sibackups` gives a live view of backup health across all apps.
 
-Two components, one image:
+Three components:
 
 | Component | Mode | Description |
 |-----------|------|-------------|
 | **Restore init container** | `MODE=restore` | Checks sentinel files on the PVC on every pod start; restores from restic if data is missing or incomplete. Fails loud rather than letting the app start on empty or corrupt state. |
-| **Operator** | Kopf + `K8siBackup` CRD | Owns the full backup pipeline: scheduled VolumeSnapshot (with optional DB quiescing) → ephemeral PVC clone → restic Job → cleanup. Reports `lastBackupResult` on the CRD. |
+| **Operator** | Kopf + `K8siBackup` CRD | Owns the full backup pipeline: scheduled VolumeSnapshot (with optional DB quiescing) → ephemeral PVC clone → restic Job → cleanup. Reports `lastBackupResult` and rolling `recentBackups` history on the CRD. |
+| **k8si-ui** | FastAPI dashboard | Read-only web dashboard showing all backups across namespaces — status, schedule, last/next backup, and a 7-run sparkline. Exposed via NodePort `:30080`. |
 
 Backend is pluggable — restic over SFTP (Hetzner Storagebox) ships by default. Image: `ghcr.io/jaccoh/k8si` for `linux/amd64` and `linux/arm64`.
 
@@ -23,12 +24,15 @@ Backend is pluggable — restic over SFTP (Hetzner Storagebox) ships by default.
 
 ## Quick start (operator mode)
 
-### 1. Install the CRD and operator
+### 1. Install the CRD, operator, and (optionally) the web UI
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/crd.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/rbac.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/operator.yaml
+
+# Optional: read-only status dashboard on NodePort :30080
+kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/ui.yaml
 ```
 
 ### 2. Create the restic secret
@@ -193,6 +197,17 @@ spec:
     monthly: 3
 ```
 
+**Status fields** (set by the operator, read by `kubectl get k8sibackups`):
+
+| Field | Description |
+|-------|-------------|
+| `lastBackupResult` | `pending` / `running` / `success` / `failed` |
+| `lastBackupTime` | ISO-8601 timestamp of the last completed backup |
+| `nextBackupTime` | ISO-8601 timestamp of the next scheduled backup |
+| `message` | Last error message (empty on success) |
+| `recentBackups` | Rolling list of the last 30 results — `[{time, result}, …]` |
+| `restorePatch` | YAML snippet to paste into your pod spec for the restore init container |
+
 ---
 
 ## Secret format
@@ -288,6 +303,8 @@ class MyBackend:
 ## Limitations
 
 **No alerting.** Check `DATA_PATH/.k8si-last-backup` for the timestamp of the last successful backup. Wire this into your monitoring (e.g. `file_mtime_seconds` via node-exporter).
+
+**VolumeSnapshot conflicts.** If another system (e.g. VolSync) is simultaneously snapshotting the same PVC, k8si waits up to 30 minutes (polling every 60s) for the conflict to clear before creating its own snapshot. A warning is logged on first detection. If the conflict never clears, the backup is skipped and retried on the next scheduled run.
 
 **No stale lock cleanup.** If a backup Job is interrupted, restic may leave a lock. Fix manually:
 
