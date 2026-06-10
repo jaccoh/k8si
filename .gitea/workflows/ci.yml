@@ -85,7 +85,7 @@ jobs:
                 restartPolicy: Never
                 containers:
                 - name: buildah
-                  image: buildah/buildah:latest
+                  image: quay.io/buildah/stable:latest
                   securityContext:
                     privileged: true
                     runAsUser: 0
@@ -154,7 +154,7 @@ jobs:
                 restartPolicy: Never
                 containers:
                 - name: buildah
-                  image: buildah/buildah:latest
+                  image: quay.io/buildah/stable:latest
                   securityContext:
                     privileged: true
                     runAsUser: 0
@@ -222,7 +222,7 @@ jobs:
                 restartPolicy: Never
                 containers:
                 - name: buildah
-                  image: buildah/buildah:latest
+                  image: quay.io/buildah/stable:latest
                   securityContext:
                     privileged: true
                     runAsUser: 0
@@ -290,7 +290,7 @@ jobs:
                 restartPolicy: Never
                 containers:
                 - name: buildah
-                  image: buildah/buildah:latest
+                  image: quay.io/buildah/stable:latest
                   securityContext:
                     privileged: true
                     runAsUser: 0
