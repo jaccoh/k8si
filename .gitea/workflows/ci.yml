@@ -96,7 +96,17 @@ jobs:
                   - --skip-tls-verify-registry=docker.hoeve.nu
           YAML
 
-          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m
+          for i in $(seq 1 60); do
+            ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            [ "$ST" = "Complete" ] && exit 0
+            if [ "$ST" = "Failed" ]; then
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+              exit 1
+            fi
+            sleep 20
+          done
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+          exit 1
 
       - name: Cleanup
         if: always()
@@ -144,7 +154,17 @@ jobs:
                   - --skip-tls-verify-registry=docker.hoeve.nu
           YAML
 
-          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m
+          for i in $(seq 1 60); do
+            ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            [ "$ST" = "Complete" ] && exit 0
+            if [ "$ST" = "Failed" ]; then
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+              exit 1
+            fi
+            sleep 20
+          done
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+          exit 1
 
       - name: Cleanup
         if: always()
