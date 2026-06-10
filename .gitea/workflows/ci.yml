@@ -98,14 +98,22 @@ jobs:
 
           for i in $(seq 1 60); do
             ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            echo "iter $i: ST=${ST:-<empty>}"
             [ "$ST" = "Complete" ] && exit 0
             if [ "$ST" = "Failed" ]; then
-              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+              echo "=== pod describe ==="
+              kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+              echo "=== pod logs ==="
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 --previous 2>/dev/null || \
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
               exit 1
             fi
             sleep 20
           done
-          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+          echo "=== TIMEOUT: pod describe ==="
+          kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+          echo "=== TIMEOUT: pod logs ==="
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
           exit 1
 
       - name: Cleanup
@@ -156,14 +164,22 @@ jobs:
 
           for i in $(seq 1 60); do
             ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            echo "iter $i: ST=${ST:-<empty>}"
             [ "$ST" = "Complete" ] && exit 0
             if [ "$ST" = "Failed" ]; then
-              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+              echo "=== pod describe ==="
+              kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+              echo "=== pod logs ==="
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 --previous 2>/dev/null || \
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
               exit 1
             fi
             sleep 20
           done
-          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null
+          echo "=== TIMEOUT: pod describe ==="
+          kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+          echo "=== TIMEOUT: pod logs ==="
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
           exit 1
 
       - name: Cleanup
