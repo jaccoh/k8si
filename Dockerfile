@@ -1,10 +1,9 @@
 FROM python:3.13-slim AS builder
 
-RUN pip install uv
 WORKDIR /build
 COPY pyproject.toml .
 COPY k8si/ k8si/
-RUN uv pip install --system --no-cache .
+RUN pip install --no-cache-dir .
 
 
 FROM python:3.13-slim
