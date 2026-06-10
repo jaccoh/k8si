@@ -56,19 +56,18 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short
 
-  docker-build:
+  docker-build-arm64:
     needs: [test]
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push image (kaniko)
+      - name: Build and push arm64 image (kaniko)
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
-          JOB="kaniko-${SHORT}"
-          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
+          JOB="kaniko-arm64-${SHORT}"
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -91,10 +90,7 @@ jobs:
                   - --context=https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz
                   - --context-sub-path=k8si/
                   - --custom-platform=linux/arm64
-                  - --build-arg=TARGETARCH=arm64
-                  - --destination=docker.hoeve.nu/k8si:${SHA}
-                  - --destination=docker.hoeve.nu/k8si:v${VERSION}
-                  - --destination=docker.hoeve.nu/k8si:latest
+                  - --destination=docker.hoeve.nu/k8si:${SHA}-arm64
                   - --cache=true
                   - --cache-repo=docker.hoeve.nu/k8si/cache
                   - --skip-tls-verify-registry=docker.hoeve.nu
@@ -102,25 +98,72 @@ jobs:
 
           kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m
 
-      - name: Cleanup kaniko job
+      - name: Cleanup
         if: always()
         run: |
           SHA="${{ github.sha }}"
-          kubectl -n gitea delete job "kaniko-${SHA::8}" --ignore-not-found
+          kubectl -n gitea delete job "kaniko-arm64-${SHA::8}" --ignore-not-found
 
-  docker-build-ui:
+  docker-build-amd64:
     needs: [test]
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push UI image (kaniko)
+      - name: Build and push amd64 image (kaniko)
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
-          JOB="kaniko-ui-${SHORT}"
-          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
+          JOB="kaniko-amd64-${SHORT}"
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: kaniko
+                  image: gcr.io/kaniko-project/executor:latest
+                  args:
+                  - --context=https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz
+                  - --context-sub-path=k8si/
+                  - --custom-platform=linux/amd64
+                  - --destination=docker.hoeve.nu/k8si:${SHA}-amd64
+                  - --cache=true
+                  - --cache-repo=docker.hoeve.nu/k8si/cache
+                  - --skip-tls-verify-registry=docker.hoeve.nu
+          YAML
+
+          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m
+
+      - name: Cleanup
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "kaniko-amd64-${SHA::8}" --ignore-not-found
+
+  docker-build-ui-arm64:
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push UI arm64 image (kaniko)
+        run: |
+          SHA="${{ github.sha }}"
+          SHORT="${SHA::8}"
+          JOB="kaniko-ui-arm64-${SHORT}"
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -143,10 +186,7 @@ jobs:
                   - --context=https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz
                   - --context-sub-path=k8si/k8si/ui/
                   - --custom-platform=linux/arm64
-                  - --build-arg=TARGETARCH=arm64
-                  - --destination=docker.hoeve.nu/k8si-ui:${SHA}
-                  - --destination=docker.hoeve.nu/k8si-ui:v${VERSION}
-                  - --destination=docker.hoeve.nu/k8si-ui:latest
+                  - --destination=docker.hoeve.nu/k8si-ui:${SHA}-arm64
                   - --cache=true
                   - --cache-repo=docker.hoeve.nu/k8si-ui/cache
                   - --skip-tls-verify-registry=docker.hoeve.nu
@@ -155,14 +195,120 @@ jobs:
           kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m || \
           (kubectl -n gitea logs -l "job-name=${JOB}" --tail=50 2>/dev/null; exit 1)
 
-      - name: Cleanup kaniko UI job
+      - name: Cleanup
         if: always()
         run: |
           SHA="${{ github.sha }}"
-          kubectl -n gitea delete job "kaniko-ui-${SHA::8}" --ignore-not-found
+          kubectl -n gitea delete job "kaniko-ui-arm64-${SHA::8}" --ignore-not-found
+
+  docker-build-ui-amd64:
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push UI amd64 image (kaniko)
+        run: |
+          SHA="${{ github.sha }}"
+          SHORT="${SHA::8}"
+          JOB="kaniko-ui-amd64-${SHORT}"
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: kaniko
+                  image: gcr.io/kaniko-project/executor:latest
+                  args:
+                  - --context=https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz
+                  - --context-sub-path=k8si/k8si/ui/
+                  - --custom-platform=linux/amd64
+                  - --destination=docker.hoeve.nu/k8si-ui:${SHA}-amd64
+                  - --cache=true
+                  - --cache-repo=docker.hoeve.nu/k8si-ui/cache
+                  - --skip-tls-verify-registry=docker.hoeve.nu
+          YAML
+
+          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m || \
+          (kubectl -n gitea logs -l "job-name=${JOB}" --tail=50 2>/dev/null; exit 1)
+
+      - name: Cleanup
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "kaniko-ui-amd64-${SHA::8}" --ignore-not-found
+
+  docker-manifest:
+    needs: [docker-build-arm64, docker-build-amd64, docker-build-ui-arm64, docker-build-ui-amd64]
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create multi-arch manifest lists (crane)
+        run: |
+          SHA="${{ github.sha }}"
+          SHORT="${SHA::8}"
+          JOB="crane-${SHORT}"
+          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: crane
+                  image: gcr.io/go-containerregistry/crane:debug
+                  command: [sh, -c]
+                  args:
+                  - |
+                    crane index append --insecure \
+                      --tag docker.hoeve.nu/k8si:${SHA} \
+                      --tag docker.hoeve.nu/k8si:v${VERSION} \
+                      --tag docker.hoeve.nu/k8si:latest \
+                      -m docker.hoeve.nu/k8si:${SHA}-arm64 \
+                      -m docker.hoeve.nu/k8si:${SHA}-amd64 &&
+                    crane index append --insecure \
+                      --tag docker.hoeve.nu/k8si-ui:${SHA} \
+                      --tag docker.hoeve.nu/k8si-ui:v${VERSION} \
+                      --tag docker.hoeve.nu/k8si-ui:latest \
+                      -m docker.hoeve.nu/k8si-ui:${SHA}-arm64 \
+                      -m docker.hoeve.nu/k8si-ui:${SHA}-amd64
+          YAML
+
+          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=5m || \
+          (kubectl -n gitea logs -l "job-name=${JOB}" --tail=50 2>/dev/null; exit 1)
+
+      - name: Cleanup
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "crane-${SHA::8}" --ignore-not-found
 
   e2e:
-    needs: [docker-build, docker-build-ui]
+    needs: [docker-manifest]
     runs-on: [self-hosted, arm64]
     timeout-minutes: 30
     env:
@@ -217,7 +363,7 @@ jobs:
               \"tag_name\": \"${TAG}\",
               \"target_commitish\": \"${{ github.sha }}\",
               \"name\": \"${TAG}\",
-              \"body\": \"Docker image: \`docker.hoeve.nu/k8si:${{ github.sha }}\`\"
+              \"body\": \"Docker images (multi-arch arm64+amd64):\n- \`docker.hoeve.nu/k8si:v${VERSION}\`\n- \`docker.hoeve.nu/k8si-ui:v${VERSION}\`\"
             }"
 
           echo "Published release ${TAG}"
