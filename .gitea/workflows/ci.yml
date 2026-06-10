@@ -92,7 +92,7 @@ jobs:
                   - --custom-platform=linux/arm64
                   - --destination=docker.hoeve.nu/k8si:${SHA}-arm64
                   - --cache=true
-                  - --cache-repo=docker.hoeve.nu/k8si/cache
+                  - --cache-repo=docker.hoeve.nu/k8si-cache
                   - --skip-tls-verify-registry=docker.hoeve.nu
           YAML
 
@@ -158,7 +158,7 @@ jobs:
                   - --custom-platform=linux/amd64
                   - --destination=docker.hoeve.nu/k8si:${SHA}-amd64
                   - --cache=true
-                  - --cache-repo=docker.hoeve.nu/k8si/cache
+                  - --cache-repo=docker.hoeve.nu/k8si-cache
                   - --skip-tls-verify-registry=docker.hoeve.nu
           YAML
 
@@ -224,7 +224,7 @@ jobs:
                   - --custom-platform=linux/arm64
                   - --destination=docker.hoeve.nu/k8si-ui:${SHA}-arm64
                   - --cache=true
-                  - --cache-repo=docker.hoeve.nu/k8si-ui/cache
+                  - --cache-repo=docker.hoeve.nu/k8si-ui-cache
                   - --skip-tls-verify-registry=docker.hoeve.nu
           YAML
 
@@ -273,7 +273,7 @@ jobs:
                   - --custom-platform=linux/amd64
                   - --destination=docker.hoeve.nu/k8si-ui:${SHA}-amd64
                   - --cache=true
-                  - --cache-repo=docker.hoeve.nu/k8si-ui/cache
+                  - --cache-repo=docker.hoeve.nu/k8si-ui-cache
                   - --skip-tls-verify-registry=docker.hoeve.nu
           YAML
 
