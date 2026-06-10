@@ -63,15 +63,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push arm64 image
+      - name: Build and push arm64 image (buildah)
         run: |
           SHA="${{ github.sha }}"
-          buildah build \
-            --arch arm64 --os linux \
-            --build-arg TARGETARCH=arm64 \
-            --tag docker.hoeve.nu/k8si:${SHA}-arm64 \
-            .
-          buildah push --tls-verify=false docker.hoeve.nu/k8si:${SHA}-arm64
+          SHORT="${SHA::8}"
+          JOB="buildah-arm64-${SHORT}"
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: buildah
+                  image: buildah/buildah:latest
+                  securityContext:
+                    privileged: true
+                    runAsUser: 0
+                  command: [sh, -c]
+                  args:
+                  - |
+                    set -e
+                    curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
+                    cd k8si/
+                    buildah build \
+                      --arch arm64 --os linux \
+                      --build-arg TARGETARCH=arm64 \
+                      --tls-verify=false \
+                      --tag docker.hoeve.nu/k8si:${SHA}-arm64 \
+                      .
+                    buildah push --tls-verify=false docker.hoeve.nu/k8si:${SHA}-arm64
+          YAML
+
+          for i in $(seq 1 60); do
+            ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            echo "iter $i: ST=${ST:-<empty>}"
+            [ "$ST" = "Complete" ] && exit 0
+            if [ "$ST" = "Failed" ] || [ "$ST" = "FailureTarget" ]; then
+              kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+              exit 1
+            fi
+            sleep 20
+          done
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "buildah-arm64-${SHA::8}" --ignore-not-found
 
   docker-build-amd64:
     needs: [test]
@@ -81,15 +132,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push amd64 image
+      - name: Build and push amd64 image (buildah)
         run: |
           SHA="${{ github.sha }}"
-          buildah build \
-            --arch amd64 --os linux \
-            --build-arg TARGETARCH=amd64 \
-            --tag docker.hoeve.nu/k8si:${SHA}-amd64 \
-            .
-          buildah push --tls-verify=false docker.hoeve.nu/k8si:${SHA}-amd64
+          SHORT="${SHA::8}"
+          JOB="buildah-amd64-${SHORT}"
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: buildah
+                  image: buildah/buildah:latest
+                  securityContext:
+                    privileged: true
+                    runAsUser: 0
+                  command: [sh, -c]
+                  args:
+                  - |
+                    set -e
+                    curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
+                    cd k8si/
+                    buildah build \
+                      --arch amd64 --os linux \
+                      --build-arg TARGETARCH=amd64 \
+                      --tls-verify=false \
+                      --tag docker.hoeve.nu/k8si:${SHA}-amd64 \
+                      .
+                    buildah push --tls-verify=false docker.hoeve.nu/k8si:${SHA}-amd64
+          YAML
+
+          for i in $(seq 1 135); do
+            ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            echo "iter $i: ST=${ST:-<empty>}"
+            [ "$ST" = "Complete" ] && exit 0
+            if [ "$ST" = "Failed" ] || [ "$ST" = "FailureTarget" ]; then
+              kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+              exit 1
+            fi
+            sleep 20
+          done
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "buildah-amd64-${SHA::8}" --ignore-not-found
 
   docker-build-ui-arm64:
     needs: [docker-build-arm64, docker-build-amd64]
@@ -98,14 +200,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push UI arm64 image
+      - name: Build and push UI arm64 image (buildah)
         run: |
           SHA="${{ github.sha }}"
-          buildah build \
-            --arch arm64 --os linux \
-            --tag docker.hoeve.nu/k8si-ui:${SHA}-arm64 \
-            k8si/ui/
-          buildah push --tls-verify=false docker.hoeve.nu/k8si-ui:${SHA}-arm64
+          SHORT="${SHA::8}"
+          JOB="buildah-ui-arm64-${SHORT}"
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: buildah
+                  image: buildah/buildah:latest
+                  securityContext:
+                    privileged: true
+                    runAsUser: 0
+                  command: [sh, -c]
+                  args:
+                  - |
+                    set -e
+                    curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
+                    cd k8si/k8si/ui/
+                    buildah build \
+                      --arch arm64 --os linux \
+                      --tls-verify=false \
+                      --tag docker.hoeve.nu/k8si-ui:${SHA}-arm64 \
+                      .
+                    buildah push --tls-verify=false docker.hoeve.nu/k8si-ui:${SHA}-arm64
+          YAML
+
+          for i in $(seq 1 60); do
+            ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            echo "iter $i: ST=${ST:-<empty>}"
+            [ "$ST" = "Complete" ] && exit 0
+            if [ "$ST" = "Failed" ] || [ "$ST" = "FailureTarget" ]; then
+              kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+              exit 1
+            fi
+            sleep 20
+          done
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "buildah-ui-arm64-${SHA::8}" --ignore-not-found
 
   docker-build-ui-amd64:
     needs: [docker-build-arm64, docker-build-amd64]
@@ -115,14 +268,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and push UI amd64 image
+      - name: Build and push UI amd64 image (buildah)
         run: |
           SHA="${{ github.sha }}"
-          buildah build \
-            --arch amd64 --os linux \
-            --tag docker.hoeve.nu/k8si-ui:${SHA}-amd64 \
-            k8si/ui/
-          buildah push --tls-verify=false docker.hoeve.nu/k8si-ui:${SHA}-amd64
+          SHORT="${SHA::8}"
+          JOB="buildah-ui-amd64-${SHORT}"
+
+          kubectl -n gitea apply -f - <<YAML
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB}
+            namespace: gitea
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: hoeve-worker01
+                restartPolicy: Never
+                containers:
+                - name: buildah
+                  image: buildah/buildah:latest
+                  securityContext:
+                    privileged: true
+                    runAsUser: 0
+                  command: [sh, -c]
+                  args:
+                  - |
+                    set -e
+                    curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
+                    cd k8si/k8si/ui/
+                    buildah build \
+                      --arch amd64 --os linux \
+                      --tls-verify=false \
+                      --tag docker.hoeve.nu/k8si-ui:${SHA}-amd64 \
+                      .
+                    buildah push --tls-verify=false docker.hoeve.nu/k8si-ui:${SHA}-amd64
+          YAML
+
+          for i in $(seq 1 135); do
+            ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null)
+            echo "iter $i: ST=${ST:-<empty>}"
+            [ "$ST" = "Complete" ] && exit 0
+            if [ "$ST" = "Failed" ] || [ "$ST" = "FailureTarget" ]; then
+              kubectl -n gitea describe pod -l "job-name=${JOB}" 2>/dev/null || true
+              kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+              exit 1
+            fi
+            sleep 20
+          done
+          kubectl -n gitea logs -l "job-name=${JOB}" --tail=100 2>/dev/null || true
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          SHA="${{ github.sha }}"
+          kubectl -n gitea delete job "buildah-ui-amd64-${SHA::8}" --ignore-not-found
 
   docker-manifest:
     needs: [docker-build-arm64, docker-build-amd64, docker-build-ui-arm64, docker-build-ui-amd64]
