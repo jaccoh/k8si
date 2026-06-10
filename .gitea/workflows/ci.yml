@@ -241,7 +241,7 @@ jobs:
                   - --skip-tls-verify-registry=docker.hoeve.nu
           YAML
 
-          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=20m || \
+          kubectl -n gitea wait "job/${JOB}" --for=condition=complete --timeout=30m || \
           (kubectl -n gitea logs -l "job-name=${JOB}" --tail=50 2>/dev/null; exit 1)
 
       - name: Cleanup
