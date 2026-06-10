@@ -362,13 +362,13 @@ jobs:
                   command: [sh, -c]
                   args:
                   - |
-                    crane index append --insecure \
+                    crane index append \
                       --tag docker.hoeve.nu/k8si:${SHA} \
                       --tag docker.hoeve.nu/k8si:v${VERSION} \
                       --tag docker.hoeve.nu/k8si:latest \
                       -m docker.hoeve.nu/k8si:${SHA}-arm64 \
                       -m docker.hoeve.nu/k8si:${SHA}-amd64 &&
-                    crane index append --insecure \
+                    crane index append \
                       --tag docker.hoeve.nu/k8si-ui:${SHA} \
                       --tag docker.hoeve.nu/k8si-ui:v${VERSION} \
                       --tag docker.hoeve.nu/k8si-ui:latest \
