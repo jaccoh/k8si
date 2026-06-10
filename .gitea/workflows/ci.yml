@@ -195,15 +195,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Pin image tags in deploy manifests
-        run: |
-          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
-          sed -i "s|docker.hoeve.nu/k8si:v[0-9.]*|docker.hoeve.nu/k8si:v${VERSION}|g" deploy/operator.yaml
-          sed -i "s|docker.hoeve.nu/k8si-ui:v[0-9.]*|docker.hoeve.nu/k8si-ui:v${VERSION}|g" deploy/ui.yaml
-          git config user.email "ci@k8si" && git config user.name "k8si CI"
-          git diff --quiet || git commit -am "chore: pin deploy images to v${VERSION}"
-          git push origin HEAD:main
-
       - name: Create Gitea release
         run: |
           VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
