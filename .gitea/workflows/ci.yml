@@ -392,6 +392,7 @@ jobs:
     env:
       IMAGE_TAG: ${{ github.sha }}
       K8SI_IMAGE: docker.hoeve.nu/k8si:${{ github.sha }}
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -410,7 +411,7 @@ jobs:
         run: uv sync
 
       - name: Run e2e tests
-        run: uv run pytest e2e/ -v --tb=short
+        run: uv run pytest e2e/ -v --tb=short --log-cli-level=INFO
 
   release:
     needs: [e2e]
