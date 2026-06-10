@@ -1,4 +1,4 @@
-FROM python:3.14-slim AS builder
+FROM python:3.13-slim AS builder
 
 RUN pip install uv
 WORKDIR /build
@@ -7,7 +7,7 @@ COPY k8si/ k8si/
 RUN uv pip install --system --no-cache .
 
 
-FROM python:3.14-slim
+FROM python:3.13-slim
 
 # restic + openssh + sqlite3 for pre-backup hooks
 RUN apt-get update && apt-get install -y --no-install-recommends \
