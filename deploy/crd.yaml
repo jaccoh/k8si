@@ -133,6 +133,16 @@ spec:
                   type: boolean
                   default: false
                   description: Suspend all backups without deleting the CRD; set to true to pause, false (or omit) to resume
+                backupWindow:
+                  type: object
+                  description: Restrict backups to a UTC time window; omit to allow backups at any time
+                  properties:
+                    start:
+                      type: string
+                      description: Window start in HH:MM UTC, inclusive (e.g. "02:00")
+                    end:
+                      type: string
+                      description: Window end in HH:MM UTC, exclusive (e.g. "06:00"); may wrap midnight if end < start
                 maxRetriesPerDay:
                   type: integer
                   default: 3

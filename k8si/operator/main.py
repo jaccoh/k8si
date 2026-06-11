@@ -26,6 +26,28 @@ def _daily_failure_count(status: dict) -> int:
     )
 
 
+def _is_in_window(window: dict, now: datetime | None = None) -> bool:
+    """Return True if now (UTC) falls within [start, end).
+
+    If start > end the window wraps midnight. An absent or invalid window
+    means backups are always allowed.
+    """
+    if not window:
+        return True
+    now_dt = now if now is not None else datetime.now(tz=UTC)
+    try:
+        sh, sm = map(int, window.get("start", "00:00").split(":"))
+        eh, em = map(int, window.get("end", "23:59").split(":"))
+    except (ValueError, TypeError):
+        return True
+    now_m = now_dt.hour * 60 + now_dt.minute
+    s = sh * 60 + sm
+    e = eh * 60 + em
+    if s <= e:
+        return s <= now_m < e
+    return now_m >= s or now_m < e
+
+
 def _is_due(schedule: str, last_backup_time: str | None) -> bool:
     now = datetime.now(tz=UTC)
     if last_backup_time is None:
@@ -130,6 +152,11 @@ async def backup_timer(
 ) -> None:
     if spec.get("paused", False):
         logger.info("Backup %s/%s paused, skipping", namespace, name)
+        return
+
+    window = spec.get("backupWindow", {})
+    if window and not _is_in_window(window):
+        logger.debug("Backup %s/%s outside backup window, skipping", namespace, name)
         return
 
     schedule = spec["schedule"]
