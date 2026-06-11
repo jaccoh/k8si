@@ -389,6 +389,18 @@
   .history-bar.run { background: #58a6ff; height: 16px; }
   .history-bar.dim { background: #21262d; height: 6px; }
 
+  /* Success rate + streak under sparkline */
+  .history-stats {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 10px;
+    color: #6e7681;
+  }
+  .streak-pos { color: #3fb950; font-weight: 600; }
+  .streak-neg { color: #f85149; font-weight: 600; }
+
   /* Namespace divider */
   .ns-divider {
     display: flex;
@@ -683,6 +695,23 @@
       .replace(/"/g, '&quot;');
   }
 
+  function buildHistoryStats(backup) {
+    const rate = backup.successRate;
+    const streak = backup.streak;
+    if (rate === null && streak === 0) return '';
+    const rateStr = rate !== null ? Math.round(rate * 100) + '%' : '';
+    let streakStr = '';
+    if (streak > 0) {
+      streakStr = '<span class="streak-pos">+' + streak + '</span>';
+    } else if (streak < 0) {
+      streakStr = '<span class="streak-neg">' + streak + '</span>';
+    }
+    const parts = [];
+    if (rateStr) parts.push(rateStr);
+    if (streakStr) parts.push(streakStr);
+    return '<div class="history-stats">' + parts.join('<span style="color:#30363d">·</span>') + '</div>';
+  }
+
   function buildRow(backup) {
     const statusClass = escapeHtml(backup.lastBackupResult || 'pending');
     const statusLabel = escapeHtml(backup.lastBackupResult || 'pending');
@@ -730,7 +759,7 @@
       + '<td>' + lastCell + '</td>'
       + '<td>' + nextCell + '</td>'
       + '<td><span class="schedule-tag">' + escapeHtml(backup.schedule || '—') + '</span>' + windowLine + '</td>'
-      + '<td>' + buildSparkline(backup.recentBackups) + '</td>'
+      + '<td>' + buildSparkline(backup.recentBackups) + buildHistoryStats(backup) + '</td>'
       + '<td><span class="' + msgClass + '" title="' + msgText + '">' + msgText + '</span></td>'
       + '<td style="white-space:nowrap;display:flex;gap:4px">' + triggerBtn + pauseBtn + '</td>'
       + '</tr>';

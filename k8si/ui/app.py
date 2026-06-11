@@ -39,10 +39,32 @@ def list_backups() -> list[dict[str, Any]]:
     return [_shape(item) for item in raw.get("items", [])]
 
 
+def _compute_stats(recent: list[dict]) -> dict[str, Any]:
+    """Compute successRate and streak from a recentBackups list (most-recent-first)."""
+    if not recent:
+        return {"successRate": None, "streak": 0}
+    success_count = sum(1 for e in recent if e.get("result") == "success")
+    success_rate = round(success_count / len(recent), 3)
+    first_result = recent[0].get("result")
+    if first_result not in ("success", "failed"):
+        return {"successRate": success_rate, "streak": 0}
+    streak = 0
+    for entry in recent:
+        if entry.get("result") == first_result:
+            streak += 1
+        else:
+            break
+    if first_result == "failed":
+        streak = -streak
+    return {"successRate": success_rate, "streak": streak}
+
+
 def _shape(item: dict[str, Any]) -> dict[str, Any]:
     meta = item.get("metadata", {})
     spec = item.get("spec", {})
     status = item.get("status", {})
+    recent = status.get("recentBackups", [])
+    stats = _compute_stats(recent)
     return {
         "name": meta.get("name", ""),
         "namespace": meta.get("namespace", ""),
@@ -55,7 +77,9 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "nextBackupTime": status.get("nextBackupTime"),
         "triggeredAt": status.get("triggeredAt"),
         "message": status.get("message", ""),
-        "recentBackups": status.get("recentBackups", []),
+        "recentBackups": recent,
+        "successRate": stats["successRate"],
+        "streak": stats["streak"],
         "lastRestoreResult": status.get("lastRestoreResult"),
         "lastRestoreTime": status.get("lastRestoreTime"),
         "lastRestoreMessage": status.get("lastRestoreMessage"),
