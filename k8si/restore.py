@@ -61,12 +61,29 @@ def _report_to_crd(config: Config, result: dict[str, str]) -> None:
 
 
 def run(config: Config, backend: BackupBackend) -> None:
+    result: dict[str, str] = {"result": "failed", "snapshot_id": "", "message": "restore failed"}
+    try:
+        snapshot_id = _run_restore(config, backend)
+        if snapshot_id is not None:
+            result.update(
+                result="success",
+                snapshot_id=snapshot_id,
+                message=f"Restored from snapshot {snapshot_id}",
+            )
+        else:
+            result.update(result="skipped", message="No restore needed")
+    finally:
+        _report_to_crd(config, result)
+
+
+def _run_restore(config: Config, backend: BackupBackend) -> str | None:
+    """Returns snapshot_id on success, None to skip, raises SystemExit on hard failure."""
     data_path = config.data_path
 
     # Emergency override: file on the volume (survives ArgoCD, no git commit needed)
     if (data_path / NO_RESTORE_FILE).exists():
         log.info("Restore disabled by %s on volume, skipping", NO_RESTORE_FILE)
-        return
+        return None
 
     sentinels = [data_path / s for s in config.restore_sentinels]
     marker = data_path / MARKER_FILE
@@ -77,7 +94,7 @@ def run(config: Config, backend: BackupBackend) -> None:
             "PVC healthy, skipping restore (sentinels present: %s)",
             [s.name for s in sentinels],
         )
-        return
+        return None
 
     # Step 2: marker exists but sentinels missing → post-restore corruption
     if marker.exists() and sentinels:
@@ -91,7 +108,7 @@ def run(config: Config, backend: BackupBackend) -> None:
     # Step 3: no sentinels configured, use marker alone
     if not sentinels and marker.exists():
         log.info("PVC already initialized (marker present), skipping restore")
-        return
+        return None
 
     # Snapshot override annotation: skip remote checks, go straight to restore
     snapshot_id = config.restore_snapshot
@@ -105,9 +122,10 @@ def run(config: Config, backend: BackupBackend) -> None:
     else:
         snapshot_id = _pick_snapshot(config, backend)
         if snapshot_id is None:
-            return
+            return None
 
-    _do_restore(backend, snapshot_id, data_path, sentinels, marker)
+    restored = _do_restore(backend, snapshot_id, data_path, sentinels, marker)
+    return snapshot_id if restored else None
 
 
 def _pick_snapshot(config: Config, backend: BackupBackend) -> str | None:
@@ -199,7 +217,7 @@ def _do_restore(
     data_path: Path,
     sentinels: list[Path],
     marker: Path,
-) -> None:
+) -> bool:
     lock_path = data_path / LOCK_FILE
     lock_file = lock_path.open("w")
     try:
@@ -207,7 +225,7 @@ def _do_restore(
     except BlockingIOError:
         log.info("Another restore is in progress (lock held), skipping")
         lock_file.close()
-        return
+        return False
 
     try:
         log.info("Restoring PVC from snapshot %s", snapshot_id)
@@ -230,6 +248,7 @@ def _do_restore(
 
         marker.write_text("restored\n")
         log.info("PVC restore complete")
+        return True
 
     finally:
         fcntl.flock(lock_file, fcntl.LOCK_UN)

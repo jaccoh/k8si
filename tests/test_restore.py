@@ -1,7 +1,7 @@
 """Tests for restore (init container) mode."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,8 @@ def make_config(
     size_min: int | None = None,
     size_max: int | None = None,
     restore_snapshot: str | None = None,
+    backup_name: str | None = None,
+    backup_namespace: str | None = None,
 ) -> Config:
     return Config(
         mode="restore",
@@ -33,6 +35,8 @@ def make_config(
         restore_size_min=size_min,
         restore_size_max=size_max,
         restore_snapshot=restore_snapshot,
+        backup_name=backup_name,
+        backup_namespace=backup_namespace,
     )
 
 
@@ -173,3 +177,47 @@ def test_fails_when_sentinels_missing_after_restore(tmp_path: Path) -> None:
     # restore completes but sentinel is never written
     with pytest.raises(SystemExit):
         run(make_config(tmp_path), backend)
+
+
+# ── restore reporting ──────────────────────────────────────────────────────────
+
+
+def test_success_reports_to_crd(tmp_path: Path) -> None:
+    backend = _backend_with_snapshot()
+    backend.restore.side_effect = lambda **_: (tmp_path / "config.xml").touch()
+    cfg = make_config(tmp_path, backup_name="my-backup", backup_namespace="default")
+    with (
+        patch("k8si.restore.kubernetes.config.load_incluster_config"),
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
+        run(cfg, backend)
+    body = mock_cls.return_value.patch_namespaced_custom_object_status.call_args.kwargs["body"]
+    assert body["status"]["lastRestoreResult"] == "success"
+    assert body["status"]["lastRestoreSnapshotId"] == "abc12345"
+
+
+def test_failure_still_reports_to_crd(tmp_path: Path) -> None:
+    backend = _backend_with_snapshot()
+    backend.restore.side_effect = BackupError("failed", 1, "connection refused")
+    cfg = make_config(tmp_path, backup_name="my-backup", backup_namespace="default")
+    with (
+        patch("k8si.restore.kubernetes.config.load_incluster_config"),
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
+        with pytest.raises(SystemExit):
+            run(cfg, backend)
+    body = mock_cls.return_value.patch_namespaced_custom_object_status.call_args.kwargs["body"]
+    assert body["status"]["lastRestoreResult"] == "failed"
+
+
+def test_skipped_reports_to_crd(tmp_path: Path) -> None:
+    (tmp_path / "config.xml").touch()
+    backend = MagicMock()
+    cfg = make_config(tmp_path, backup_name="my-backup", backup_namespace="default")
+    with (
+        patch("k8si.restore.kubernetes.config.load_incluster_config"),
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
+        run(cfg, backend)
+    body = mock_cls.return_value.patch_namespaced_custom_object_status.call_args.kwargs["body"]
+    assert body["status"]["lastRestoreResult"] == "skipped"
