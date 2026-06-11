@@ -22,6 +22,8 @@ def _make_args(**overrides) -> argparse.Namespace:
         retention_monthly=3,
         tags="",
         no_sidecar=False,
+        backup_name=None,
+        backup_namespace="default",
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -81,3 +83,17 @@ def test_no_sidecar_omits_backup_container():
     output = _capture_run(_make_args(no_sidecar=True))
     assert "k8si-restore" in output, "k8si-restore init container must be present"
     assert "k8si-backup" not in output, "k8si-backup sidecar must NOT be present with --no-sidecar"
+
+
+# ── Test 5: --backup-name injects env vars and RBAC snippet ──────────────────
+
+
+def test_backup_name_injects_env_vars_and_rbac() -> None:
+    output = _capture_run(_make_args(backup_name="my-app-backup", backup_namespace="staging"))
+    assert "K8SI_BACKUP_NAME" in output
+    assert "my-app-backup" in output
+    assert "K8SI_BACKUP_NAMESPACE" in output
+    assert "staging" in output
+    assert "kind: ServiceAccount" in output
+    assert "kind: ClusterRoleBinding" in output
+    assert "k8si-restore" in output

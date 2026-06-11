@@ -16,6 +16,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("--retention-monthly", type=int, default=3, metavar="N")
     p.add_argument("--tags", default="", help="Comma-separated backup tags, e.g. 'app=sonarr'")
     p.add_argument("--no-sidecar", action="store_true", help="Omit the backup sidecar")
+    p.add_argument("--backup-name", default=None, help="K8siBackup CRD name for restore reporting (opt-in)")
+    p.add_argument("--backup-namespace", default="default", help="Namespace of the K8siBackup CRD")
     p.set_defaults(func=run)
 
 
@@ -29,6 +31,9 @@ def run(args: argparse.Namespace) -> None:
         print(_sidecar(args, tags))
 
     print(_volume_hint(args))
+
+    if getattr(args, "backup_name", None):
+        print(_rbac_snippet(args))
 
 
 def _fix_ssh_perms_container(secret: str) -> str:
@@ -70,6 +75,16 @@ def _init_container(args: argparse.Namespace, tags: list[str]) -> str:
     if tags:
         tag_env = f'\n          - name: BACKUP_TAGS\n            value: "{",".join(tags)}"'
 
+    reporting_env = ""
+    if getattr(args, "backup_name", None):
+        ns = getattr(args, "backup_namespace", "default") or "default"
+        reporting_env = (
+            f"\n          - name: K8SI_BACKUP_NAME"
+            f"\n            value: {args.backup_name}"
+            f"\n          - name: K8SI_BACKUP_NAMESPACE"
+            f"\n            value: {ns}"
+        )
+
     return (
         "# ── initContainers: ───────────────────────────────────────────────────────────\n"
         "      - name: k8si-restore\n"
@@ -84,7 +99,8 @@ def _init_container(args: argparse.Namespace, tags: list[str]) -> str:
         "            value: /data\n"
         "          - name: RESTORE_SENTINELS\n"
         f"            value: {args.sentinel}"
-        f"{tag_env}\n"
+        f"{tag_env}"
+        f"{reporting_env}\n"
         f"{_secret_env('RESTIC_REPOSITORY', 'RESTIC_REPOSITORY', args.secret)}\n"
         f"{_secret_env('RESTIC_PASSWORD', 'RESTIC_PASSWORD', args.secret)}\n"
         f"{_secret_env('RESTIC_SFTP_COMMAND', 'RESTIC_SFTP_COMMAND', args.secret)}\n"
@@ -137,6 +153,34 @@ def _sidecar(args: argparse.Namespace, tags: list[str]) -> str:
         "          limits:\n"
         "            cpu: 200m\n"
         "            memory: 1Gi\n"
+    )
+
+
+def _rbac_snippet(args: argparse.Namespace) -> str:
+    ns = getattr(args, "backup_namespace", "default") or "default"
+    return (
+        "# ── k8si-restore RBAC (apply once per namespace): ────────────────────────────\n"
+        "# Requires ClusterRole k8si-restore from deploy/rbac.yaml\n"
+        "---\n"
+        "apiVersion: v1\n"
+        "kind: ServiceAccount\n"
+        "metadata:\n"
+        f"  name: k8si-restore\n"
+        f"  namespace: {ns}\n"
+        "---\n"
+        "apiVersion: rbac.authorization.k8s.io/v1\n"
+        "kind: ClusterRoleBinding\n"
+        "metadata:\n"
+        f"  name: k8si-restore-{ns}\n"
+        "roleRef:\n"
+        "  apiGroup: rbac.authorization.k8s.io\n"
+        "  kind: ClusterRole\n"
+        "  name: k8si-restore\n"
+        "subjects:\n"
+        "  - kind: ServiceAccount\n"
+        "    name: k8si-restore\n"
+        f"    namespace: {ns}\n"
+        "# ── pod spec: add serviceAccountName: k8si-restore ─────────────────────────────\n"
     )
 
 

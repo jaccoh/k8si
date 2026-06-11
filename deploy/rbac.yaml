@@ -60,3 +60,12 @@ subjects:
   - kind: ServiceAccount
     name: k8si-operator
     namespace: k8si-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8si-restore
+rules:
+  - apiGroups: [k8si.io]
+    resources: [k8sibackups/status]
+    verbs: [patch]
