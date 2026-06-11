@@ -27,6 +27,10 @@ class Config:
     restore_tags: list[str] = field(default_factory=list)
     restore_snapshot: str | None = None
 
+    # restore reporting (opt-in)
+    backup_name: str | None = None
+    backup_namespace: str | None = None
+
     # backup / job
     backup_schedule: str | None = None
     retention_daily: int = 7
@@ -63,6 +67,8 @@ class Config:
         restore_size_max: int | None = None
         restore_tags: list[str] = []
         restore_snapshot: str | None = None
+        backup_name: str | None = None
+        backup_namespace: str | None = None
         backup_schedule: str | None = None
         pre_snapshot_hook: Path | None = None
         pre_snapshot_hook_required = False
@@ -93,6 +99,9 @@ class Config:
 
             restore_snapshot = os.environ.get("RESTORE_SNAPSHOT", "").strip() or None
 
+            backup_name = os.environ.get("K8SI_BACKUP_NAME", "").strip() or None
+            backup_namespace = os.environ.get("K8SI_BACKUP_NAMESPACE", "").strip() or None
+
         elif mode in ("backup", "job"):
             if mode == "backup":
                 backup_schedule = _require("BACKUP_SCHEDULE", "cron expression, e.g. '0 * * * *'")
@@ -118,6 +127,8 @@ class Config:
             restore_size_max=restore_size_max,
             restore_tags=restore_tags,
             restore_snapshot=restore_snapshot,
+            backup_name=backup_name,
+            backup_namespace=backup_namespace,
             backup_schedule=backup_schedule,
             retention_daily=int(os.environ.get("RETENTION_DAILY", "7")),
             retention_weekly=int(os.environ.get("RETENTION_WEEKLY", "4")),
