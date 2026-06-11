@@ -12,7 +12,7 @@ metadata:
 rules:
   - apiGroups: ["k8si.io"]
     resources: ["k8sibackups"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["k8si.io"]
     resources: ["k8sibackups/status"]
     verbs: ["patch"]

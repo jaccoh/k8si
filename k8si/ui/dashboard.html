@@ -427,6 +427,20 @@
     border-color: #f85149;
     color: #f85149;
   }
+  .badge-paused {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    color: #d29922;
+    background: #2d2007;
+    border: 1px solid #5a3e00;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 6px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
 
   /* Footer */
   .footer {
@@ -668,10 +682,20 @@
     const msgClass = (backup.lastBackupResult === 'failed') ? 'msg-cell error' : 'msg-cell';
     const msgText  = escapeHtml(backup.message || '');
 
-    return '<tr data-result="' + statusClass + '" data-name="' + escapeHtml(backup.name) + '" data-ns="' + escapeHtml(backup.namespace) + '">'
+    const ns = escapeHtml(backup.namespace);
+    const nm = escapeHtml(backup.name);
+    const pauseBtn = backup.paused
+      ? '<button class="btn-trigger" onclick="setPaused(\'' + ns + '\',\'' + nm + '\',false,this)">Resume</button>'
+      : '<button class="btn-trigger" onclick="setPaused(\'' + ns + '\',\'' + nm + '\',true,this)">Pause</button>';
+    const triggerBtn = '<button class="btn-trigger"'
+      + (backup.paused ? ' disabled title="Resume to trigger manually"' : '')
+      + ' onclick="triggerBackup(\'' + ns + '\',\'' + nm + '\',this)">Backup now</button>';
+    const pausedBadge = backup.paused ? '<span class="badge-paused">paused</span>' : '';
+
+    return '<tr data-result="' + statusClass + '" data-name="' + nm + '" data-ns="' + ns + '">'
       + '<td><div class="app-cell">'
-      + '<span class="app-name">' + escapeHtml(backup.name) + '</span>'
-      + '<span class="app-ns">' + escapeHtml(backup.namespace) + '</span>'
+      + '<span class="app-name">' + nm + pausedBadge + '</span>'
+      + '<span class="app-ns">' + ns + '</span>'
       + '</div></td>'
       + '<td><span class="status ' + statusClass + '"><span class="status-dot"></span>' + statusLabel + '</span></td>'
       + '<td>' + lastCell + '</td>'
@@ -679,7 +703,7 @@
       + '<td><span class="schedule-tag">' + escapeHtml(backup.schedule || '—') + '</span></td>'
       + '<td>' + buildSparkline(backup.recentBackups) + '</td>'
       + '<td><span class="' + msgClass + '" title="' + msgText + '">' + msgText + '</span></td>'
-      + '<td><button class="btn-trigger" onclick="triggerBackup(\'' + escapeHtml(backup.namespace) + '\',\'' + escapeHtml(backup.name) + '\',this)">Backup now</button></td>'
+      + '<td style="white-space:nowrap;display:flex;gap:4px">' + triggerBtn + pauseBtn + '</td>'
       + '</tr>';
   }
 
@@ -906,6 +930,31 @@
           btn.textContent = 'Backup now';
           btn.className = 'btn-trigger';
           btn.disabled = false;
+        }, 3000);
+      });
+  }
+
+  // ── Pause / resume ──────────────────────────────────────────────────────────
+
+  function setPaused(namespace, name, paused, btn) {
+    btn.disabled = true;
+    btn.textContent = paused ? 'Pausing…' : 'Resuming…';
+
+    fetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/paused', {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({paused: paused}),
+    })
+      .then(function(resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        // Refresh the full data so the row re-renders with the new paused state
+        loadBackups();
+      })
+      .catch(function() {
+        btn.textContent = 'Error';
+        setTimeout(function() {
+          btn.disabled = false;
+          btn.textContent = paused ? 'Pause' : 'Resume';
         }, 3000);
       });
   }

@@ -84,6 +84,32 @@ def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
     return {"triggered": True, "triggeredAt": now}
 
 
+@app.patch("/api/backups/{namespace}/{name}/paused")
+def set_paused(namespace: str, name: str, body: dict[str, Any]) -> dict[str, Any]:
+    custom = kubernetes.client.CustomObjectsApi()
+    try:
+        custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
+    except kubernetes.client.exceptions.ApiException as e:
+        if e.status == 404:
+            raise HTTPException(status_code=404, detail=f"{namespace}/{name} not found")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    paused = bool(body.get("paused", False))
+    try:
+        custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            namespace,
+            PLURAL,
+            name,
+            {"spec": {"paused": paused}},
+        )
+    except kubernetes.client.exceptions.ApiException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"paused": paused}
+
+
 @app.get("/")
 def index() -> FileResponse:
     here = os.path.dirname(__file__)
