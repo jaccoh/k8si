@@ -35,7 +35,10 @@ def test_no_api_call_when_backup_name_absent() -> None:
 
 
 def test_patches_status_subresource_not_root() -> None:
-    with patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls:
+    with (
+        patch("k8si.restore.kubernetes.config.load_incluster_config"),
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
         _report_to_crd(_cfg(), _result())
     mock_api = mock_cls.return_value
     mock_api.patch_namespaced_custom_object_status.assert_called_once()
@@ -43,7 +46,10 @@ def test_patches_status_subresource_not_root() -> None:
 
 
 def test_patch_targets_correct_crd() -> None:
-    with patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls:
+    with (
+        patch("k8si.restore.kubernetes.config.load_incluster_config"),
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
         _report_to_crd(_cfg(), _result())
     call = mock_cls.return_value.patch_namespaced_custom_object_status.call_args
     assert call.kwargs["group"] == "k8si.io"
@@ -54,7 +60,10 @@ def test_patch_targets_correct_crd() -> None:
 
 
 def test_patch_body_contains_all_status_fields() -> None:
-    with patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls:
+    with (
+        patch("k8si.restore.kubernetes.config.load_incluster_config"),
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
         _report_to_crd(_cfg(), {"result": "success", "snapshot_id": "abc12345", "message": "Restored from abc12345"})
     body = mock_cls.return_value.patch_namespaced_custom_object_status.call_args.kwargs["body"]
     status = body["status"]
@@ -67,6 +76,9 @@ def test_patch_body_contains_all_status_fields() -> None:
 def test_patch_failure_is_best_effort_no_exception() -> None:
     from kubernetes.client.exceptions import ApiException
 
-    with patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls:
+    with (
+        patch("k8si.restore.kubernetes.config.load_incluster_config"),
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
         mock_cls.return_value.patch_namespaced_custom_object_status.side_effect = ApiException(status=403)
         _report_to_crd(_cfg(), _result())  # must not raise

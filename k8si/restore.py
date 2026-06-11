@@ -37,6 +37,10 @@ def _report_to_crd(config: Config, result: dict[str, str]) -> None:
         }
     }
     try:
+        try:
+            kubernetes.config.load_incluster_config()
+        except kubernetes.config.ConfigException:
+            kubernetes.config.load_kube_config()
         api = kubernetes.client.CustomObjectsApi()
         api.patch_namespaced_custom_object_status(
             group="k8si.io",
