@@ -32,6 +32,7 @@ class Config:
     backup_namespace: str | None = None
 
     # backup / job
+    run_check: bool = False
     backup_schedule: str | None = None
     retention_daily: int = 7
     retention_weekly: int = 4
@@ -73,6 +74,7 @@ class Config:
         pre_snapshot_hook: Path | None = None
         pre_snapshot_hook_required = False
         backup_tags: list[str] = []
+        run_check = False
 
         if mode == "restore":
             # RESTORE_SENTINELS preferred; fall back to SENTINEL_FILE for compat
@@ -112,6 +114,7 @@ class Config:
             )
             tags_str = os.environ.get("BACKUP_TAGS", "")
             backup_tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+            run_check = os.environ.get("RUN_CHECK", "false").lower() == "true"
 
         return cls(
             mode=mode,
@@ -136,6 +139,7 @@ class Config:
             pre_snapshot_hook=pre_snapshot_hook,
             pre_snapshot_hook_required=pre_snapshot_hook_required,
             backup_tags=backup_tags,
+            run_check=run_check,
         )
 
 

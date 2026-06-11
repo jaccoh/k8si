@@ -141,3 +141,41 @@ def test_proactive_unlock_failure_does_not_abort_backup(tmp_path: Path) -> None:
     backend.unlock.side_effect = Exception("network error")
     _run_cycle(config, backend)
     backend.backup.assert_called_once()
+
+
+# ── spec.checkAfterBackup ─────────────────────────────────────────────────────
+
+
+def test_check_called_when_run_check_true(tmp_path: Path) -> None:
+    config = Config(
+        mode="job",
+        data_path=tmp_path,
+        restic_repository="sftp:fake",
+        restic_password="secret",
+        restic_password_file=None,
+        run_check=True,
+    )
+    backend = MagicMock()
+    _run_cycle(config, backend)
+    backend.check.assert_called_once()
+
+
+def test_check_not_called_when_run_check_false(tmp_path: Path) -> None:
+    config = make_config(tmp_path)  # run_check defaults to False
+    backend = MagicMock()
+    _run_cycle(config, backend)
+    backend.check.assert_not_called()
+
+
+def test_check_error_does_not_crash_sidecar(tmp_path: Path) -> None:
+    config = Config(
+        mode="job",
+        data_path=tmp_path,
+        restic_repository="sftp:fake",
+        restic_password="secret",
+        restic_password_file=None,
+        run_check=True,
+    )
+    backend = MagicMock()
+    backend.check.side_effect = BackupError("corrupted", 1, "data integrity error")
+    _run_cycle(config, backend)  # must not raise

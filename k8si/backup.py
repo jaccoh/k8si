@@ -98,6 +98,13 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
             log.error("Forget/prune failed: %s", e.stderr)
             return
 
+    if config.run_check:
+        try:
+            backend.check()
+            log.info("Repository integrity check passed.")
+        except BackupError as e:
+            log.error("Repository check failed: %s", e.stderr)
+
     _write_last_backup_timestamp(config.data_path)
     log.info("PVC backup complete.")
 

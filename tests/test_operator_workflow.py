@@ -155,3 +155,29 @@ def test_orphan_snap_pvcs_deleted_before_backup() -> None:
         mock_ctx.return_value = MagicMock()
         asyncio.run(run_backup("mybackup", "default", spec, MagicMock(), body))
         mock_cleanup.assert_called_once_with("mybackup", "default")
+
+
+# ── spec.checkAfterBackup ─────────────────────────────────────────────────────
+
+
+def test_check_after_backup_injects_run_check_env() -> None:
+    """When spec.checkAfterBackup is True, RUN_CHECK=true must appear in the job env."""
+    from k8si.operator.workflow import _build_backup_job
+
+    spec = {"checkAfterBackup": True}
+    job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", spec, [], {}, None)
+    env_map = {
+        e["name"]: e.get("value")
+        for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map.get("RUN_CHECK") == "true"
+
+
+def test_check_after_backup_absent_when_not_set() -> None:
+    """Without checkAfterBackup in spec, RUN_CHECK must not appear in job env."""
+    from k8si.operator.workflow import _build_backup_job
+
+    spec = {}
+    job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", spec, [], {}, None)
+    env_names = [e["name"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]]
+    assert "RUN_CHECK" not in env_names

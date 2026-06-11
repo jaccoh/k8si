@@ -135,6 +135,9 @@ class ResticBackend:
     def unlock(self) -> None:
         self._invoke("unlock")
 
+    def check(self) -> None:
+        self._invoke("check")
+
     # ── internal ───────────────────────────────────────────────────────────────
 
     def _invoke(self, *args: str, timeout: int | None = None) -> str:

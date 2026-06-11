@@ -228,6 +228,10 @@ class KopiaBackend:
         self._ensure_connected()
         self._invoke("maintenance", "run", "--force")
 
+    def check(self) -> None:
+        self._ensure_connected()
+        self._invoke("snapshot", "verify", "--all")
+
     # ── internal ───────────────────────────────────────────────────────────────
 
     def _invoke(self, *args: str) -> str:

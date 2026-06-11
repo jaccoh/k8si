@@ -143,6 +143,10 @@ spec:
                     end:
                       type: string
                       description: Window end in HH:MM UTC, exclusive (e.g. "06:00"); may wrap midnight if end < start
+                checkAfterBackup:
+                  type: boolean
+                  default: false
+                  description: Run restic check after each successful backup to verify repository integrity
                 maxRetriesPerDay:
                   type: integer
                   default: 3

@@ -366,3 +366,13 @@ def test_unlock_calls_restic_unlock() -> None:
     mock_cmd.return_value = "unlocked"
     backend.unlock()
     mock_cmd.assert_called_once_with("unlock")
+
+
+# ── check ─────────────────────────────────────────────────────────────────────
+
+
+def test_check_calls_restic_check() -> None:
+    backend, mock_cmd = _make_backend()
+    mock_cmd.return_value = "no errors"
+    backend.check()
+    mock_cmd.assert_called_once_with("check")

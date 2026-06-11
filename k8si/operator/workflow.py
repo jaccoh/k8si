@@ -220,6 +220,8 @@ def _build_backup_job(
     ]
     if tags:
         env.append({"name": "BACKUP_TAGS", "value": ",".join(tags)})
+    if spec.get("checkAfterBackup"):
+        env.append({"name": "RUN_CHECK", "value": "true"})
     for var, key in [
         ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY"),
         ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
