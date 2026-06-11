@@ -57,3 +57,15 @@ def test_record_invalid_timestamp_does_not_raise():
     from k8si.operator.metrics import record
 
     record("bad-ts", "ns-test", "success", "not-a-date")
+
+
+def test_start_calls_prometheus_http_server():
+    """start() calls start_http_server with the given port."""
+    from unittest.mock import patch
+
+    with patch("k8si.operator.metrics.start_http_server") as mock_srv:
+        from k8si.operator.metrics import start
+
+        start(port=9999)
+
+    mock_srv.assert_called_once_with(9999)

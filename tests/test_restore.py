@@ -221,3 +221,149 @@ def test_skipped_reports_to_crd(tmp_path: Path) -> None:
         run(cfg, backend)
     body = mock_cls.return_value.patch_namespaced_custom_object_status.call_args.kwargs["body"]
     assert body["status"]["lastRestoreResult"] == "skipped"
+
+
+# ── _pod_namespace: reads from SA file (lines 21-24) ──────────────────────────
+
+
+def test_pod_namespace_reads_from_sa_file(tmp_path: Path) -> None:
+    """_pod_namespace() reads the namespace from the in-cluster service account file."""
+    ns_file = tmp_path / "namespace"
+    ns_file.write_text("prod\n")
+
+    with patch("k8si.restore.Path") as mock_path_cls:
+        mock_path_cls.return_value = ns_file
+        from k8si.restore import _pod_namespace
+
+        result = _pod_namespace()
+
+    assert result == "prod"
+
+
+def test_pod_namespace_defaults_to_default_when_no_file() -> None:
+    """_pod_namespace() returns 'default' when the SA namespace file is absent."""
+    with patch("k8si.restore.Path") as mock_path_cls:
+        mock_path_cls.return_value.exists.return_value = False
+        from k8si.restore import _pod_namespace
+
+        result = _pod_namespace()
+
+    assert result == "default"
+
+
+# ── _report_to_crd: ConfigException fallback to kube_config (lines 42-43) ────
+
+
+def test_report_to_crd_falls_back_to_kube_config(tmp_path: Path) -> None:
+    """_report_to_crd() falls back to load_kube_config when incluster fails."""
+    import kubernetes.config
+
+    cfg = make_config(tmp_path, backup_name="my-backup", backup_namespace="ns")
+    result = {"result": "success", "snapshot_id": "abc", "message": "ok"}
+
+    with (
+        patch(
+            "k8si.restore.kubernetes.config.load_incluster_config",
+            side_effect=kubernetes.config.ConfigException("not in cluster"),
+        ),
+        patch("k8si.restore.kubernetes.config.load_kube_config") as mock_kube,
+        patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
+    ):
+        from k8si.restore import _report_to_crd
+
+        _report_to_crd(cfg, result)
+
+    mock_kube.assert_called_once()
+    mock_cls.return_value.patch_namespaced_custom_object_status.assert_called_once()
+
+
+# ── pinned snapshot missing sentinels → SystemExit (lines 120-121) ────────────
+
+
+def test_pinned_snapshot_missing_sentinels_raises(tmp_path: Path) -> None:
+    """A pinned snapshot that fails sentinel check causes SystemExit(1)."""
+    backend = MagicMock()
+    backend.check_sentinels.return_value = False
+    cfg = make_config(tmp_path, restore_snapshot="deadbeef", sentinels=["config.xml"])
+    with pytest.raises(SystemExit):
+        run(cfg, backend)
+
+
+# ── age check: too old snapshot returns None (lines 158-168) ──────────────────
+
+
+def test_snapshot_too_old_is_skipped(tmp_path: Path) -> None:
+    """A snapshot older than restore_max_age_hours is skipped (not an error)."""
+    backend = MagicMock()
+    backend.snapshots.return_value = [
+        {"id": "abc12345", "short_id": "abc12345", "time": "2020-01-01T02:00:00Z"}
+    ]
+    cfg = make_config(tmp_path, max_age_hours=1.0, sentinels=[])
+    run(cfg, backend)  # must not raise
+    backend.restore.assert_not_called()
+
+
+def test_recent_snapshot_within_age_limit_proceeds(tmp_path: Path) -> None:
+    """A recent snapshot within the age limit logs info and proceeds to restore."""
+    from datetime import UTC, datetime
+
+    recent_time = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    backend = MagicMock()
+    backend.snapshots.return_value = [
+        {"id": "abc12345", "short_id": "abc12345", "time": recent_time}
+    ]
+    backend.restore.side_effect = lambda **_: (tmp_path / "config.xml").touch()
+    cfg = make_config(tmp_path, max_age_hours=24.0)
+    run(cfg, backend)
+    backend.restore.assert_called_once()
+
+
+# ── size check: within bounds logs info (line 194) ────────────────────────────
+
+
+def test_snapshot_within_size_bounds_proceeds(tmp_path: Path) -> None:
+    """A snapshot within size bounds logs info and proceeds to restore."""
+    backend = _backend_with_snapshot()
+    backend.snapshot_size.return_value = 50 * 1024 * 1024  # 50 MiB
+    backend.restore.side_effect = lambda **_: (tmp_path / "config.xml").touch()
+    cfg = make_config(
+        tmp_path,
+        size_min=10 * 1024 * 1024,  # 10 MiB
+        size_max=100 * 1024 * 1024,  # 100 MiB
+    )
+    run(cfg, backend)
+    backend.restore.assert_called_once()
+
+
+# ── _sentinels_in_snapshot: empty sentinel list → True (line 206) ─────────────
+
+
+def test_sentinels_in_snapshot_empty_list_returns_true() -> None:
+    """_sentinels_in_snapshot() returns True immediately when sentinels is empty."""
+    from k8si.restore import _sentinels_in_snapshot
+
+    backend = MagicMock()
+    result = _sentinels_in_snapshot(backend, "abc1234", [])
+    assert result is True
+    backend.check_sentinels.assert_not_called()
+
+
+# ── _do_restore: lock contention → return False (lines 225-228) ───────────────
+
+
+def test_do_restore_skips_when_lock_held(tmp_path: Path) -> None:
+    """_do_restore() returns False when another process holds the file lock."""
+
+    from k8si.restore import _do_restore
+
+    backend = MagicMock()
+    with patch("fcntl.flock", side_effect=BlockingIOError):
+        result = _do_restore(
+            backend,
+            snapshot_id="abc12345",
+            data_path=tmp_path,
+            sentinels=[],
+            marker=tmp_path / ".k8si-restore-complete",
+        )
+    assert result is False
+    backend.restore.assert_not_called()
