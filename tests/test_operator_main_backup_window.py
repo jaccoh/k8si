@@ -5,7 +5,6 @@ import logging
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
-
 # ── helpers shared with other timer tests ─────────────────────────────────────
 
 def _run(coro):
