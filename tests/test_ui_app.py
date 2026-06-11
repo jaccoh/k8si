@@ -148,3 +148,11 @@ def test_list_backups_empty_cluster(mock_api_cls: MagicMock) -> None:
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_healthz_returns_ok() -> None:
+    """GET /healthz returns {"status": "ok"} with 200."""
+    client = _make_client()
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}

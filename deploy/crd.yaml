@@ -153,7 +153,10 @@ spec:
                   description: Stop retrying after this many failures in a calendar day (UTC) to prevent retry storms
                 notifyOnFailure:
                   type: string
-                  description: Webhook URL to POST to on backup failure (JSON payload with name/namespace/result/message/time)
+                  description: Webhook URL to POST to on backup failure (JSON payload with name/namespace/result/message/time/duration)
+                notifyOnSuccess:
+                  type: string
+                  description: Webhook URL to POST to on backup success (same JSON payload)
                 resources:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true

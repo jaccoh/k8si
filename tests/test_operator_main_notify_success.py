@@ -1,4 +1,4 @@
-"""Tests for spec.notifyOnFailure webhook notifications in k8si/operator/main.py."""
+"""Tests for spec.notifyOnSuccess webhook in k8si/operator/main.py."""
 
 import asyncio
 import logging
@@ -25,86 +25,13 @@ _SPEC = {"schedule": "0 2 * * *", "pvc": "test-pvc", "resticSecret": "test-secre
 _BODY = {"metadata": {"name": "test", "namespace": "default"}}
 
 
-# ── unit tests for _notify_webhook ────────────────────────────────────────────
-
-
-def test_notify_webhook_posts_to_url():
-    from k8si.operator.main import _notify_webhook
-
-    async def _run_notify():
-        with patch("httpx.post") as mock_post:
-            await _notify_webhook(
-                "http://hooks.example.com/alert",
-                {"name": "test", "result": "failed"},
-            )
-            mock_post.assert_called_once_with(
-                "http://hooks.example.com/alert",
-                json={"name": "test", "result": "failed"},
-                timeout=10.0,
-            )
-
-    _run(_run_notify())
-
-
-def test_notify_webhook_swallows_http_errors():
-    from k8si.operator.main import _notify_webhook
-
-    async def _run_notify():
-        with patch("httpx.post", side_effect=Exception("connection refused")):
-            # Must not raise — webhook failures are best-effort
-            await _notify_webhook("http://bad-host/", {"name": "test"})
-
-    _run(_run_notify())
-
-
-# ── integration: backup_timer notifies on failure when notifyOnFailure set ────
-
-
-def test_notify_called_on_backup_failure():
-    """backup_timer calls _notify_webhook when spec.notifyOnFailure is set and backup fails."""
+def test_notify_called_on_backup_success():
+    """backup_timer calls _notify_webhook when spec.notifyOnSuccess is set and backup succeeds."""
     from k8si.operator import main
 
     patch_obj = _Patch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "notifyOnFailure": "http://hooks.example.com/alert"}
-
-    async def _run_timer():
-        with (
-            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
-            patch("k8si.operator.main.metrics.record"),
-            patch("k8si.operator.main.kopf.event"),
-            patch("k8si.operator.main._is_due", return_value=True),
-            patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock) as mock_notify,
-        ):
-            mock_run.side_effect = RuntimeError("disk full")
-            await main.backup_timer(
-                body=_BODY,
-                spec=spec,
-                name="test",
-                namespace="default",
-                status={},
-                patch=patch_obj,
-                logger=logger,
-            )
-            mock_notify.assert_called_once()
-            call_args = mock_notify.call_args
-            assert call_args.args[0] == "http://hooks.example.com/alert"
-            payload = call_args.args[1]
-            assert payload["name"] == "test"
-            assert payload["namespace"] == "default"
-            assert payload["result"] == "failed"
-            assert "message" in payload
-
-    _run(_run_timer())
-
-
-def test_notify_not_called_on_success_when_only_failure_configured():
-    """backup_timer does NOT call _notify_webhook for success when only notifyOnFailure is set."""
-    from k8si.operator import main
-
-    patch_obj = _Patch()
-    logger = logging.getLogger("test")
-    spec = {**_SPEC, "notifyOnFailure": "http://hooks.example.com/alert"}
+    spec = {**_SPEC, "notifyOnSuccess": "http://hooks.example.com/ok"}
 
     async def _run_timer():
         with (
@@ -128,17 +55,25 @@ def test_notify_not_called_on_success_when_only_failure_configured():
                 patch=patch_obj,
                 logger=logger,
             )
-            mock_notify.assert_not_called()
+            mock_notify.assert_called_once()
+            call_args = mock_notify.call_args
+            assert call_args.args[0] == "http://hooks.example.com/ok"
+            payload = call_args.args[1]
+            assert payload["name"] == "test"
+            assert payload["namespace"] == "default"
+            assert payload["result"] == "success"
+            assert "duration" in payload
 
     _run(_run_timer())
 
 
-def test_notify_not_called_when_not_configured():
-    """backup_timer does NOT call _notify_webhook when notifyOnFailure is absent."""
+def test_notify_not_called_on_failure_when_only_success_configured():
+    """backup_timer does NOT call _notify_webhook for failure when only notifyOnSuccess is set."""
     from k8si.operator import main
 
     patch_obj = _Patch()
     logger = logging.getLogger("test")
+    spec = {**_SPEC, "notifyOnSuccess": "http://hooks.example.com/ok"}
 
     async def _run_timer():
         with (
@@ -151,7 +86,7 @@ def test_notify_not_called_when_not_configured():
             mock_run.side_effect = RuntimeError("disk full")
             await main.backup_timer(
                 body=_BODY,
-                spec=_SPEC,  # no notifyOnFailure
+                spec=spec,
                 name="test",
                 namespace="default",
                 status={},
@@ -161,3 +96,44 @@ def test_notify_not_called_when_not_configured():
             mock_notify.assert_not_called()
 
     _run(_run_timer())
+
+
+def test_webhook_payload_includes_duration():
+    """Webhook payload includes lastBackupDuration on success."""
+    from k8si.operator import main
+
+    patch_obj = _Patch()
+    logger = logging.getLogger("test")
+    spec = {
+        **_SPEC,
+        "notifyOnSuccess": "http://hooks.example.com/ok",
+        "notifyOnFailure": "http://hooks.example.com/err",
+    }
+
+    async def _run_success():
+        with (
+            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("k8si.operator.main.metrics.record"),
+            patch("k8si.operator.main.kopf.event"),
+            patch("k8si.operator.main._is_due", return_value=True),
+            patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock) as mock_notify,
+        ):
+            mock_run.return_value = {
+                "lastBackupResult": "success",
+                "lastBackupTime": "2026-06-12T02:00:00+00:00",
+                "message": "",
+            }
+            await main.backup_timer(
+                body=_BODY,
+                spec=spec,
+                name="test",
+                namespace="default",
+                status={},
+                patch=patch_obj,
+                logger=logger,
+            )
+            payload = mock_notify.call_args.args[1]
+            assert isinstance(payload["duration"], int)
+            assert payload["duration"] >= 0
+
+    _run(_run_success())

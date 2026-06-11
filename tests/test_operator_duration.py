@@ -75,7 +75,7 @@ def test_duration_recorded_on_failure():
             patch("k8si.operator.main.metrics.record"),
             patch("k8si.operator.main.kopf.event"),
             patch("k8si.operator.main._is_due", return_value=True),
-            patch("k8si.operator.main._notify_failure", new_callable=AsyncMock),
+            patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock),
         ):
             mock_run.side_effect = RuntimeError("disk full")
             await main.backup_timer(

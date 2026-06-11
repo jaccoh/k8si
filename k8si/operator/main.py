@@ -68,12 +68,12 @@ def _is_in_window(window: dict, now: datetime | None = None) -> bool:
     return now_m >= s or now_m < e
 
 
-async def _notify_failure(url: str, payload: dict[str, Any]) -> None:
+async def _notify_webhook(url: str, payload: dict[str, Any]) -> None:
     """POST a JSON payload to a webhook URL; silently swallows all errors."""
     try:
         await asyncio.to_thread(httpx.post, url, json=payload, timeout=10.0)
     except Exception as e:
-        log.warning("Failure webhook to %s failed: %s", url, e)
+        log.warning("Webhook to %s failed: %s", url, e)
 
 
 def _is_due(schedule: str, last_backup_time: str | None) -> bool:
@@ -232,6 +232,19 @@ async def backup_timer(
         patch.status["recentBackups"] = recent[:30]
         metrics.record(name, namespace, "success", result.get("lastBackupTime"))
         kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup done: {name}")
+        webhook = spec.get("notifyOnSuccess")
+        if webhook:
+            await _notify_webhook(
+                webhook,
+                {
+                    "name": name,
+                    "namespace": namespace,
+                    "result": "success",
+                    "message": result.get("message", ""),
+                    "time": now_iso,
+                    "duration": duration,
+                },
+            )
     except Exception as e:
         duration = int((datetime.now(tz=UTC) - backup_start).total_seconds())
         logger.error("Backup %s/%s failed: %s", namespace, name, e)
@@ -246,7 +259,7 @@ async def backup_timer(
         kopf.event(body, type="Warning", reason="BackupFailed", message=f"PVC backup failed: {e}")
         webhook = spec.get("notifyOnFailure")
         if webhook:
-            await _notify_failure(
+            await _notify_webhook(
                 webhook,
                 {
                     "name": name,
@@ -254,6 +267,7 @@ async def backup_timer(
                     "result": "failed",
                     "message": str(e),
                     "time": now_iso,
+                    "duration": duration,
                 },
             )
     finally:

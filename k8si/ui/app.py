@@ -139,6 +139,11 @@ def set_paused(namespace: str, name: str, body: dict[str, Any]) -> dict[str, Any
     return {"paused": paused}
 
 
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/")
 def index() -> FileResponse:
     here = os.path.dirname(__file__)
