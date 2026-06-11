@@ -156,3 +156,11 @@ def test_healthz_returns_ok() -> None:
     response = client.get("/healthz")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_index_returns_html() -> None:
+    """GET / returns the dashboard HTML file with 200."""
+    client = _make_client()
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]

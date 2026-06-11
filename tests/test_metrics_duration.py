@@ -24,3 +24,36 @@ def test_record_skips_duration_when_none():
     from k8si.operator.metrics import record
 
     record("dur-none", "ns-test", "success", None)
+
+
+def test_record_sets_last_success_timestamp():
+    """record() with a valid ISO timestamp sets _last_success gauge."""
+    from k8si.operator.metrics import _last_success, record
+
+    record("ts-test", "ns-test", "success", "2026-06-12T02:00:00+00:00")
+    val = _last_success.labels(name="ts-test", namespace="ns-test")._value.get()
+    assert val > 0
+
+
+def test_record_running_result_sets_minus_one():
+    """record() with result='running' sets _last_result gauge to -1."""
+    from k8si.operator.metrics import _last_result, record
+
+    record("run-test", "ns-test", "running", None)
+    val = _last_result.labels(name="run-test", namespace="ns-test")._value.get()
+    assert val == -1.0
+
+
+def test_remove_clears_labels():
+    """remove() does not raise when labels exist."""
+    from k8si.operator.metrics import record, remove
+
+    record("rm-test", "ns-test", "success", "2026-06-12T02:00:00+00:00", duration=10)
+    remove("rm-test", "ns-test")
+
+
+def test_record_invalid_timestamp_does_not_raise():
+    """record() with a malformed timestamp swallows the ValueError without raising."""
+    from k8si.operator.metrics import record
+
+    record("bad-ts", "ns-test", "success", "not-a-date")
