@@ -70,3 +70,34 @@ def test_trigger_uses_correct_namespace_and_name(mock_api_cls: MagicMock) -> Non
     patch_call = mock_api.patch_namespaced_custom_object_status.call_args
     assert patch_call.args[2] == "production"
     assert patch_call.args[4] == "my-db-backup"
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_trigger_returns_500_on_get_api_error(mock_api_cls: MagicMock) -> None:
+    """POST /api/backups/{ns}/{name}/trigger returns 500 on non-404 ApiException from get."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.side_effect = kubernetes.client.exceptions.ApiException(
+        status=403
+    )
+
+    client = _make_client()
+    resp = client.post("/api/backups/default/mybackup/trigger")
+
+    assert resp.status_code == 500
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_trigger_returns_500_on_patch_api_error(mock_api_cls: MagicMock) -> None:
+    """POST /api/backups/{ns}/{name}/trigger returns 500 when the PATCH call fails."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = {"metadata": {}}
+    mock_api.patch_namespaced_custom_object_status.side_effect = (
+        kubernetes.client.exceptions.ApiException(status=500)
+    )
+
+    client = _make_client()
+    resp = client.post("/api/backups/default/mybackup/trigger")
+
+    assert resp.status_code == 500

@@ -65,6 +65,19 @@
   .topbar-refresh.error {
     color: #f85149;
   }
+  .btn-refresh {
+    font-size: 11px;
+    padding: 3px 10px;
+    background: transparent;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #6e7681;
+    cursor: pointer;
+  }
+  .btn-refresh:hover {
+    border-color: #58a6ff;
+    color: #58a6ff;
+  }
 
   /* Layout */
   .layout {
@@ -508,6 +521,7 @@
   <div class="topbar-right">
     <span class="topbar-cluster">homelab-prod</span>
     <span class="topbar-refresh" id="refresh-status">Loading…</span>
+    <button class="btn-refresh" onclick="loadBackups()" title="Refresh now">Refresh</button>
   </div>
 </div>
 

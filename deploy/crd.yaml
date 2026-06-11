@@ -26,9 +26,15 @@ spec:
         - name: Result
           type: string
           jsonPath: .status.lastBackupResult
+        - name: Duration
+          type: integer
+          jsonPath: .status.lastBackupDuration
         - name: Next Backup
           type: string
           jsonPath: .status.nextBackupTime
+        - name: Paused
+          type: boolean
+          jsonPath: .spec.paused
       schema:
         openAPIV3Schema:
           type: object
