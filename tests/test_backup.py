@@ -103,7 +103,7 @@ def test_backup_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
         None,  # succeeds after unlock
     ]
     _run_cycle(config, backend)
-    backend.unlock.assert_called_once()
+    assert backend.unlock.call_count == 2  # proactive unlock + reactive unlock
     assert backend.backup.call_count == 2
     assert (tmp_path / LAST_BACKUP_FILE).exists()
 
@@ -117,6 +117,27 @@ def test_forget_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
         None,  # succeeds after unlock
     ]
     _run_cycle(config, backend)
-    backend.unlock.assert_called_once()
+    assert backend.unlock.call_count == 2  # proactive + reactive
     assert backend.forget.call_count == 2
     assert (tmp_path / LAST_BACKUP_FILE).exists()
+
+
+def test_proactive_unlock_called_before_backup(tmp_path: Path) -> None:
+    """unlock() is called proactively at the start of every cycle to release stale locks."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    call_order: list[str] = []
+    backend.unlock.side_effect = lambda: call_order.append("unlock")
+    backend.backup.side_effect = lambda **_: call_order.append("backup")
+    _run_cycle(config, backend)
+    assert call_order[0] == "unlock", f"Expected unlock first, got: {call_order}"
+    assert "backup" in call_order
+
+
+def test_proactive_unlock_failure_does_not_abort_backup(tmp_path: Path) -> None:
+    """If proactive unlock raises, backup still proceeds."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.unlock.side_effect = Exception("network error")
+    _run_cycle(config, backend)
+    backend.backup.assert_called_once()

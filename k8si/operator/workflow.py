@@ -30,6 +30,24 @@ def _emit_event(body: dict[str, Any] | None, type_str: str, reason: str, message
         pass
 
 
+async def _cleanup_orphan_snap_pvcs(name: str, namespace: str) -> None:
+    """Delete any leftover k8si-snap-{name}-* PVCs from previous crashed runs."""
+    prefix = f"k8si-snap-{name}-"
+    v1 = kubernetes.client.CoreV1Api()
+
+    def _delete_orphans() -> None:
+        pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
+        for pvc in pvcs.items:
+            if pvc.metadata.name.startswith(prefix):
+                log.warning("Deleting orphaned snapshot PVC %s/%s", namespace, pvc.metadata.name)
+                try:
+                    v1.delete_namespaced_persistent_volume_claim(pvc.metadata.name, namespace)
+                except Exception as exc:
+                    log.error("Failed to delete orphan PVC %s: %s", pvc.metadata.name, exc)
+
+    await asyncio.to_thread(_delete_orphans)
+
+
 async def run_backup(
     name: str,
     namespace: str,
@@ -38,6 +56,7 @@ async def run_backup(
     body: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Run the full snapshot-first backup. Returns status fields on success."""
+    await _cleanup_orphan_snap_pvcs(name, namespace)
     pvc_name = spec["pvc"]
     restic_secret = spec["resticSecret"]
     snapshot_class = spec.get("volumeSnapshotClass") or None
@@ -268,6 +287,31 @@ def _build_backup_job(
     }
 
 
+def _get_pod_failure_reason(v1: Any, job_name: str, namespace: str) -> str:
+    """Return a human-readable failure reason; detects OOMKill from exit code 137."""
+    try:
+        pods = v1.list_namespaced_pod(namespace, label_selector=f"job-name={job_name}")
+        for pod in pods.items:
+            for cs in pod.status.container_statuses or []:
+                term = None
+                if cs.state and cs.state.terminated:
+                    term = cs.state.terminated
+                elif cs.last_state and cs.last_state.terminated:
+                    term = cs.last_state.terminated
+                if term is None:
+                    continue
+                if term.reason == "OOMKilled" or term.exit_code == 137:
+                    return (
+                        "OOMKill: container killed by kernel (exit 137) — "
+                        "increase spec.resources.limits.memory"
+                    )
+                if term.exit_code is not None:
+                    return f"exit {term.exit_code}"
+    except Exception:
+        pass
+    return "non-zero exit code"
+
+
 def _wait_job_complete_sync(job_name: str, namespace: str, timeout: int) -> None:
     batch = kubernetes.client.BatchV1Api()
     v1 = kubernetes.client.CoreV1Api()
@@ -278,8 +322,9 @@ def _wait_job_complete_sync(job_name: str, namespace: str, timeout: int) -> None
         if status.succeeded and status.succeeded > 0:
             return
         if status.failed and status.failed > 0:
+            reason = _get_pod_failure_reason(v1, job_name, namespace)
             logs = _collect_job_logs(v1, job_name, namespace)
-            raise RuntimeError(f"Job {job_name} failed.\n{logs}")
+            raise RuntimeError(f"Job {job_name} failed: {reason}.\n{logs}")
         time.sleep(10)
     raise TimeoutError(f"Job {job_name} timed out after {timeout}s")
 

@@ -17,6 +17,15 @@ log = logging.getLogger(__name__)
 _running: set[tuple[str, str]] = set()
 
 
+def _daily_failure_count(status: dict) -> int:
+    today = datetime.now(tz=UTC).date().isoformat()
+    return sum(
+        1
+        for entry in status.get("recentBackups", [])
+        if entry.get("result") == "failed" and entry.get("time", "").startswith(today)
+    )
+
+
 def _is_due(schedule: str, last_backup_time: str | None) -> bool:
     now = datetime.now(tz=UTC)
     if last_backup_time is None:
@@ -128,6 +137,18 @@ async def backup_timer(
     key = (namespace, name)
     if key in _running:
         logger.warning("Backup %s/%s still running, skipping", namespace, name)
+        return
+
+    max_retries = spec.get("maxRetriesPerDay", 3)
+    failures_today = _daily_failure_count(status)
+    if failures_today >= max_retries:
+        logger.warning(
+            "Backup %s/%s skipped: %d failures today (maxRetriesPerDay=%d)",
+            namespace,
+            name,
+            failures_today,
+            max_retries,
+        )
         return
 
     _running.add(key)

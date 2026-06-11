@@ -42,6 +42,11 @@ def run(config: Config, backend: BackupBackend) -> None:
 
 
 def _run_cycle(config: Config, backend: BackupBackend) -> None:
+    try:
+        backend.unlock()
+    except Exception as e:
+        log.warning("Proactive unlock failed (continuing): %s", e)
+
     if config.pre_snapshot_hook:
         _run_hook(config.pre_snapshot_hook, required=config.pre_snapshot_hook_required)
 

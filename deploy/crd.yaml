@@ -129,6 +129,10 @@ spec:
                   description: Tags applied to backup snapshots
                   items:
                     type: string
+                maxRetriesPerDay:
+                  type: integer
+                  default: 3
+                  description: Stop retrying after this many failures in a calendar day (UTC) to prevent retry storms
                 resources:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true
