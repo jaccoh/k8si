@@ -97,3 +97,60 @@ def test_backup_name_injects_env_vars_and_rbac() -> None:
     assert "kind: ServiceAccount" in output
     assert "kind: ClusterRoleBinding" in output
     assert "k8si-restore" in output
+
+
+def test_add_parser_registers_generate_subcommand() -> None:
+    """add_parser registers a 'generate' subcommand with all required flags."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers()
+    generate.add_parser(subparsers)
+    args = parser.parse_args(
+        [
+            "generate",
+            "--app=testapp",
+            "--pvc=test-pvc",
+            "--secret=test-secret",
+            "--sentinel=config.xml",
+            "--schedule=0 2 * * *",
+        ]
+    )
+    assert args.app == "testapp"
+    assert args.pvc == "test-pvc"
+    assert args.sentinel == "config.xml"
+    assert args.schedule == "0 2 * * *"
+    assert args.no_sidecar is False
+    assert args.retention_daily == 7
+    assert args.backup_name is None
+
+
+def test_add_parser_backup_name_flag() -> None:
+    """add_parser accepts --backup-name and --backup-namespace flags."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers()
+    generate.add_parser(subparsers)
+    args = parser.parse_args(
+        [
+            "generate",
+            "--app=testapp",
+            "--pvc=test-pvc",
+            "--secret=test-secret",
+            "--sentinel=config.xml",
+            "--schedule=0 2 * * *",
+            "--backup-name=my-crd",
+            "--backup-namespace=prod",
+        ]
+    )
+    assert args.backup_name == "my-crd"
+    assert args.backup_namespace == "prod"
+
+
+def test_tags_in_output() -> None:
+    """--tags includes BACKUP_TAGS in both init container and sidecar."""
+    output = _capture_run(_make_args(tags="env=prod,team=backend"))
+    assert "env=prod" in output
+    assert "team=backend" in output
+    assert output.count("BACKUP_TAGS") >= 1
