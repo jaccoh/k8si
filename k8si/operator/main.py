@@ -128,6 +128,10 @@ async def backup_timer(
     logger: logging.Logger,
     **_: object,
 ) -> None:
+    if spec.get("paused", False):
+        logger.info("Backup %s/%s paused, skipping", namespace, name)
+        return
+
     schedule = spec["schedule"]
     last_backup = status.get("lastBackupTime")
 

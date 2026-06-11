@@ -286,3 +286,35 @@ def test_max_retries_per_day_default_is_three():
             mock_run.assert_not_called()
 
     _run(_run_timer())
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — spec.paused skips backup entirely
+# ---------------------------------------------------------------------------
+
+
+def test_paused_skips_backup():
+    """When spec.paused is True, backup_timer returns without running a backup."""
+    from k8si.operator import main
+
+    patch_obj = _make_patch_dict()
+    logger = logging.getLogger("test")
+    spec_paused = {**_SPEC, "paused": True}
+
+    async def _run_timer():
+        with (
+            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("k8si.operator.main._is_due", return_value=True),
+        ):
+            await main.backup_timer(
+                body=_BODY,
+                spec=spec_paused,
+                name="test",
+                namespace="default",
+                status={},
+                patch=patch_obj,
+                logger=logger,
+            )
+            mock_run.assert_not_called()
+
+    _run(_run_timer())

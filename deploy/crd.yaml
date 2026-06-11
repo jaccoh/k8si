@@ -129,6 +129,10 @@ spec:
                   description: Tags applied to backup snapshots
                   items:
                     type: string
+                paused:
+                  type: boolean
+                  default: false
+                  description: Suspend all backups without deleting the CRD; set to true to pause, false (or omit) to resume
                 maxRetriesPerDay:
                   type: integer
                   default: 3
