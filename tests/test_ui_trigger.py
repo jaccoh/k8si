@@ -43,8 +43,8 @@ def test_trigger_returns_404_for_missing_backup(mock_api_cls: MagicMock) -> None
     """POST /api/backups/{ns}/{name}/trigger returns 404 when the backup does not exist."""
     mock_api = MagicMock()
     mock_api_cls.return_value = mock_api
-    mock_api.get_namespaced_custom_object.side_effect = (
-        kubernetes.client.exceptions.ApiException(status=404)
+    mock_api.get_namespaced_custom_object.side_effect = kubernetes.client.exceptions.ApiException(
+        status=404
     )
 
     client = _make_client()

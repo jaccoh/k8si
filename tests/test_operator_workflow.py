@@ -167,8 +167,7 @@ def test_check_after_backup_injects_run_check_env() -> None:
     spec = {"checkAfterBackup": True}
     job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", spec, [], {}, None)
     env_map = {
-        e["name"]: e.get("value")
-        for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+        e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
     assert env_map.get("RUN_CHECK") == "true"
 

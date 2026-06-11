@@ -71,7 +71,11 @@ def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
     now = datetime.now(tz=UTC).isoformat()
     try:
         custom.patch_namespaced_custom_object_status(
-            GROUP, VERSION, namespace, PLURAL, name,
+            GROUP,
+            VERSION,
+            namespace,
+            PLURAL,
+            name,
             {"status": {"triggeredAt": now}},
         )
     except kubernetes.client.exceptions.ApiException as e:
