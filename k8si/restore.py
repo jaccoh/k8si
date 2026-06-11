@@ -5,6 +5,8 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+import kubernetes
+
 from .backend import BackupBackend, BackupError
 from .config import Config
 
@@ -13,6 +15,45 @@ log = logging.getLogger(__name__)
 MARKER_FILE = ".k8si-restore-complete"
 NO_RESTORE_FILE = ".k8si-no-restore"
 LOCK_FILE = ".k8si-restore.lock"
+
+
+def _pod_namespace() -> str:
+    ns_file = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+    if ns_file.exists():
+        return ns_file.read_text().strip()
+    return "default"
+
+
+def _report_to_crd(config: Config, result: dict[str, str]) -> None:
+    if not config.backup_name:
+        return
+    namespace = config.backup_namespace or _pod_namespace()
+    body = {
+        "status": {
+            "lastRestoreResult": result["result"],
+            "lastRestoreTime": datetime.now(UTC).isoformat(),
+            "lastRestoreSnapshotId": result["snapshot_id"],
+            "lastRestoreMessage": result["message"],
+        }
+    }
+    try:
+        api = kubernetes.client.CustomObjectsApi()
+        api.patch_namespaced_custom_object_status(
+            group="k8si.io",
+            version="v1",
+            namespace=namespace,
+            plural="k8sibackups",
+            name=config.backup_name,
+            body=body,
+        )
+        log.info(
+            "Reported restore result %r to %s/%s",
+            result["result"],
+            namespace,
+            config.backup_name,
+        )
+    except Exception as e:
+        log.warning("Failed to report restore result to CRD (best-effort): %s", e)
 
 
 def run(config: Config, backend: BackupBackend) -> None:
