@@ -16,6 +16,7 @@ FULL_ITEM = {
     "spec": {
         "pvc": "data-pvc",
         "schedule": "0 2 * * *",
+        "backupWindow": {"start": "02:00", "end": "06:00"},
     },
     "status": {
         "lastBackupTime": "2024-01-15T02:00:00Z",
@@ -25,6 +26,9 @@ FULL_ITEM = {
         "recentBackups": [
             {"time": "2024-01-15T02:00:00Z", "result": "success"},
         ],
+        "lastRestoreResult": "success",
+        "lastRestoreTime": "2024-01-14T10:00:00Z",
+        "lastRestoreMessage": "Restored from abc1234",
     },
 }
 
@@ -34,6 +38,7 @@ EXPECTED_SHAPED = {
     "pvc": "data-pvc",
     "schedule": "0 2 * * *",
     "paused": False,
+    "backupWindow": {"start": "02:00", "end": "06:00"},
     "lastBackupTime": "2024-01-15T02:00:00Z",
     "lastBackupResult": "success",
     "nextBackupTime": "2024-01-16T02:00:00Z",
@@ -42,6 +47,9 @@ EXPECTED_SHAPED = {
     "recentBackups": [
         {"time": "2024-01-15T02:00:00Z", "result": "success"},
     ],
+    "lastRestoreResult": "success",
+    "lastRestoreTime": "2024-01-14T10:00:00Z",
+    "lastRestoreMessage": "Restored from abc1234",
 }
 
 MINIMAL_ITEM = {
@@ -81,6 +89,10 @@ def test_shape_defaults_missing_status() -> None:
     assert result["recentBackups"] == []
     assert result["paused"] is False
     assert result["triggeredAt"] is None
+    assert result["backupWindow"] == {}
+    assert result["lastRestoreResult"] is None
+    assert result["lastRestoreTime"] is None
+    assert result["lastRestoreMessage"] is None
 
 
 # ---------------------------------------------------------------------------

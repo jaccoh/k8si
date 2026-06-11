@@ -339,6 +339,27 @@
     border-radius: 4px;
     padding: 2px 7px;
   }
+  .schedule-window {
+    font-size: 10px;
+    color: #6e7681;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    display: block;
+    margin-top: 3px;
+  }
+  .badge-restore-failed {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    color: #f85149;
+    background: #2d0f0f;
+    border: 1px solid #4a1515;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 6px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
 
   /* Message */
   .msg-cell {
@@ -691,16 +712,24 @@
       + (backup.paused ? ' disabled title="Resume to trigger manually"' : '')
       + ' onclick="triggerBackup(\'' + ns + '\',\'' + nm + '\',this)">Backup now</button>';
     const pausedBadge = backup.paused ? '<span class="badge-paused">paused</span>' : '';
+    const restoreBadge = (backup.lastRestoreResult === 'failed')
+      ? '<span class="badge-restore-failed" title="' + escapeHtml(backup.lastRestoreMessage || '') + '">restore failed</span>'
+      : '';
+
+    const win = backup.backupWindow || {};
+    const windowLine = (win.start && win.end)
+      ? '<span class="schedule-window">' + escapeHtml(win.start) + ' – ' + escapeHtml(win.end) + ' UTC</span>'
+      : '';
 
     return '<tr data-result="' + statusClass + '" data-name="' + nm + '" data-ns="' + ns + '">'
       + '<td><div class="app-cell">'
-      + '<span class="app-name">' + nm + pausedBadge + '</span>'
+      + '<span class="app-name">' + nm + pausedBadge + restoreBadge + '</span>'
       + '<span class="app-ns">' + ns + '</span>'
       + '</div></td>'
       + '<td><span class="status ' + statusClass + '"><span class="status-dot"></span>' + statusLabel + '</span></td>'
       + '<td>' + lastCell + '</td>'
       + '<td>' + nextCell + '</td>'
-      + '<td><span class="schedule-tag">' + escapeHtml(backup.schedule || '—') + '</span></td>'
+      + '<td><span class="schedule-tag">' + escapeHtml(backup.schedule || '—') + '</span>' + windowLine + '</td>'
       + '<td>' + buildSparkline(backup.recentBackups) + '</td>'
       + '<td><span class="' + msgClass + '" title="' + msgText + '">' + msgText + '</span></td>'
       + '<td style="white-space:nowrap;display:flex;gap:4px">' + triggerBtn + pauseBtn + '</td>'

@@ -49,12 +49,16 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "pvc": spec.get("pvc", ""),
         "schedule": spec.get("schedule", ""),
         "paused": spec.get("paused", False),
+        "backupWindow": spec.get("backupWindow", {}),
         "lastBackupTime": status.get("lastBackupTime"),
         "lastBackupResult": status.get("lastBackupResult", "pending"),
         "nextBackupTime": status.get("nextBackupTime"),
         "triggeredAt": status.get("triggeredAt"),
         "message": status.get("message", ""),
         "recentBackups": status.get("recentBackups", []),
+        "lastRestoreResult": status.get("lastRestoreResult"),
+        "lastRestoreTime": status.get("lastRestoreTime"),
+        "lastRestoreMessage": status.get("lastRestoreMessage"),
     }
 
 
