@@ -376,3 +376,45 @@ def test_check_calls_restic_check() -> None:
     mock_cmd.return_value = "no errors"
     backend.check()
     mock_cmd.assert_called_once_with("check")
+
+
+# ── edge cases ─────────────────────────────────────────────────────────────────
+
+
+def test_ls_skips_empty_lines() -> None:
+    """ls() skips blank lines in restic output without raising."""
+    backend, mock_cmd = _make_backend()
+    # splitlines() on "\n\n" yields ['', ''] — both stripped to '' and skipped
+    mock_cmd.return_value = "\n\n"
+    result = backend.ls("snap1")
+    assert result == []
+
+
+def test_check_sentinels_skips_empty_lines() -> None:
+    """check_sentinels() skips blank lines from the subprocess stream."""
+    backend, _ = _make_backend()
+    lines = [
+        "\n",  # blank line — must be skipped
+        json.dumps({"type": "file", "path": "/data/config.xml"}) + "\n",
+    ]
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("abc1234", ["config.xml"]) is True
+
+
+def test_check_sentinels_skips_non_json_lines() -> None:
+    """check_sentinels() continues past non-JSON lines without raising."""
+    backend, _ = _make_backend()
+    lines = [
+        "not-json-garbage\n",
+        json.dumps({"type": "file", "path": "/data/config.xml"}) + "\n",
+    ]
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("abc1234", ["config.xml"]) is True
+
+
+def test_invoke_raises_backup_error_on_timeout() -> None:
+    """_invoke() converts sh.TimeoutException to BackupError with 'timed out'."""
+    backend, mock_cmd = _make_backend()
+    mock_cmd.side_effect = _sh.TimeoutException(1, "restic init")
+    with pytest.raises(BackupError, match="timed out"):
+        backend.init()

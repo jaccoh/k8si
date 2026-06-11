@@ -153,7 +153,7 @@ class ResticBackend:
                     log.info("restic: %s", line)
             return output
         except sh.TimeoutException:
-            log.error("restic %s timed out after %ds", args[0], timeout)
+            log.error("restic %s timed out after %ss", args[0], timeout)
             raise BackupError(f"restic {args[0]} timed out after {timeout}s", 1, "timeout")
         except sh.ErrorReturnCode as e:
             raw_stderr = e.stderr
