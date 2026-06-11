@@ -133,10 +133,10 @@ def _sidecar(args: argparse.Namespace, tags: list[str]) -> str:
         "        resources:\n"
         "          requests:\n"
         "            cpu: 50m\n"
-        "            memory: 64Mi\n"
+        "            memory: 128Mi\n"
         "          limits:\n"
         "            cpu: 200m\n"
-        "            memory: 256Mi\n"
+        "            memory: 1Gi\n"
     )
 
 

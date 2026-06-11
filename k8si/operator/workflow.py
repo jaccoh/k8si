@@ -156,8 +156,8 @@ async def _run_hook_job(
                 "env": [{"name": "DATA_PATH", "value": "/data"}],
                 "volumeMounts": [{"name": "data", "mountPath": "/data"}],
                 "resources": {
-                    "requests": {"cpu": "50m", "memory": "64Mi"},
-                    "limits": {"cpu": "200m", "memory": "256Mi"},
+                    "requests": {"cpu": "50m", "memory": "128Mi"},
+                    "limits": {"cpu": "200m", "memory": "1Gi"},
                 },
             }
         ],
@@ -216,8 +216,8 @@ def _build_backup_job(
     resources = spec.get(
         "resources",
         {
-            "requests": {"cpu": "50m", "memory": "64Mi"},
-            "limits": {"cpu": "200m", "memory": "256Mi"},
+            "requests": {"cpu": "50m", "memory": "128Mi"},
+            "limits": {"cpu": "200m", "memory": "1Gi"},
         },
     )
 
