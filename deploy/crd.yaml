@@ -159,3 +159,15 @@ spec:
                         type: string
                       result:
                         type: string
+                lastRestoreResult:
+                  type: string
+                  description: Result of the last restore attempt (success | failed | skipped)
+                lastRestoreTime:
+                  type: string
+                  description: Timestamp of the last restore attempt (ISO 8601)
+                lastRestoreSnapshotId:
+                  type: string
+                  description: Restic short ID of the snapshot restored, empty if skipped
+                lastRestoreMessage:
+                  type: string
+                  description: Human-readable summary of the last restore attempt
