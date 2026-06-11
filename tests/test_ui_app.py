@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -164,3 +165,50 @@ def test_index_returns_html() -> None:
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
+
+
+# ---------------------------------------------------------------------------
+# _load_k8s() unit tests (covers lines 20-23)
+# ---------------------------------------------------------------------------
+
+
+@patch("kubernetes.config.load_incluster_config")
+def test_load_k8s_uses_incluster_config(mock_incluster: MagicMock) -> None:
+    """_load_k8s() calls load_incluster_config() when it succeeds."""
+    from k8si.ui.app import _load_k8s
+
+    _load_k8s()
+    mock_incluster.assert_called_once()
+
+
+@patch("kubernetes.config.load_incluster_config")
+@patch("kubernetes.config.load_kube_config")
+def test_load_k8s_falls_back_to_kube_config(
+    mock_kube: MagicMock, mock_incluster: MagicMock
+) -> None:
+    """_load_k8s() falls back to load_kube_config when incluster raises."""
+    import kubernetes.config
+
+    mock_incluster.side_effect = kubernetes.config.ConfigException("not in cluster")
+
+    from k8si.ui.app import _load_k8s
+
+    _load_k8s()
+    mock_kube.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# lifespan() unit test (covers lines 28-29)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_lifespan_calls_load_k8s() -> None:
+    """lifespan() calls _load_k8s() on startup and yields."""
+    from k8si.ui import app as app_module
+
+    with patch("k8si.ui.app._load_k8s") as mock_load:
+        async with app_module.lifespan(app_module.app):
+            pass
+
+    mock_load.assert_called_once()
