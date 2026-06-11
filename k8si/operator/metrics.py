@@ -16,12 +16,24 @@ _last_result = Gauge(
     ["name", "namespace"],
 )
 
+_last_duration = Gauge(
+    "k8si_backup_duration_seconds",
+    "Duration of the last backup run in seconds",
+    ["name", "namespace"],
+)
+
 
 def start(port: int = 8000) -> None:
     start_http_server(port)
 
 
-def record(name: str, namespace: str, result: str, last_backup_time: str | None) -> None:
+def record(
+    name: str,
+    namespace: str,
+    result: str,
+    last_backup_time: str | None,
+    duration: int | None = None,
+) -> None:
     if result == "success":
         _last_result.labels(name=name, namespace=namespace).set(1)
         if last_backup_time:
@@ -34,8 +46,11 @@ def record(name: str, namespace: str, result: str, last_backup_time: str | None)
         _last_result.labels(name=name, namespace=namespace).set(0)
     else:
         _last_result.labels(name=name, namespace=namespace).set(-1)
+    if duration is not None:
+        _last_duration.labels(name=name, namespace=namespace).set(duration)
 
 
 def remove(name: str, namespace: str) -> None:
     _last_success.remove(name, namespace)
     _last_result.remove(name, namespace)
+    _last_duration.remove(name, namespace)

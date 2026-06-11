@@ -230,7 +230,7 @@ async def backup_timer(
         recent = list(status.get("recentBackups", []))
         recent.insert(0, {"time": now_iso, "result": "success"})
         patch.status["recentBackups"] = recent[:30]
-        metrics.record(name, namespace, "success", result.get("lastBackupTime"))
+        metrics.record(name, namespace, "success", result.get("lastBackupTime"), duration=duration)
         kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup done: {name}")
         webhook = spec.get("notifyOnSuccess")
         if webhook:
@@ -255,7 +255,7 @@ async def backup_timer(
         recent = list(status.get("recentBackups", []))
         recent.insert(0, {"time": now_iso, "result": "failed"})
         patch.status["recentBackups"] = recent[:30]
-        metrics.record(name, namespace, "failed", last_backup)
+        metrics.record(name, namespace, "failed", last_backup, duration=duration)
         kopf.event(body, type="Warning", reason="BackupFailed", message=f"PVC backup failed: {e}")
         webhook = spec.get("notifyOnFailure")
         if webhook:
