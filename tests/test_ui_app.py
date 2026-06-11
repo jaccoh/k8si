@@ -49,6 +49,7 @@ EXPECTED_SHAPED = {
     ],
     "successRate": 1.0,
     "streak": 1,
+    "lastBackupDuration": None,
     "lastRestoreResult": "success",
     "lastRestoreTime": "2024-01-14T10:00:00Z",
     "lastRestoreMessage": "Restored from abc1234",
@@ -97,6 +98,7 @@ def test_shape_defaults_missing_status() -> None:
     assert result["lastRestoreMessage"] is None
     assert result["successRate"] is None
     assert result["streak"] == 0
+    assert result["lastBackupDuration"] is None
 
 
 # ---------------------------------------------------------------------------

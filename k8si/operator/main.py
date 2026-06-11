@@ -1,8 +1,11 @@
 """Kopf operator: reconciles K8siBackup CRDs and runs snapshot-first backup pipeline."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
+import httpx
 import kopf
 import kubernetes
 import kubernetes.client
@@ -63,6 +66,14 @@ def _is_in_window(window: dict, now: datetime | None = None) -> bool:
     if s <= e:
         return s <= now_m < e
     return now_m >= s or now_m < e
+
+
+async def _notify_failure(url: str, payload: dict[str, Any]) -> None:
+    """POST a JSON payload to a webhook URL; silently swallows all errors."""
+    try:
+        await asyncio.to_thread(httpx.post, url, json=payload, timeout=10.0)
+    except Exception as e:
+        log.warning("Failure webhook to %s failed: %s", url, e)
 
 
 def _is_due(schedule: str, last_backup_time: str | None) -> bool:
@@ -208,9 +219,12 @@ async def backup_timer(
         logger.info("Backup %s/%s triggered manually, clearing triggeredAt", namespace, name)
     metrics.record(name, namespace, "running", last_backup)
     kopf.event(body, type="Normal", reason="BackupStarted", message=f"Backup started for {name}")
+    backup_start = datetime.now(tz=UTC)
     try:
         result = await workflow.run_backup(name, namespace, spec, logger, body)
+        duration = int((datetime.now(tz=UTC) - backup_start).total_seconds())
         patch.status.update(result)
+        patch.status["lastBackupDuration"] = duration
         patch.status["nextBackupTime"] = compute_next_backup(schedule)
         now_iso = result.get("lastBackupTime") or datetime.now(tz=UTC).isoformat()
         recent = list(status.get("recentBackups", []))
@@ -219,8 +233,10 @@ async def backup_timer(
         metrics.record(name, namespace, "success", result.get("lastBackupTime"))
         kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup done: {name}")
     except Exception as e:
+        duration = int((datetime.now(tz=UTC) - backup_start).total_seconds())
         logger.error("Backup %s/%s failed: %s", namespace, name, e)
         patch.status["lastBackupResult"] = "failed"
+        patch.status["lastBackupDuration"] = duration
         patch.status["message"] = str(e)
         now_iso = datetime.now(tz=UTC).isoformat()
         recent = list(status.get("recentBackups", []))
@@ -228,5 +244,17 @@ async def backup_timer(
         patch.status["recentBackups"] = recent[:30]
         metrics.record(name, namespace, "failed", last_backup)
         kopf.event(body, type="Warning", reason="BackupFailed", message=f"PVC backup failed: {e}")
+        webhook = spec.get("notifyOnFailure")
+        if webhook:
+            await _notify_failure(
+                webhook,
+                {
+                    "name": name,
+                    "namespace": namespace,
+                    "result": "failed",
+                    "message": str(e),
+                    "time": now_iso,
+                },
+            )
     finally:
         _running.discard(key)

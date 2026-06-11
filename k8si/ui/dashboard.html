@@ -327,6 +327,7 @@
   .time-cell { display: flex; flex-direction: column; gap: 2px; }
   .time-main { color: #c9d1d9; font-size: 13px; }
   .time-ago { font-size: 11px; color: #6e7681; }
+  .time-duration { font-size: 10px; color: #484f58; }
   .time-never { font-size: 13px; color: #484f58; font-style: italic; }
 
   /* Schedule */
@@ -712,6 +713,14 @@
     return '<div class="history-stats">' + parts.join('<span style="color:#30363d">·</span>') + '</div>';
   }
 
+  function formatDuration(secs) {
+    if (secs === null || secs === undefined) return null;
+    if (secs < 60) return secs + 's';
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return s > 0 ? m + 'm ' + s + 's' : m + 'm';
+  }
+
   function buildRow(backup) {
     const statusClass = escapeHtml(backup.lastBackupResult || 'pending');
     const statusLabel = escapeHtml(backup.lastBackupResult || 'pending');
@@ -720,9 +729,12 @@
     const lastAgo  = backup.lastBackupTime ? relativeTime(backup.lastBackupTime) : null;
     const nextTime = backup.nextBackupTime ? formatDateTime(backup.nextBackupTime) : null;
     const nextIn   = backup.nextBackupTime ? relativeFuture(backup.nextBackupTime) : null;
+    const durStr   = formatDuration(backup.lastBackupDuration);
 
     const lastCell = lastTime
-      ? '<div class="time-cell"><span class="time-main">' + escapeHtml(lastTime) + '</span><span class="time-ago">' + escapeHtml(lastAgo) + '</span></div>'
+      ? '<div class="time-cell"><span class="time-main">' + escapeHtml(lastTime) + '</span><span class="time-ago">' + escapeHtml(lastAgo) + '</span>'
+        + (durStr ? '<span class="time-duration">took ' + escapeHtml(durStr) + '</span>' : '')
+        + '</div>'
       : '<span class="time-never">never</span>';
 
     const nextCell = nextTime

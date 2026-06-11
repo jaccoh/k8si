@@ -80,6 +80,7 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "recentBackups": recent,
         "successRate": stats["successRate"],
         "streak": stats["streak"],
+        "lastBackupDuration": status.get("lastBackupDuration"),
         "lastRestoreResult": status.get("lastRestoreResult"),
         "lastRestoreTime": status.get("lastRestoreTime"),
         "lastRestoreMessage": status.get("lastRestoreMessage"),
