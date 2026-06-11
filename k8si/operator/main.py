@@ -26,6 +26,23 @@ def _daily_failure_count(status: dict) -> int:
     )
 
 
+def _is_manual_trigger(triggered_at: str | None, last_backup_time: str | None) -> bool:
+    """Return True if triggeredAt is set and newer than lastBackupTime."""
+    if not triggered_at:
+        return False
+    try:
+        triggered = datetime.fromisoformat(triggered_at)
+    except ValueError:
+        return False
+    if last_backup_time is None:
+        return True
+    try:
+        last = datetime.fromisoformat(last_backup_time)
+    except ValueError:
+        return True
+    return triggered > last
+
+
 def _is_in_window(window: dict, now: datetime | None = None) -> bool:
     """Return True if now (UTC) falls within [start, end).
 
@@ -154,36 +171,41 @@ async def backup_timer(
         logger.info("Backup %s/%s paused, skipping", namespace, name)
         return
 
-    window = spec.get("backupWindow", {})
-    if window and not _is_in_window(window):
-        logger.debug("Backup %s/%s outside backup window, skipping", namespace, name)
-        return
-
-    schedule = spec["schedule"]
     last_backup = status.get("lastBackupTime")
+    is_triggered = _is_manual_trigger(status.get("triggeredAt"), last_backup)
+    schedule = spec["schedule"]
 
-    if not _is_due(schedule, last_backup):
-        return
+    if not is_triggered:
+        window = spec.get("backupWindow", {})
+        if window and not _is_in_window(window):
+            logger.debug("Backup %s/%s outside backup window, skipping", namespace, name)
+            return
+        if not _is_due(schedule, last_backup):
+            return
 
     key = (namespace, name)
     if key in _running:
         logger.warning("Backup %s/%s still running, skipping", namespace, name)
         return
 
-    max_retries = spec.get("maxRetriesPerDay", 3)
-    failures_today = _daily_failure_count(status)
-    if failures_today >= max_retries:
-        logger.warning(
-            "Backup %s/%s skipped: %d failures today (maxRetriesPerDay=%d)",
-            namespace,
-            name,
-            failures_today,
-            max_retries,
-        )
-        return
+    if not is_triggered:
+        max_retries = spec.get("maxRetriesPerDay", 3)
+        failures_today = _daily_failure_count(status)
+        if failures_today >= max_retries:
+            logger.warning(
+                "Backup %s/%s skipped: %d failures today (maxRetriesPerDay=%d)",
+                namespace,
+                name,
+                failures_today,
+                max_retries,
+            )
+            return
 
     _running.add(key)
     patch.status["lastBackupResult"] = "running"
+    if is_triggered:
+        patch.status["triggeredAt"] = None
+        logger.info("Backup %s/%s triggered manually, clearing triggeredAt", namespace, name)
     metrics.record(name, namespace, "running", last_backup)
     kopf.event(body, type="Normal", reason="BackupStarted", message=f"Backup started for {name}")
     try:

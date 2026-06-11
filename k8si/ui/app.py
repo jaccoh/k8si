@@ -2,11 +2,13 @@
 
 import os
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 import kubernetes
 import kubernetes.client
-from fastapi import FastAPI
+import kubernetes.client.exceptions
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 GROUP = "k8si.io"
@@ -46,12 +48,36 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "namespace": meta.get("namespace", ""),
         "pvc": spec.get("pvc", ""),
         "schedule": spec.get("schedule", ""),
+        "paused": spec.get("paused", False),
         "lastBackupTime": status.get("lastBackupTime"),
         "lastBackupResult": status.get("lastBackupResult", "pending"),
         "nextBackupTime": status.get("nextBackupTime"),
+        "triggeredAt": status.get("triggeredAt"),
         "message": status.get("message", ""),
         "recentBackups": status.get("recentBackups", []),
     }
+
+
+@app.post("/api/backups/{namespace}/{name}/trigger")
+def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
+    custom = kubernetes.client.CustomObjectsApi()
+    try:
+        custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
+    except kubernetes.client.exceptions.ApiException as e:
+        if e.status == 404:
+            raise HTTPException(status_code=404, detail=f"{namespace}/{name} not found")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    now = datetime.now(tz=UTC).isoformat()
+    try:
+        custom.patch_namespaced_custom_object_status(
+            GROUP, VERSION, namespace, PLURAL, name,
+            {"status": {"triggeredAt": now}},
+        )
+    except kubernetes.client.exceptions.ApiException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"triggered": True, "triggeredAt": now}
 
 
 @app.get("/")

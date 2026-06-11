@@ -33,9 +33,11 @@ EXPECTED_SHAPED = {
     "namespace": "default",
     "pvc": "data-pvc",
     "schedule": "0 2 * * *",
+    "paused": False,
     "lastBackupTime": "2024-01-15T02:00:00Z",
     "lastBackupResult": "success",
     "nextBackupTime": "2024-01-16T02:00:00Z",
+    "triggeredAt": None,
     "message": "Backup completed",
     "recentBackups": [
         {"time": "2024-01-15T02:00:00Z", "result": "success"},
@@ -77,6 +79,8 @@ def test_shape_defaults_missing_status() -> None:
     assert result["nextBackupTime"] is None
     assert result["message"] == ""
     assert result["recentBackups"] == []
+    assert result["paused"] is False
+    assert result["triggeredAt"] is None
 
 
 # ---------------------------------------------------------------------------

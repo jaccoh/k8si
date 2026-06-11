@@ -399,6 +399,35 @@
   }
   .state-message.error { color: #f85149; }
 
+  /* Trigger button */
+  .btn-trigger {
+    font-size: 11px;
+    padding: 3px 9px;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #8b949e;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-trigger:hover:not(:disabled) {
+    background: #1c2128;
+    border-color: #58a6ff;
+    color: #58a6ff;
+  }
+  .btn-trigger:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .btn-trigger.queued {
+    border-color: #3fb950;
+    color: #3fb950;
+  }
+  .btn-trigger.failed {
+    border-color: #f85149;
+    color: #f85149;
+  }
+
   /* Footer */
   .footer {
     background: #0d1117;
@@ -650,6 +679,7 @@
       + '<td><span class="schedule-tag">' + escapeHtml(backup.schedule || '—') + '</span></td>'
       + '<td>' + buildSparkline(backup.recentBackups) + '</td>'
       + '<td><span class="' + msgClass + '" title="' + msgText + '">' + msgText + '</span></td>'
+      + '<td><button class="btn-trigger" onclick="triggerBackup(\'' + escapeHtml(backup.namespace) + '\',\'' + escapeHtml(backup.name) + '\',this)">Backup now</button></td>'
       + '</tr>';
   }
 
@@ -664,6 +694,7 @@
       + '<th>Schedule</th>'
       + '<th>History</th>'
       + '<th>Message</th>'
+      + '<th></th>'
       + '</tr></thead>'
       + '<tbody>' + rows + '</tbody>'
       + '</table>';
@@ -846,6 +877,37 @@
         renderRefreshStatus(false);
       }
     }, 5000);
+  }
+
+  // ── Backup trigger ──────────────────────────────────────────────────────────
+
+  function triggerBackup(namespace, name, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Queuing…';
+    btn.className = 'btn-trigger';
+
+    fetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/trigger', {
+      method: 'POST',
+    })
+      .then(function(resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        btn.textContent = 'Queued';
+        btn.className = 'btn-trigger queued';
+        setTimeout(function() {
+          btn.textContent = 'Backup now';
+          btn.className = 'btn-trigger';
+          btn.disabled = false;
+        }, 3000);
+      })
+      .catch(function() {
+        btn.textContent = 'Failed';
+        btn.className = 'btn-trigger failed';
+        setTimeout(function() {
+          btn.textContent = 'Backup now';
+          btn.className = 'btn-trigger';
+          btn.disabled = false;
+        }, 3000);
+      });
   }
 
   // ── Bootstrap ───────────────────────────────────────────────────────────────
