@@ -143,3 +143,64 @@ def test_parse_bytes_raw_integer() -> None:
     from k8si.config import _parse_bytes
 
     assert _parse_bytes("1048576") == 1048576
+
+
+def test_invalid_mode_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from k8si.config import ConfigError
+
+    monkeypatch.setenv("MODE", "bogus")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "sftp:fake")
+    monkeypatch.setenv("RESTIC_PASSWORD", "secret")
+    with pytest.raises(ConfigError, match="MODE must be"):
+        Config.from_env()
+
+
+def test_invalid_backend_type_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from k8si.config import ConfigError
+
+    monkeypatch.setenv("MODE", "job")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "sftp:fake")
+    monkeypatch.setenv("RESTIC_PASSWORD", "secret")
+    monkeypatch.setenv("BACKEND_TYPE", "s3compat")
+    with pytest.raises(ConfigError, match="BACKEND_TYPE must be"):
+        Config.from_env()
+
+
+def test_missing_password_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from k8si.config import ConfigError
+
+    monkeypatch.setenv("MODE", "restore")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "sftp:fake")
+    monkeypatch.delenv("RESTIC_PASSWORD", raising=False)
+    monkeypatch.delenv("RESTIC_PASSWORD_FILE", raising=False)
+    with pytest.raises(ConfigError, match="RESTIC_PASSWORD"):
+        Config.from_env()
+
+
+def test_restore_sentinels_parsed_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODE", "restore")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "sftp:fake")
+    monkeypatch.setenv("RESTIC_PASSWORD", "secret")
+    monkeypatch.setenv("RESTORE_SENTINELS", "/data/ready, /data/ok")
+    config = Config.from_env()
+    assert config.restore_sentinels == ["/data/ready", "/data/ok"]
+
+
+def test_restore_size_min_max_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODE", "restore")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "sftp:fake")
+    monkeypatch.setenv("RESTIC_PASSWORD", "secret")
+    monkeypatch.setenv("RESTORE_SIZE_MIN", "1Mi")
+    monkeypatch.setenv("RESTORE_SIZE_MAX", "10Gi")
+    config = Config.from_env()
+    assert config.restore_size_min == 1024**2
+    assert config.restore_size_max == 10 * 1024**3
+
+
+def test_restore_max_age_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODE", "restore")
+    monkeypatch.setenv("RESTIC_REPOSITORY", "sftp:fake")
+    monkeypatch.setenv("RESTIC_PASSWORD", "secret")
+    monkeypatch.setenv("RESTORE_MAX_AGE", "7d")
+    config = Config.from_env()
+    assert config.restore_max_age_hours == 168.0
