@@ -1,9 +1,7 @@
 """Unit tests for _report_to_crd() in restore.py."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from k8si.config import Config
 from k8si.restore import _report_to_crd
@@ -64,7 +62,10 @@ def test_patch_body_contains_all_status_fields() -> None:
         patch("k8si.restore.kubernetes.config.load_incluster_config"),
         patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
     ):
-        _report_to_crd(_cfg(), {"result": "success", "snapshot_id": "abc12345", "message": "Restored from abc12345"})
+        _report_to_crd(
+            _cfg(),
+            {"result": "success", "snapshot_id": "abc12345", "message": "Restored from abc12345"},
+        )
     body = mock_cls.return_value.patch_namespaced_custom_object_status.call_args.kwargs["body"]
     status = body["status"]
     assert status["lastRestoreResult"] == "success"
@@ -80,5 +81,7 @@ def test_patch_failure_is_best_effort_no_exception() -> None:
         patch("k8si.restore.kubernetes.config.load_incluster_config"),
         patch("k8si.restore.kubernetes.client.CustomObjectsApi") as mock_cls,
     ):
-        mock_cls.return_value.patch_namespaced_custom_object_status.side_effect = ApiException(status=403)
+        mock_cls.return_value.patch_namespaced_custom_object_status.side_effect = ApiException(
+            status=403
+        )
         _report_to_crd(_cfg(), _result())  # must not raise

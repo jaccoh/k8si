@@ -16,7 +16,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
     p.add_argument("--retention-monthly", type=int, default=3, metavar="N")
     p.add_argument("--tags", default="", help="Comma-separated backup tags, e.g. 'app=sonarr'")
     p.add_argument("--no-sidecar", action="store_true", help="Omit the backup sidecar")
-    p.add_argument("--backup-name", default=None, help="K8siBackup CRD name for restore reporting (opt-in)")
+    p.add_argument("--backup-name", default=None, help="K8siBackup CRD name for restore reporting")
     p.add_argument("--backup-namespace", default="default", help="Namespace of the K8siBackup CRD")
     p.set_defaults(func=run)
 
