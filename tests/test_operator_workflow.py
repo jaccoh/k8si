@@ -1,8 +1,9 @@
 """Tests for k8si/operator/workflow.py and Kopf event logging."""
 
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from k8si.operator.workflow import _wait_job_complete_sync, run_backup
 
@@ -146,7 +147,9 @@ def test_orphan_snap_pvcs_deleted_before_backup() -> None:
         patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
         patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
-        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock) as mock_cleanup,
+        patch(
+            "k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock
+        ) as mock_cleanup,
         patch("k8si.operator.workflow.kopf.event"),
     ):
         mock_ctx.return_value = MagicMock()
