@@ -651,3 +651,91 @@ def test_run_job_cleanup_exception_is_swallowed() -> None:
         patch("k8si.operator.workflow._wait_job_gone_sync"),
     ):
         asyncio.run(_run_job(job_body, "default", 60, logging.getLogger("test")))  # must not raise
+
+
+# ── _write_run_log ─────────────────────────────────────────────────────────────
+
+
+def test_write_run_log_patches_crd() -> None:
+    from k8si.operator.workflow import _write_run_log
+
+    entries = [{"time": "2026-06-12T10:00:00Z", "phase": "BackupJobStarted", "message": "starting"}]
+    with patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_cls:
+        _write_run_log("myapp", "default", entries)
+
+    call = mock_cls.return_value.patch_namespaced_custom_object_status.call_args
+    assert call.kwargs["name"] == "myapp"
+    assert call.kwargs["namespace"] == "default"
+    assert call.kwargs["body"]["status"]["lastRunLog"] == entries
+
+
+def test_write_run_log_swallows_api_exception() -> None:
+    from kubernetes.client.exceptions import ApiException
+
+    from k8si.operator.workflow import _write_run_log
+
+    with patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_cls:
+        mock_cls.return_value.patch_namespaced_custom_object_status.side_effect = ApiException(
+            status=403
+        )
+        _write_run_log("myapp", "default", [])  # must not raise
+
+
+def test_run_backup_clears_log_at_start() -> None:
+    """run_backup writes an empty lastRunLog list before any phase entry."""
+    import copy
+
+    calls: list[dict] = []
+
+    def capture(*args, **kwargs):  # noqa: ANN001,ANN002,ANN003
+        calls.append(copy.deepcopy(kwargs.get("body", {})))
+
+    spec = {"pvc": "pvc", "resticSecret": "sec", "schedule": "0 2 * * *"}
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.kopf.event"),
+        patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_api_cls,
+    ):
+        mock_ctx.return_value = MagicMock()
+        mock_api_cls.return_value.patch_namespaced_custom_object_status.side_effect = capture
+        asyncio.run(run_backup("myapp", "default", spec, MagicMock()))
+
+    assert calls, "Expected at least one PATCH call"
+    first = calls[0]
+    assert first.get("status", {}).get("lastRunLog") == [], "First call must clear the log"
+
+
+def test_run_backup_logs_backup_job_started_phase() -> None:
+    """BackupJobStarted must appear in lastRunLog written to CRD during run_backup."""
+    logged_phases: list[str] = []
+
+    def capture(*args, **kwargs):  # noqa: ANN001,ANN002,ANN003
+        for entry in kwargs.get("body", {}).get("status", {}).get("lastRunLog", []):
+            logged_phases.append(entry["phase"])
+
+    spec = {"pvc": "pvc", "resticSecret": "sec", "schedule": "0 2 * * *"}
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.kopf.event"),
+        patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_api_cls,
+    ):
+        mock_ctx.return_value = MagicMock()
+        mock_api_cls.return_value.patch_namespaced_custom_object_status.side_effect = capture
+        asyncio.run(run_backup("myapp", "default", spec, MagicMock()))
+
+    assert "BackupJobStarted" in logged_phases, f"Expected BackupJobStarted, got {logged_phases}"
+    assert "BackupJobCompleted" in logged_phases
