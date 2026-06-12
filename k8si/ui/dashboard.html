@@ -502,6 +502,75 @@
     flex-shrink: 0;
   }
   .footer-dot { color: #30363d; }
+
+  /* Log drawer */
+  .log-drawer {
+    display: none;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 340px;
+    background: #0d1117;
+    border-top: 1px solid #30363d;
+    flex-direction: column;
+    z-index: 100;
+  }
+  .log-drawer-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    flex-shrink: 0;
+  }
+  .log-drawer-title { font-size: 13px; font-weight: 600; color: #e6edf3; }
+  .log-drawer-status { font-size: 11px; color: #6e7681; }
+  .log-drawer-close {
+    margin-left: auto;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #6e7681;
+    cursor: pointer;
+    padding: 2px 8px;
+  }
+  .log-drawer-close:hover { border-color: #58a6ff; color: #58a6ff; }
+  .log-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 16px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .log-phase {
+    display: flex;
+    gap: 10px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    padding-left: 8px;
+    color: #58a6ff;
+    border-left: 2px solid #1a3a6e;
+    margin-bottom: 2px;
+  }
+  .log-phase .phase-time { color: #6e7681; font-size: 10px; white-space: nowrap; }
+  .log-phase .phase-name { font-weight: 600; }
+  .log-line { color: #8b949e; padding: 1px 0; }
+  .log-done { color: #3fb950; padding: 4px 0; border-top: 1px solid #21262d; margin-top: 4px; }
+  .log-done.failed { color: #f85149; }
+  .btn-logs {
+    font-size: 11px;
+    padding: 3px 9px;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #8b949e;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-logs:hover { border-color: #58a6ff; color: #58a6ff; }
+  .btn-logs.active { border-color: #58a6ff; color: #58a6ff; background: #0d2340; }
 </style>
 </head>
 <body>
@@ -590,6 +659,16 @@
     </div>
 
   </main>
+</div>
+
+<!-- Log drawer -->
+<div class="log-drawer" id="log-drawer">
+  <div class="log-drawer-header">
+    <span class="log-drawer-title" id="log-drawer-title">Logs</span>
+    <span class="log-drawer-status" id="log-drawer-status">connecting…</span>
+    <button class="log-drawer-close" onclick="closeLogs()">Close</button>
+  </div>
+  <div class="log-content" id="log-content"></div>
 </div>
 
 <!-- Footer -->
@@ -775,6 +854,8 @@
     const windowLine = (win.start && win.end)
       ? '<span class="schedule-window">' + escapeHtml(win.start) + ' – ' + escapeHtml(win.end) + ' UTC</span>'
       : '';
+    const logsBtn = '<button class="btn-logs" data-ns="' + ns + '" data-nm="' + nm
+      + '" onclick="openLogs(\'' + ns + '\',\'' + nm + '\')">Logs</button>';
 
     return '<tr data-result="' + statusClass + '" data-name="' + nm + '" data-ns="' + ns + '">'
       + '<td><div class="app-cell">'
@@ -788,6 +869,7 @@
       + '<td>' + buildSparkline(backup.recentBackups) + buildHistoryStats(backup) + '</td>'
       + '<td><span class="' + msgClass + '" title="' + msgText + '">' + msgText + '</span></td>'
       + '<td style="white-space:nowrap;display:flex;gap:4px">' + triggerBtn + pauseBtn + '</td>'
+      + '<td>' + logsBtn + '</td>'
       + '</tr>';
   }
 
@@ -803,6 +885,7 @@
       + '<th>History</th>'
       + '<th>Message</th>'
       + '<th></th>'
+      + '<th>Logs</th>'
       + '</tr></thead>'
       + '<tbody>' + rows + '</tbody>'
       + '</table>';
@@ -1041,6 +1124,58 @@
           btn.textContent = paused ? 'Pause' : 'Resume';
         }, 3000);
       });
+  }
+
+  // ── Log drawer ──────────────────────────────────────────────────────────────
+
+  let logsEventSource = null;
+
+  function openLogs(namespace, name) {
+    if (logsEventSource) logsEventSource.close();
+    const drawer = document.getElementById('log-drawer');
+    drawer.style.display = 'flex';
+    document.getElementById('log-drawer-title').textContent = namespace + '/' + name;
+    document.getElementById('log-drawer-status').textContent = 'connecting…';
+    document.getElementById('log-content').innerHTML = '';
+
+    document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
+    const activeBtn = document.querySelector('.btn-logs[data-ns="' + namespace + '"][data-nm="' + name + '"]');
+    if (activeBtn) activeBtn.classList.add('active');
+
+    logsEventSource = new EventSource(
+      '/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/logs'
+    );
+    logsEventSource.onopen = function() {
+      document.getElementById('log-drawer-status').textContent = 'live';
+    };
+    logsEventSource.onmessage = function(e) {
+      var data = JSON.parse(e.data);
+      var content = document.getElementById('log-content');
+      if (data.type === 'phase') {
+        var t = data.time ? new Date(data.time).toLocaleTimeString() : '';
+        content.innerHTML += '<div class="log-phase"><span class="phase-time">' + escapeHtml(t) + '</span>'
+          + '<span class="phase-name">' + escapeHtml(data.phase) + '</span>'
+          + '<span>' + escapeHtml(data.message) + '</span></div>';
+      } else if (data.type === 'log') {
+        content.innerHTML += '<div class="log-line">' + escapeHtml(data.line) + '</div>';
+      } else if (data.type === 'done') {
+        var cls = data.result === 'failed' ? 'log-done failed' : 'log-done';
+        content.innerHTML += '<div class="' + cls + '">— ' + escapeHtml(data.result || 'done') + ' —</div>';
+        document.getElementById('log-drawer-status').textContent = data.result || 'done';
+        logsEventSource.close();
+      }
+      content.scrollTop = content.scrollHeight;
+    };
+    logsEventSource.onerror = function() {
+      document.getElementById('log-drawer-status').textContent = 'disconnected';
+      logsEventSource.close();
+    };
+  }
+
+  function closeLogs() {
+    if (logsEventSource) { logsEventSource.close(); logsEventSource = null; }
+    document.getElementById('log-drawer').style.display = 'none';
+    document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
   }
 
   // ── Bootstrap ───────────────────────────────────────────────────────────────
