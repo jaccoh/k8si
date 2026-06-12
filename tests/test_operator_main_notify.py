@@ -1,29 +1,9 @@
 """Tests for spec.notifyOnFailure webhook notifications in k8si/operator/main.py."""
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 
-
-def _run(coro):
-    return asyncio.run(coro)
-
-
-class _StatusDict(dict):
-    def update(self, other=None, **kwargs):  # type: ignore[override]
-        if other:
-            super().update(other)
-        super().update(kwargs)
-
-
-class _Patch:
-    def __init__(self):
-        self.status = _StatusDict()
-
-
-_SPEC = {"schedule": "0 2 * * *", "pvc": "test-pvc", "resticSecret": "test-secret"}
-_BODY = {"metadata": {"name": "test", "namespace": "default"}}
-
+from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
 # ── unit tests for _notify_webhook ────────────────────────────────────────────
 
@@ -43,7 +23,7 @@ def test_notify_webhook_posts_to_url():
                 timeout=10.0,
             )
 
-    _run(_run_notify())
+    run_coro(_run_notify())
 
 
 def test_notify_webhook_swallows_http_errors():
@@ -54,7 +34,7 @@ def test_notify_webhook_swallows_http_errors():
             # Must not raise — webhook failures are best-effort
             await _notify_webhook("http://bad-host/", {"name": "test"})
 
-    _run(_run_notify())
+    run_coro(_run_notify())
 
 
 # ── integration: backup_timer notifies on failure when notifyOnFailure set ────
@@ -64,9 +44,9 @@ def test_notify_called_on_backup_failure():
     """backup_timer calls _notify_webhook when spec.notifyOnFailure is set and backup fails."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "notifyOnFailure": "http://hooks.example.com/alert"}
+    spec = {**SPEC, "notifyOnFailure": "http://hooks.example.com/alert"}
 
     async def _run_timer():
         with (
@@ -78,7 +58,7 @@ def test_notify_called_on_backup_failure():
         ):
             mock_run.side_effect = RuntimeError("disk full")
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -95,16 +75,16 @@ def test_notify_called_on_backup_failure():
             assert payload["result"] == "failed"
             assert "message" in payload
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_notify_not_called_on_success_when_only_failure_configured():
     """backup_timer does NOT call _notify_webhook for success when only notifyOnFailure is set."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "notifyOnFailure": "http://hooks.example.com/alert"}
+    spec = {**SPEC, "notifyOnFailure": "http://hooks.example.com/alert"}
 
     async def _run_timer():
         with (
@@ -120,7 +100,7 @@ def test_notify_not_called_on_success_when_only_failure_configured():
                 "message": "",
             }
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -130,14 +110,14 @@ def test_notify_not_called_on_success_when_only_failure_configured():
             )
             mock_notify.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_notify_not_called_when_not_configured():
     """backup_timer does NOT call _notify_webhook when notifyOnFailure is absent."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     async def _run_timer():
@@ -150,8 +130,8 @@ def test_notify_not_called_when_not_configured():
         ):
             mock_run.side_effect = RuntimeError("disk full")
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,  # no notifyOnFailure
+                body=BODY,
+                spec=SPEC,  # no notifyOnFailure
                 name="test",
                 namespace="default",
                 status={},
@@ -160,4 +140,4 @@ def test_notify_not_called_when_not_configured():
             )
             mock_notify.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())

@@ -1,31 +1,10 @@
 """Tests for spec.backupWindow (time-of-day restriction) in k8si/operator/main.py."""
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
-# ── helpers shared with other timer tests ─────────────────────────────────────
-
-
-def _run(coro):
-    return asyncio.run(coro)
-
-
-class _StatusDict(dict):
-    def update(self, other=None, **kwargs):  # type: ignore[override]
-        if other:
-            super().update(other)
-        super().update(kwargs)
-
-
-class _Patch:
-    def __init__(self):
-        self.status = _StatusDict()
-
-
-_SPEC = {"schedule": "0 2 * * *", "pvc": "test-pvc", "resticSecret": "test-secret"}
-_BODY = {"metadata": {"name": "test", "namespace": "default"}}
+from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
 _SUCCESS_RESULT = {
     "lastBackupResult": "success",
@@ -106,9 +85,9 @@ def test_outside_window_skips_backup():
     """backup_timer must not run a backup when outside the configured window."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "backupWindow": {"start": "02:00", "end": "04:00"}}
+    spec = {**SPEC, "backupWindow": {"start": "02:00", "end": "04:00"}}
 
     async def _run_timer():
         with (
@@ -117,7 +96,7 @@ def test_outside_window_skips_backup():
             patch("k8si.operator.main._is_in_window", return_value=False),
         ):
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -127,16 +106,16 @@ def test_outside_window_skips_backup():
             )
             mock_run.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_inside_window_runs_backup():
     """backup_timer must run a backup when inside the configured window."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "backupWindow": {"start": "02:00", "end": "04:00"}}
+    spec = {**SPEC, "backupWindow": {"start": "02:00", "end": "04:00"}}
 
     async def _run_timer():
         with (
@@ -148,7 +127,7 @@ def test_inside_window_runs_backup():
         ):
             mock_run.return_value = _SUCCESS_RESULT
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -158,4 +137,4 @@ def test_inside_window_runs_backup():
             )
             mock_run.assert_called_once()
 
-    _run(_run_timer())
+    run_coro(_run_timer())

@@ -9,6 +9,7 @@ import sh as _sh
 
 from k8si.backend import BackupError, NoSnapshotsError
 from k8si.backends.restic import ResticBackend
+from tests.helpers import popen_ctx as _popen_ctx
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -159,18 +160,6 @@ def test_ls_tolerates_malformed_json_lines() -> None:
 
 
 # ── check_sentinels ───────────────────────────────────────────────────────────
-
-
-def _popen_ctx(lines: list[str], returncode: int = 0) -> MagicMock:
-    """Return a context-manager mock that yields lines from stdout."""
-    proc = MagicMock()
-    proc.stdout = iter(lines)
-    proc.returncode = returncode
-    proc.communicate.return_value = ("", "")
-    ctx = MagicMock()
-    ctx.__enter__.return_value = proc
-    ctx.__exit__.return_value = False
-    return ctx
 
 
 def test_check_sentinels_finds_file_sentinel() -> None:

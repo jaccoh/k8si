@@ -139,6 +139,11 @@ class KopiaBackend:
         return paths
 
     def check_sentinels(self, snapshot_id: str, sentinels: list[str]) -> bool:
+        """Return True iff all sentinels exist in *snapshot_id*.
+
+        Sentinel "data/foo" is matched against "/data/data/foo" (subPath layout),
+        "/data/foo" (flat layout), and "data/foo" (bare).
+        """
         self._ensure_connected()
         if not sentinels:
             return True
@@ -207,12 +212,12 @@ class KopiaBackend:
 
     def forget(self, daily: int, weekly: int, monthly: int, prune: bool = True) -> None:
         self._ensure_connected()
-        # Use per-source policy if a backup was done this session; fall back to --global.
-        policy_target = self._last_source or "--global"
+        if self._last_source is None:
+            raise ValueError("forget() called before backup() — _last_source is not set")
         self._invoke(
             "policy",
             "set",
-            policy_target,
+            self._last_source,
             f"--keep-daily={daily}",
             f"--keep-weekly={weekly}",
             f"--keep-monthly={monthly}",

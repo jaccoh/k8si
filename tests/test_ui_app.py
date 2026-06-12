@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers import make_ui_client
+
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -108,14 +110,7 @@ def test_shape_defaults_missing_status() -> None:
 
 
 def _make_client() -> TestClient:
-    """Return a TestClient with K8s startup disabled."""
-    from k8si.ui import app as app_module
-
-    # Patch startup so it doesn't try to connect to a cluster
-    app_module.app.router.on_startup.clear()
-    from k8si.ui.app import app
-
-    return TestClient(app)
+    return make_ui_client()
 
 
 @patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
@@ -208,12 +203,7 @@ def test_load_k8s_falls_back_to_kube_config(
 
 
 def _logs_client() -> TestClient:
-    from k8si.ui import app as app_module
-
-    app_module.app.router.on_startup.clear()
-    from k8si.ui.app import app
-
-    return TestClient(app, raise_server_exceptions=False)
+    return make_ui_client(raise_server_exceptions=False)
 
 
 @patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")

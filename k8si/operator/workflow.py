@@ -12,7 +12,7 @@ import kubernetes.client
 import kubernetes.client.exceptions
 
 from . import quiesce, snapshot
-from .cronjob import K8SI_IMAGE
+from .cronjob import K8SI_IMAGE, _restic_env_vars
 
 log = logging.getLogger(__name__)
 
@@ -260,17 +260,7 @@ def _build_backup_job(
         env.append({"name": "BACKUP_TAGS", "value": ",".join(tags)})
     if spec.get("checkAfterBackup"):
         env.append({"name": "RUN_CHECK", "value": "true"})
-    for var, key in [
-        ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY"),
-        ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
-        ("RESTIC_SFTP_COMMAND", "RESTIC_SFTP_COMMAND"),
-    ]:
-        env.append(
-            {
-                "name": var,
-                "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
-            }
-        )
+    env.extend(_restic_env_vars(restic_secret))
 
     resources = spec.get(
         "resources",

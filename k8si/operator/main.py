@@ -17,6 +17,8 @@ from .status import compute_next_backup
 
 log = logging.getLogger(__name__)
 
+# Process-local guard against concurrent runs of the same backup.
+# Safe only because Kopf uses leader election — only one operator pod is active at a time.
 _running: set[tuple[str, str]] = set()
 
 
@@ -228,7 +230,7 @@ async def backup_timer(
         patch.status["nextBackupTime"] = compute_next_backup(schedule)
         now_iso = result.get("lastBackupTime") or datetime.now(tz=UTC).isoformat()
         recent = list(status.get("recentBackups", []))
-        recent.insert(0, {"time": now_iso, "result": "success"})
+        recent.insert(0, {"time": now_iso, "result": result.get("lastBackupResult", "success")})
         patch.status["recentBackups"] = recent[:30]
         metrics.record(name, namespace, "success", result.get("lastBackupTime"), duration=duration)
         kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup done: {name}")

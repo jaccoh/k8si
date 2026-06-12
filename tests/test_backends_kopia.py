@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import sh as _sh
 
 from k8si.backends.kopia import KopiaBackend
+from tests.helpers import popen_ctx as _popen_ctx
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -187,17 +188,15 @@ def test_forget_sets_per_source_policy_and_maintenance() -> None:
     mock_cmd.assert_any_call("maintenance", "run")
 
 
-def test_forget_uses_global_when_backup_not_called_first() -> None:
+def test_forget_raises_when_backup_not_called_first() -> None:
     backend, mock_cmd = _make_backend()
     backend._connected = True
-    mock_cmd.return_value = ""
 
-    # No prior backup() call — _last_source is None
-    backend.forget(daily=7, weekly=4, monthly=3)
-    mock_cmd.assert_any_call(
-        "policy", "set", "--global", "--keep-daily=7", "--keep-weekly=4", "--keep-monthly=3"
-    )
-    mock_cmd.assert_any_call("maintenance", "run")
+    # No prior backup() call — calling forget() without a source is a programming error
+    import pytest
+
+    with pytest.raises(ValueError, match="_last_source"):
+        backend.forget(daily=7, weekly=4, monthly=3)
 
 
 def test_unlock_runs_maintenance_force() -> None:
@@ -321,17 +320,6 @@ def test_ls_skips_empty_lines() -> None:
 
 
 # ── check_sentinels: various edge cases ───────────────────────────────────────
-
-
-def _popen_ctx(lines: list[str], returncode: int = 0) -> MagicMock:
-    proc = MagicMock()
-    proc.stdout = iter(lines)
-    proc.returncode = returncode
-    proc.communicate.return_value = ("", "")
-    ctx = MagicMock()
-    ctx.__enter__.return_value = proc
-    ctx.__exit__.return_value = False
-    return ctx
 
 
 def test_check_sentinels_empty_sentinels_returns_true() -> None:

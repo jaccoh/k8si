@@ -1,37 +1,18 @@
 """Tests for spec.notifyOnSuccess webhook in k8si/operator/main.py."""
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 
-
-def _run(coro):
-    return asyncio.run(coro)
-
-
-class _StatusDict(dict):
-    def update(self, other=None, **kwargs):  # type: ignore[override]
-        if other:
-            super().update(other)
-        super().update(kwargs)
-
-
-class _Patch:
-    def __init__(self):
-        self.status = _StatusDict()
-
-
-_SPEC = {"schedule": "0 2 * * *", "pvc": "test-pvc", "resticSecret": "test-secret"}
-_BODY = {"metadata": {"name": "test", "namespace": "default"}}
+from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
 
 def test_notify_called_on_backup_success():
     """backup_timer calls _notify_webhook when spec.notifyOnSuccess is set and backup succeeds."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "notifyOnSuccess": "http://hooks.example.com/ok"}
+    spec = {**SPEC, "notifyOnSuccess": "http://hooks.example.com/ok"}
 
     async def _run_timer():
         with (
@@ -47,7 +28,7 @@ def test_notify_called_on_backup_success():
                 "message": "",
             }
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -64,16 +45,16 @@ def test_notify_called_on_backup_success():
             assert payload["result"] == "success"
             assert "duration" in payload
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_notify_not_called_on_failure_when_only_success_configured():
     """backup_timer does NOT call _notify_webhook for failure when only notifyOnSuccess is set."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "notifyOnSuccess": "http://hooks.example.com/ok"}
+    spec = {**SPEC, "notifyOnSuccess": "http://hooks.example.com/ok"}
 
     async def _run_timer():
         with (
@@ -85,7 +66,7 @@ def test_notify_not_called_on_failure_when_only_success_configured():
         ):
             mock_run.side_effect = RuntimeError("disk full")
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -95,17 +76,17 @@ def test_notify_not_called_on_failure_when_only_success_configured():
             )
             mock_notify.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_webhook_payload_includes_duration():
     """Webhook payload includes lastBackupDuration on success."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
     spec = {
-        **_SPEC,
+        **SPEC,
         "notifyOnSuccess": "http://hooks.example.com/ok",
         "notifyOnFailure": "http://hooks.example.com/err",
     }
@@ -124,7 +105,7 @@ def test_webhook_payload_includes_duration():
                 "message": "",
             }
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -136,4 +117,4 @@ def test_webhook_payload_includes_duration():
             assert isinstance(payload["duration"], int)
             assert payload["duration"] >= 0
 
-    _run(_run_success())
+    run_coro(_run_success())

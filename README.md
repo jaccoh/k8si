@@ -16,7 +16,7 @@ Three components:
 |-----------|------|-------------|
 | **Restore init container** | `MODE=restore` | Checks sentinel files on the PVC on every pod start; restores from restic if data is missing or incomplete. Fails loud rather than letting the app start on empty or corrupt state. |
 | **Operator** | Kopf + `K8siBackup` CRD | Owns the full backup pipeline: scheduled VolumeSnapshot (with optional DB quiescing) → ephemeral PVC clone → restic Job → cleanup. Reports `lastBackupResult` and rolling `recentBackups` history on the CRD. |
-| **k8si-ui** | FastAPI dashboard | Read-only web dashboard showing all backups across namespaces — status, schedule, last/next backup, and a 7-run sparkline. Exposed via NodePort `:30080`. |
+| **k8si-ui** | FastAPI dashboard | Web dashboard showing all backups across namespaces — status, schedule, last/next backup, 7-run sparkline, live log drawer, pause/resume, and manual trigger. Exposed via NodePort `:30080`. |
 
 Backend is pluggable — restic over SFTP (Hetzner Storagebox) ships by default. Image: `ghcr.io/jaccoh/k8si` for `linux/amd64` and `linux/arm64`.
 
@@ -103,6 +103,21 @@ docker run --rm ghcr.io/jaccoh/k8si:latest generate \
   --sentinel config.xml \
   --schedule "0 2 * * *"
 ```
+
+### Manual trigger
+
+Trigger a backup outside the schedule by patching `status.triggeredAt`:
+
+```bash
+kubectl patch k8sibackup sonarr-config -n downloads \
+  --type=merge \
+  --subresource=status \
+  -p '{"status": {"triggeredAt": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}}'
+```
+
+The operator picks it up within 60 seconds and runs the backup immediately, bypassing both the schedule check and the backup window. `paused: true` still blocks it.
+
+The dashboard "Backup now" button does the same thing via `POST /api/backups/{ns}/{name}/trigger`.
 
 ---
 
@@ -195,6 +210,21 @@ spec:
     daily: 7
     weekly: 4
     monthly: 3
+
+  # Optional: pause all scheduled backups (manual trigger still works)
+  paused: false
+
+  # Optional: restrict backups to a time window (UTC)
+  backupWindow:
+    start: "02:00"
+    end:   "06:00"
+
+  # Optional: max failed retries per calendar day before skipping (default: 3)
+  maxRetriesPerDay: 3
+
+  # Optional: webhook notifications
+  notifyOnSuccess: "https://hooks.example.com/ok"
+  notifyOnFailure: "https://hooks.example.com/err"
 ```
 
 **Status fields** (set by the operator, read by `kubectl get k8sibackups`):
@@ -203,10 +233,17 @@ spec:
 |-------|-------------|
 | `lastBackupResult` | `pending` / `running` / `success` / `failed` |
 | `lastBackupTime` | ISO-8601 timestamp of the last completed backup |
+| `lastBackupDuration` | Duration of last backup in seconds |
 | `nextBackupTime` | ISO-8601 timestamp of the next scheduled backup |
 | `message` | Last error message (empty on success) |
 | `recentBackups` | Rolling list of the last 30 results — `[{time, result}, …]` |
+| `lastRunLog` | Phase log for the most recent run — `[{time, phase, message}, …]` |
+| `triggeredAt` | Set to trigger a manual backup; cleared when the backup runs |
 | `restorePatch` | YAML snippet to paste into your pod spec for the restore init container |
+| `lastRestoreResult` | `success` / `failed` — result of the last restore (written by init container) |
+| `lastRestoreTime` | ISO-8601 timestamp of the last restore |
+| `lastRestoreSnapshotId` | Snapshot ID used for the last restore |
+| `lastRestoreMessage` | Error message if restore failed |
 
 ---
 

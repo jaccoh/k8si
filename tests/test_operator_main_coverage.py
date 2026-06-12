@@ -1,38 +1,9 @@
 """Tests for uncovered paths in k8si/operator/main.py."""
 
-import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
-# ── Shared helpers ────────────────────────────────────────────────────────────
-
-
-def _run(coro):
-    return asyncio.run(coro)
-
-
-class _StatusDict(dict):
-    def update(self, other=None, **kwargs):  # type: ignore[override]
-        if other:
-            super().update(other)
-        super().update(kwargs)
-
-
-class _Patch:
-    def __init__(self):
-        self.status = _StatusDict()
-
-
-_SPEC = {"schedule": "0 2 * * *", "pvc": "test-pvc", "resticSecret": "test-secret"}
-_BODY = {"metadata": {"name": "test", "namespace": "default"}}
-
-_SUCCESS_RESULT = {
-    "lastBackupResult": "success",
-    "lastBackupTime": "2026-06-11T02:00:00+00:00",
-    "message": "",
-}
-
+from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
 # ── _is_manual_trigger: malformed last_backup_time branch (lines 44-45) ──────
 
@@ -62,25 +33,19 @@ def test_is_due_malformed_last_backup_returns_true() -> None:
 
 
 def test_is_due_next_cron_not_yet_passed() -> None:
-    """_is_due() returns False when the next scheduled time hasn't passed yet."""
+    """_is_due() returns False when last_backup_time is in the far future."""
     from k8si.operator.main import _is_due
 
-    # Use a last backup time that is very recent (just happened) so the next
-    # cron fire is in the future.
-    recent = (datetime.now(tz=UTC) - timedelta(minutes=1)).isoformat()
-    result = _is_due("0 2 * * *", recent)
-    # Might be True or False depending on current time relative to 02:00 UTC,
-    # but for a schedule that fires once daily the next fire should be > 1 min away.
-    # Instead test that it doesn't raise.
-    assert isinstance(result, bool)
+    # A last_backup in the far future makes the next scheduled fire even further
+    # in the future, so now < next_fire → not due.
+    assert _is_due("0 2 * * *", "2099-12-31T02:00:00+00:00") is False
 
 
 def test_is_due_long_past_last_backup_returns_true() -> None:
     """_is_due() returns True when the last backup was a long time ago."""
     from k8si.operator.main import _is_due
 
-    old = "2020-01-01T02:00:00+00:00"
-    assert _is_due("0 2 * * *", old) is True
+    assert _is_due("0 2 * * *", "2020-01-01T02:00:00+00:00") is True
 
 
 # ── _init_metrics: success and exception paths (lines 106-116) ───────────────
@@ -131,15 +96,15 @@ def test_init_metrics_logs_warning_on_api_error() -> None:
 
 def test_on_create_sets_status_fields() -> None:
     """on_create() sets lastBackupResult, nextBackupTime, and restorePatch on patch."""
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     with patch("kopf.event"):
         from k8si.operator.main import on_create
 
         on_create(
-            body=_BODY,
-            spec=_SPEC,
+            body=BODY,
+            spec=SPEC,
             name="test",
             namespace="default",
             patch=patch_obj,
@@ -148,6 +113,7 @@ def test_on_create_sets_status_fields() -> None:
 
     assert patch_obj.status["lastBackupResult"] == "pending"
     assert patch_obj.status["nextBackupTime"] is not None
+    assert "restorePatch" in patch_obj.status
 
 
 # ── on_update: body (lines 154-157) ──────────────────────────────────────────
@@ -155,15 +121,15 @@ def test_on_create_sets_status_fields() -> None:
 
 def test_on_update_sets_next_backup_time() -> None:
     """on_update() recomputes nextBackupTime and restorePatch."""
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     with patch("kopf.event"):
         from k8si.operator.main import on_update
 
         on_update(
-            body=_BODY,
-            spec=_SPEC,
+            body=BODY,
+            spec=SPEC,
             name="test",
             namespace="default",
             patch=patch_obj,
@@ -171,6 +137,7 @@ def test_on_update_sets_next_backup_time() -> None:
         )
 
     assert patch_obj.status["nextBackupTime"] is not None
+    assert "restorePatch" in patch_obj.status
 
 
 # ── on_delete: body (lines 162-164) ──────────────────────────────────────────
@@ -205,22 +172,19 @@ def test_backup_timer_skips_when_not_due() -> None:
     ):
         from k8si.operator.main import backup_timer
 
-        _run(
+        run_coro(
             backup_timer(
-                body=_BODY,
-                spec=_SPEC,
+                body=BODY,
+                spec=SPEC,
                 name="test",
                 namespace="default",
                 status={},
-                patch=_Patch(),
+                patch=FakePatch(),
                 logger=logging.getLogger("test"),
             )
         )
 
     mock_run.assert_not_called()
-
-
-# ── backup_timer: skip when already running (lines 199-200) ──────────────────
 
 
 # ── startup and login Kopf handlers (lines 93, 98-101) ───────────────────────
@@ -272,14 +236,14 @@ def test_backup_timer_skips_when_already_running() -> None:
         ):
             from k8si.operator.main import backup_timer
 
-            _run(
+            run_coro(
                 backup_timer(
-                    body=_BODY,
-                    spec=_SPEC,
+                    body=BODY,
+                    spec=SPEC,
                     name="already-running",
                     namespace="default",
                     status={},
-                    patch=_Patch(),
+                    patch=FakePatch(),
                     logger=logging.getLogger("test"),
                 )
             )

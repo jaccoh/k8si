@@ -5,14 +5,11 @@ from unittest.mock import MagicMock, patch
 import kubernetes.client.exceptions
 from fastapi.testclient import TestClient
 
+from tests.helpers import make_ui_client
+
 
 def _make_client() -> TestClient:
-    from k8si.ui import app as app_module
-
-    app_module.app.router.on_startup.clear()
-    from k8si.ui.app import app
-
-    return TestClient(app)
+    return make_ui_client()
 
 
 @patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")

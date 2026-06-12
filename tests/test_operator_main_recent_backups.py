@@ -1,50 +1,16 @@
 """Tests for recentBackups rolling history in k8si/operator/main.py backup_timer."""
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
-
-def _run(coro):
-    """Run an async coroutine synchronously."""
-    return asyncio.run(coro)
-
-
-def _make_patch_dict():
-    """Return a dict-like object that mimics kopf.Patch status behaviour.
-
-    kopf.Patch supports attribute access: ``patch.status["key"] = value``
-    and ``patch.status.update(d)``.  We use a plain dict with an ``update``
-    method, wrapped so ``patch.status`` returns it.
-    """
-
-    class _StatusDict(dict):
-        def update(self, other=None, **kwargs):  # type: ignore[override]
-            if other:
-                super().update(other)
-            super().update(kwargs)
-
-    class _Patch:
-        def __init__(self):
-            self.status = _StatusDict()
-
-    return _Patch()
-
+from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
 _SUCCESS_RESULT = {
     "lastBackupResult": "success",
     "lastBackupTime": "2026-06-09T02:00:00+00:00",
     "message": "",
 }
-
-_SPEC = {
-    "schedule": "0 2 * * *",
-    "pvc": "test-pvc",
-    "resticSecret": "test-secret",
-}
-
-_BODY = {"metadata": {"name": "test", "namespace": "default"}}
 
 
 # ---------------------------------------------------------------------------
@@ -55,10 +21,9 @@ _BODY = {"metadata": {"name": "test", "namespace": "default"}}
 def test_success_prepends_to_recent_backups():
     from k8si.operator import main
 
-    patch_obj = _make_patch_dict()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
-    # Pre-populate one existing entry so we can verify prepend (not append)
     existing_entry = {"time": "2026-06-08T02:00:00+00:00", "result": "success"}
 
     async def _run_timer():
@@ -70,8 +35,8 @@ def test_success_prepends_to_recent_backups():
         ):
             mock_run.return_value = _SUCCESS_RESULT
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,
+                body=BODY,
+                spec=SPEC,
                 name="test",
                 namespace="default",
                 status={"recentBackups": [existing_entry]},
@@ -79,14 +44,12 @@ def test_success_prepends_to_recent_backups():
                 logger=logger,
             )
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
     recent = patch_obj.status.get("recentBackups", [])
     assert len(recent) == 2, f"Expected 2 entries, got {len(recent)}"
-    # Newest entry must be first
     assert recent[0]["result"] == "success"
     assert recent[0]["time"] == _SUCCESS_RESULT["lastBackupTime"]
-    # Previous entry is still there
     assert recent[1] == existing_entry
 
 
@@ -98,7 +61,7 @@ def test_success_prepends_to_recent_backups():
 def test_failure_prepends_to_recent_backups():
     from k8si.operator import main
 
-    patch_obj = _make_patch_dict()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     existing_entry = {"time": "2026-06-08T02:00:00+00:00", "result": "success"}
@@ -112,8 +75,8 @@ def test_failure_prepends_to_recent_backups():
         ):
             mock_run.side_effect = RuntimeError("disk full")
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,
+                body=BODY,
+                spec=SPEC,
                 name="test",
                 namespace="default",
                 status={"recentBackups": [existing_entry]},
@@ -121,14 +84,12 @@ def test_failure_prepends_to_recent_backups():
                 logger=logger,
             )
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
     recent = patch_obj.status.get("recentBackups", [])
     assert len(recent) == 2, f"Expected 2 entries, got {len(recent)}"
-    # Newest entry must be first and marked failed
     assert recent[0]["result"] == "failed"
     assert "time" in recent[0]
-    # Previous entry is still there
     assert recent[1] == existing_entry
 
 
@@ -140,10 +101,9 @@ def test_failure_prepends_to_recent_backups():
 def test_recent_backups_trimmed_to_30():
     from k8si.operator import main
 
-    patch_obj = _make_patch_dict()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
-    # Start with exactly 30 entries
     existing_entries = [
         {"time": f"2026-06-0{(i % 9) + 1}T0{i % 10}:00:00+00:00", "result": "success"}
         for i in range(30)
@@ -158,8 +118,8 @@ def test_recent_backups_trimmed_to_30():
         ):
             mock_run.return_value = _SUCCESS_RESULT
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,
+                body=BODY,
+                spec=SPEC,
                 name="test",
                 namespace="default",
                 status={"recentBackups": list(existing_entries)},
@@ -167,14 +127,12 @@ def test_recent_backups_trimmed_to_30():
                 logger=logger,
             )
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
     recent = patch_obj.status.get("recentBackups", [])
     assert len(recent) == 30, f"Expected exactly 30 entries, got {len(recent)}"
-    # The newest entry is at the front
     assert recent[0]["time"] == _SUCCESS_RESULT["lastBackupTime"]
     assert recent[0]["result"] == "success"
-    # The oldest entry was dropped (last of existing_entries)
     assert recent[-1] != existing_entries[-1]
 
 
@@ -190,7 +148,7 @@ def _today_iso() -> str:
 def test_max_retries_per_day_skips_when_limit_reached():
     from k8si.operator import main
 
-    patch_obj = _make_patch_dict()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     today = _today_iso()
@@ -199,7 +157,7 @@ def test_max_retries_per_day_skips_when_limit_reached():
         {"time": f"{today}T02:00:00+00:00", "result": "failed"},
         {"time": f"{today}T03:00:00+00:00", "result": "failed"},
     ]
-    spec_with_limit = {**_SPEC, "maxRetriesPerDay": 3}
+    spec_with_limit = {**SPEC, "maxRetriesPerDay": 3}
 
     async def _run_timer():
         with (
@@ -207,7 +165,7 @@ def test_max_retries_per_day_skips_when_limit_reached():
             patch("k8si.operator.main._is_due", return_value=True),
         ):
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec_with_limit,
                 name="test",
                 namespace="default",
@@ -217,13 +175,13 @@ def test_max_retries_per_day_skips_when_limit_reached():
             )
             mock_run.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_max_retries_per_day_runs_when_under_limit():
     from k8si.operator import main
 
-    patch_obj = _make_patch_dict()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     today = _today_iso()
@@ -231,7 +189,7 @@ def test_max_retries_per_day_runs_when_under_limit():
         {"time": f"{today}T01:00:00+00:00", "result": "failed"},
         {"time": f"{today}T02:00:00+00:00", "result": "failed"},
     ]
-    spec_with_limit = {**_SPEC, "maxRetriesPerDay": 3}
+    spec_with_limit = {**SPEC, "maxRetriesPerDay": 3}
 
     async def _run_timer():
         with (
@@ -242,7 +200,7 @@ def test_max_retries_per_day_runs_when_under_limit():
         ):
             mock_run.return_value = _SUCCESS_RESULT
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec_with_limit,
                 name="test",
                 namespace="default",
@@ -252,14 +210,14 @@ def test_max_retries_per_day_runs_when_under_limit():
             )
             mock_run.assert_called_once()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_max_retries_per_day_default_is_three():
     """Without maxRetriesPerDay in spec, default is 3."""
     from k8si.operator import main
 
-    patch_obj = _make_patch_dict()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     today = _today_iso()
@@ -275,8 +233,8 @@ def test_max_retries_per_day_default_is_three():
             patch("k8si.operator.main._is_due", return_value=True),
         ):
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,  # no maxRetriesPerDay — uses default 3
+                body=BODY,
+                spec=SPEC,  # no maxRetriesPerDay — uses default 3
                 name="test",
                 namespace="default",
                 status={"recentBackups": failed_entries},
@@ -285,7 +243,7 @@ def test_max_retries_per_day_default_is_three():
             )
             mock_run.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +255,9 @@ def test_paused_skips_backup():
     """When spec.paused is True, backup_timer returns without running a backup."""
     from k8si.operator import main
 
-    patch_obj = _make_patch_dict()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec_paused = {**_SPEC, "paused": True}
+    spec_paused = {**SPEC, "paused": True}
 
     async def _run_timer():
         with (
@@ -307,7 +265,7 @@ def test_paused_skips_backup():
             patch("k8si.operator.main._is_due", return_value=True),
         ):
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec_paused,
                 name="test",
                 namespace="default",
@@ -317,4 +275,4 @@ def test_paused_skips_backup():
             )
             mock_run.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())

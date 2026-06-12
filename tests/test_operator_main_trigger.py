@@ -1,38 +1,18 @@
 """Tests for manual backup trigger via status.triggeredAt in k8si/operator/main.py."""
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 
+from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
-def _run(coro):
-    return asyncio.run(coro)
-
-
-class _StatusDict(dict):
-    def update(self, other=None, **kwargs):  # type: ignore[override]
-        if other:
-            super().update(other)
-        super().update(kwargs)
-
-
-class _Patch:
-    def __init__(self):
-        self.status = _StatusDict()
-
-
-_SPEC = {"schedule": "0 2 * * *", "pvc": "test-pvc", "resticSecret": "test-secret"}
-_BODY = {"metadata": {"name": "test", "namespace": "default"}}
+_TRIGGERED_AT = "2026-06-11T12:00:00+00:00"
+_LAST_BACKUP = "2026-06-10T02:00:00+00:00"
 
 _SUCCESS_RESULT = {
     "lastBackupResult": "success",
     "lastBackupTime": "2026-06-11T12:30:00+00:00",
     "message": "",
 }
-
-# triggeredAt is newer than _LAST_BACKUP so it counts as a pending trigger
-_TRIGGERED_AT = "2026-06-11T12:00:00+00:00"
-_LAST_BACKUP = "2026-06-10T02:00:00+00:00"
 
 
 # ── unit tests for _is_manual_trigger ─────────────────────────────────────────
@@ -77,7 +57,7 @@ def test_triggered_bypasses_schedule():
     """triggeredAt newer than lastBackupTime causes backup to run even if _is_due is False."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     async def _run_timer():
@@ -89,8 +69,8 @@ def test_triggered_bypasses_schedule():
         ):
             mock_run.return_value = _SUCCESS_RESULT
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,
+                body=BODY,
+                spec=SPEC,
                 name="test",
                 namespace="default",
                 status={"triggeredAt": _TRIGGERED_AT, "lastBackupTime": _LAST_BACKUP},
@@ -99,16 +79,16 @@ def test_triggered_bypasses_schedule():
             )
             mock_run.assert_called_once()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_triggered_bypasses_window():
     """triggeredAt causes backup to run even when outside the configured backupWindow."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "backupWindow": {"start": "02:00", "end": "04:00"}}
+    spec = {**SPEC, "backupWindow": {"start": "02:00", "end": "04:00"}}
 
     async def _run_timer():
         with (
@@ -120,7 +100,7 @@ def test_triggered_bypasses_window():
         ):
             mock_run.return_value = _SUCCESS_RESULT
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -130,23 +110,23 @@ def test_triggered_bypasses_window():
             )
             mock_run.assert_called_once()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_paused_blocks_trigger():
     """spec.paused=True prevents backup even when triggeredAt is set."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
-    spec = {**_SPEC, "paused": True}
+    spec = {**SPEC, "paused": True}
 
     async def _run_timer():
         with (
             patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
         ):
             await main.backup_timer(
-                body=_BODY,
+                body=BODY,
                 spec=spec,
                 name="test",
                 namespace="default",
@@ -156,14 +136,14 @@ def test_paused_blocks_trigger():
             )
             mock_run.assert_not_called()
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
 
 def test_trigger_cleared_on_success():
     """After a triggered backup succeeds, patch.status['triggeredAt'] is None."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     async def _run_timer():
@@ -175,8 +155,8 @@ def test_trigger_cleared_on_success():
         ):
             mock_run.return_value = _SUCCESS_RESULT
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,
+                body=BODY,
+                spec=SPEC,
                 name="test",
                 namespace="default",
                 status={"triggeredAt": _TRIGGERED_AT, "lastBackupTime": _LAST_BACKUP},
@@ -184,7 +164,7 @@ def test_trigger_cleared_on_success():
                 logger=logger,
             )
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
     assert patch_obj.status.get("triggeredAt") is None
 
@@ -193,7 +173,7 @@ def test_trigger_cleared_on_failure():
     """After a triggered backup fails, patch.status['triggeredAt'] is still None."""
     from k8si.operator import main
 
-    patch_obj = _Patch()
+    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     async def _run_timer():
@@ -205,8 +185,8 @@ def test_trigger_cleared_on_failure():
         ):
             mock_run.side_effect = RuntimeError("disk full")
             await main.backup_timer(
-                body=_BODY,
-                spec=_SPEC,
+                body=BODY,
+                spec=SPEC,
                 name="test",
                 namespace="default",
                 status={"triggeredAt": _TRIGGERED_AT, "lastBackupTime": _LAST_BACKUP},
@@ -214,6 +194,6 @@ def test_trigger_cleared_on_failure():
                 logger=logger,
             )
 
-    _run(_run_timer())
+    run_coro(_run_timer())
 
     assert patch_obj.status.get("triggeredAt") is None

@@ -7,6 +7,16 @@ import yaml
 
 K8SI_IMAGE = os.environ.get("K8SI_IMAGE", "ghcr.io/jaccoh/k8si:latest")
 
+_RESTIC_SECRET_KEYS = ["RESTIC_REPOSITORY", "RESTIC_PASSWORD", "RESTIC_SFTP_COMMAND"]
+
+
+def _restic_env_vars(secret_name: str) -> list[dict[str, Any]]:
+    """Return env var entries that pull restic credentials from *secret_name*."""
+    return [
+        {"name": key, "valueFrom": {"secretKeyRef": {"name": secret_name, "key": key}}}
+        for key in _RESTIC_SECRET_KEYS
+    ]
+
 
 def build_restore_patch(spec: dict[str, Any]) -> str:
     """Return a YAML snippet to paste into spec.initContainers and spec.volumes."""
@@ -32,17 +42,7 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
         env.append({"name": "RESTORE_SIZE_MAX", "value": str(size_max)})
     if tags:
         env.append({"name": "RESTORE_TAGS", "value": ",".join(tags)})
-    for var, key in [
-        ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY"),
-        ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
-        ("RESTIC_SFTP_COMMAND", "RESTIC_SFTP_COMMAND"),
-    ]:
-        env.append(
-            {
-                "name": var,
-                "valueFrom": {"secretKeyRef": {"name": restic_secret, "key": key}},
-            }
-        )
+    env.extend(_restic_env_vars(restic_secret))
 
     fix_ssh_perms: dict[str, Any] = {
         "name": "fix-ssh-perms",
