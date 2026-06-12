@@ -188,3 +188,229 @@ def test_mariadb_unlock_called_on_exception():
     _run(_inner())
 
     assert len(unlock_calls) == 1, f"unlock must be called exactly once, got {len(unlock_calls)}"
+
+
+# ---------------------------------------------------------------------------
+# _expand_db_host: short hostname → expanded to FQDN
+# ---------------------------------------------------------------------------
+
+
+def test_expand_db_host_short_name_expands():
+    from k8si.operator.quiesce import _expand_db_host
+
+    creds = {"DB_HOST": "mariadb", "DB_USER": "root"}
+    result = _expand_db_host(creds, "mynamespace")
+    assert result["DB_HOST"] == "mariadb.mynamespace.svc.cluster.local"
+
+
+def test_expand_db_host_fqdn_unchanged():
+    from k8si.operator.quiesce import _expand_db_host
+
+    creds = {"DB_HOST": "mariadb.default.svc.cluster.local", "DB_USER": "root"}
+    result = _expand_db_host(creds, "default")
+    assert result["DB_HOST"] == "mariadb.default.svc.cluster.local"
+
+
+def test_expand_db_host_no_host_key_unchanged():
+    from k8si.operator.quiesce import _expand_db_host
+
+    creds = {"DB_USER": "root"}
+    result = _expand_db_host(creds, "default")
+    assert "DB_HOST" not in result
+
+
+# ---------------------------------------------------------------------------
+# _read_secret_sync: decodes base64-encoded secret data
+# ---------------------------------------------------------------------------
+
+
+def test_read_secret_sync_decodes_base64():
+    import base64
+
+    from k8si.operator.quiesce import _read_secret_sync
+
+    mock_secret = MagicMock()
+    mock_secret.data = {
+        "DB_PASSWORD": base64.b64encode(b"s3cr3t").decode(),
+        "DB_USER": base64.b64encode(b"root").decode(),
+    }
+    mock_v1 = MagicMock()
+    mock_v1.read_namespaced_secret.return_value = mock_secret
+
+    with patch("k8si.operator.quiesce.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        result = _read_secret_sync("myns", "my-secret")
+
+    assert result["DB_PASSWORD"] == "s3cr3t"
+    assert result["DB_USER"] == "root"
+
+
+# ---------------------------------------------------------------------------
+# _find_pod_name_sync: finds running pods
+# ---------------------------------------------------------------------------
+
+
+def test_find_pod_name_sync_returns_running_pod():
+    from k8si.operator.quiesce import _find_pod_name_sync
+
+    pod = MagicMock()
+    pod.status.phase = "Running"
+    pod.metadata.name = "app-abc123"
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = [pod]
+
+    with patch("k8si.operator.quiesce.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        result = _find_pod_name_sync("myns", {"app": "myapp"})
+
+    assert result == "app-abc123"
+
+
+def test_find_pod_name_sync_no_running_pods_raises():
+    from k8si.operator.quiesce import _find_pod_name_sync
+
+    pod = MagicMock()
+    pod.status.phase = "Pending"
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = [pod]
+
+    with patch("k8si.operator.quiesce.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        with pytest.raises(RuntimeError, match="No running pod"):
+            _find_pod_name_sync("myns", {"app": "myapp"})
+
+
+# ---------------------------------------------------------------------------
+# _mariadb_ftwrl_sync: issues FLUSH TABLES WITH READ LOCK
+# ---------------------------------------------------------------------------
+
+
+def test_mariadb_ftwrl_sync_executes_lock():
+    from k8si.operator.quiesce import _mariadb_ftwrl_sync
+
+    mock_conn = MagicMock()
+    mock_pymysql = MagicMock()
+    mock_pymysql.connect.return_value = mock_conn
+
+    creds = {"DB_HOST": "db", "DB_PORT": "3306", "DB_USER": "root", "DB_PASSWORD": "pw"}
+    with patch.dict("sys.modules", {"pymysql": mock_pymysql}):
+        result = _mariadb_ftwrl_sync(creds)
+
+    mock_conn.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
+        "FLUSH TABLES WITH READ LOCK"
+    )
+    assert result is mock_conn
+
+
+# ---------------------------------------------------------------------------
+# _mariadb_unlock_sync: issues UNLOCK TABLES and closes connection
+# ---------------------------------------------------------------------------
+
+
+def test_mariadb_unlock_sync_executes_unlock_and_closes():
+    from k8si.operator.quiesce import _mariadb_unlock_sync
+
+    mock_conn = MagicMock()
+    _mariadb_unlock_sync(mock_conn)
+
+    mock_conn.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
+        "UNLOCK TABLES"
+    )
+    mock_conn.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _postgres_checkpoint_sync: issues CHECKPOINT
+# ---------------------------------------------------------------------------
+
+
+def test_postgres_checkpoint_sync_executes_checkpoint():
+    from k8si.operator.quiesce import _postgres_checkpoint_sync
+
+    mock_conn = MagicMock()
+    mock_psycopg = MagicMock()
+    mock_psycopg.connect.return_value = mock_conn
+
+    creds = {"DB_HOST": "pg", "DB_PORT": "5432", "DB_USER": "postgres", "DB_PASSWORD": "pw"}
+    with patch.dict("sys.modules", {"psycopg": mock_psycopg}):
+        _postgres_checkpoint_sync(creds)
+
+    mock_conn.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
+        "CHECKPOINT"
+    )
+    mock_conn.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _sqlite_checkpoint_sync: streams command into pod
+# ---------------------------------------------------------------------------
+
+
+def test_sqlite_checkpoint_sync_calls_stream():
+    from k8si.operator.quiesce import _sqlite_checkpoint_sync
+
+    mock_v1 = MagicMock()
+    with (
+        patch("k8si.operator.quiesce.kubernetes.client.CoreV1Api", return_value=mock_v1),
+        patch("kubernetes.stream.stream", return_value="checkpointed /data/db.sqlite3"),
+    ):
+        _sqlite_checkpoint_sync("myns", "app-pod", ["/data/db.sqlite3"])
+
+
+# ---------------------------------------------------------------------------
+# quiesce_context: postgres, sqlite, and unknown-type branches
+# ---------------------------------------------------------------------------
+
+
+def test_quiesce_context_postgres_yields():
+    async def _inner():
+        entered = False
+        with (
+            patch("k8si.operator.quiesce._read_secret_sync", return_value=_FAKE_CREDS),
+            patch("k8si.operator.quiesce._postgres_checkpoint_sync"),
+        ):
+            async with quiesce_context(
+                {"type": "postgres", "secretRef": "pg-secret"}, "default", logging.getLogger("test")
+            ):
+                entered = True
+        return entered
+
+    assert asyncio.run(_inner())
+
+
+def test_quiesce_context_sqlite_with_selector_yields():
+    async def _inner():
+        entered = False
+        with (
+            patch("k8si.operator.quiesce._find_pod_name_sync", return_value="app-pod"),
+            patch("k8si.operator.quiesce._sqlite_checkpoint_sync"),
+        ):
+            async with quiesce_context(
+                {
+                    "type": "sqlite",
+                    "podSelector": {"app": "myapp"},
+                    "dbPaths": ["/data/db.sqlite3"],
+                },
+                "default",
+                logging.getLogger("test"),
+            ):
+                entered = True
+        return entered
+
+    assert asyncio.run(_inner())
+
+
+def test_quiesce_context_sqlite_without_selector_logs_warning():
+    async def _inner():
+        entered = False
+        async with quiesce_context({"type": "sqlite"}, "default", logging.getLogger("test")):
+            entered = True
+        return entered
+
+    assert asyncio.run(_inner())
+
+
+def test_quiesce_context_unknown_type_raises():
+    async def _inner():
+        with pytest.raises(ValueError, match="Unknown database.type"):
+            async with quiesce_context({"type": "redis"}, "default", logging.getLogger("test")):
+                pass
+
+    asyncio.run(_inner())

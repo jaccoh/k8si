@@ -1,8 +1,10 @@
 """Tests for k8si/operator/workflow.py and Kopf event logging."""
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import kubernetes.client.exceptions
 import pytest
 
 from k8si.operator.workflow import _wait_job_complete_sync, run_backup
@@ -180,3 +182,472 @@ def test_check_after_backup_absent_when_not_set() -> None:
     job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", spec, [], {}, None)
     env_names = [e["name"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]]
     assert "RUN_CHECK" not in env_names
+
+
+# ── _emit_event ───────────────────────────────────────────────────────────────
+
+
+def test_emit_event_body_none_does_not_call_kopf() -> None:
+    from k8si.operator.workflow import _emit_event
+
+    with patch("k8si.operator.workflow.kopf.event") as mock_event:
+        _emit_event(None, "Normal", "TestReason", "msg")
+    mock_event.assert_not_called()
+
+
+def test_emit_event_swallows_kopf_exception() -> None:
+    from k8si.operator.workflow import _emit_event
+
+    with patch("k8si.operator.workflow.kopf.event", side_effect=Exception("kopf down")):
+        _emit_event({"metadata": {}}, "Normal", "TestReason", "msg")  # must not raise
+
+
+# ── _cleanup_orphan_snap_pvcs ─────────────────────────────────────────────────
+
+
+def test_cleanup_orphan_snap_pvcs_deletes_stale_pvcs() -> None:
+    from k8si.operator.workflow import _cleanup_orphan_snap_pvcs
+
+    stale = MagicMock()
+    stale.metadata.name = "k8si-snap-mybackup-20260601000000"
+    unrelated = MagicMock()
+    unrelated.metadata.name = "myapp-data"
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_persistent_volume_claim.return_value.items = [stale, unrelated]
+
+    with patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        asyncio.run(_cleanup_orphan_snap_pvcs("mybackup", "default"))
+
+    mock_v1.delete_namespaced_persistent_volume_claim.assert_called_once_with(
+        "k8si-snap-mybackup-20260601000000", "default"
+    )
+
+
+def test_cleanup_orphan_delete_failure_is_logged_not_raised() -> None:
+    from k8si.operator.workflow import _cleanup_orphan_snap_pvcs
+
+    stale = MagicMock()
+    stale.metadata.name = "k8si-snap-x-20260601000000"
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_persistent_volume_claim.return_value.items = [stale]
+    mock_v1.delete_namespaced_persistent_volume_claim.side_effect = Exception("api error")
+
+    with patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        asyncio.run(_cleanup_orphan_snap_pvcs("x", "default"))  # must not raise
+
+
+# ── _find_pvc_node_sync ───────────────────────────────────────────────────────
+
+
+def test_find_pvc_node_sync_returns_node() -> None:
+    from k8si.operator.workflow import _find_pvc_node_sync
+
+    vol = MagicMock()
+    vol.persistent_volume_claim.claim_name = "my-pvc"
+    pod = MagicMock()
+    pod.spec.volumes = [vol]
+    pod.spec.node_name = "worker-1"
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = [pod]
+
+    with patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        result = _find_pvc_node_sync("my-pvc", "default")
+
+    assert result == "worker-1"
+
+
+def test_find_pvc_node_sync_no_match_returns_none() -> None:
+    from k8si.operator.workflow import _find_pvc_node_sync
+
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = []
+
+    with patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        result = _find_pvc_node_sync("my-pvc", "default")
+
+    assert result is None
+
+
+# ── _build_backup_job: tags ───────────────────────────────────────────────────
+
+
+def test_build_backup_job_includes_tags() -> None:
+    from k8si.operator.workflow import _build_backup_job
+
+    job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", {}, ["app=test"], {}, None)
+    env_map = {
+        e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map.get("BACKUP_TAGS") == "app=test"
+
+
+# ── _get_pod_failure_reason: additional paths ─────────────────────────────────
+
+
+def test_get_pod_failure_reason_uses_last_state() -> None:
+    from k8si.operator.workflow import _get_pod_failure_reason
+
+    cs = MagicMock()
+    cs.state.terminated = None
+    cs.last_state.terminated.reason = "OOMKilled"
+    cs.last_state.terminated.exit_code = 137
+    pod = MagicMock()
+    pod.status.container_statuses = [cs]
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = [pod]
+
+    reason = _get_pod_failure_reason(mock_v1, "test-job", "default")
+    assert "OOMKill" in reason
+
+
+def test_get_pod_failure_reason_term_none_returns_default() -> None:
+    from k8si.operator.workflow import _get_pod_failure_reason
+
+    cs = MagicMock()
+    cs.state.terminated = None
+    cs.last_state.terminated = None
+    pod = MagicMock()
+    pod.status.container_statuses = [cs]
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = [pod]
+
+    reason = _get_pod_failure_reason(mock_v1, "test-job", "default")
+    assert reason == "non-zero exit code"
+
+
+def test_get_pod_failure_reason_exception_returns_default() -> None:
+    from k8si.operator.workflow import _get_pod_failure_reason
+
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.side_effect = Exception("api down")
+
+    reason = _get_pod_failure_reason(mock_v1, "test-job", "default")
+    assert reason == "non-zero exit code"
+
+
+# ── _wait_job_complete_sync: success & timeout paths ─────────────────────────
+
+
+def test_wait_job_complete_sync_succeeds_immediately() -> None:
+    job = MagicMock()
+    job.status.succeeded = 1
+    job.status.failed = 0
+    mock_batch = MagicMock()
+    mock_batch.read_namespaced_job.return_value = job
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow.kubernetes.client.CoreV1Api"),
+    ):
+        _wait_job_complete_sync("test-job", "default", 60)  # must not raise
+
+
+def test_wait_job_complete_sync_pending_then_succeeds() -> None:
+    pending = MagicMock()
+    pending.status.succeeded = 0
+    pending.status.failed = 0
+    success = MagicMock()
+    success.status.succeeded = 1
+    success.status.failed = 0
+    mock_batch = MagicMock()
+    mock_batch.read_namespaced_job.side_effect = [pending, success]
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow.kubernetes.client.CoreV1Api"),
+        patch("k8si.operator.workflow.time.sleep"),
+    ):
+        _wait_job_complete_sync("test-job", "default", 60)
+
+
+def test_wait_job_complete_sync_times_out() -> None:
+    pending = MagicMock()
+    pending.status.succeeded = 0
+    pending.status.failed = 0
+    mock_batch = MagicMock()
+    mock_batch.read_namespaced_job.return_value = pending
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow.kubernetes.client.CoreV1Api"),
+        patch("k8si.operator.workflow.time.sleep"),
+        patch("k8si.operator.workflow.time.monotonic", side_effect=[0.0, 0.0, 9999.0]),
+    ):
+        with pytest.raises(TimeoutError, match="timed out"):
+            _wait_job_complete_sync("test-job", "default", 60)
+
+
+# ── _collect_job_logs: empty / exception paths ────────────────────────────────
+
+
+def test_collect_job_logs_no_pods_returns_empty() -> None:
+    from k8si.operator.workflow import _collect_job_logs
+
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = []
+    assert _collect_job_logs(mock_v1, "test-job", "default") == ""
+
+
+def test_collect_job_logs_exception_returns_empty() -> None:
+    from k8si.operator.workflow import _collect_job_logs
+
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.side_effect = Exception("api error")
+    assert _collect_job_logs(mock_v1, "test-job", "default") == ""
+
+
+# ── _wait_job_gone_sync ───────────────────────────────────────────────────────
+
+
+def test_wait_job_gone_sync_returns_on_404() -> None:
+    from k8si.operator.workflow import _wait_job_gone_sync
+
+    exc = kubernetes.client.exceptions.ApiException(status=404)
+    exc.status = 404
+    mock_batch = MagicMock()
+    mock_batch.read_namespaced_job.side_effect = exc
+
+    with patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch):
+        _wait_job_gone_sync("test-job", "default")  # must not raise
+
+
+def test_wait_job_gone_sync_reraises_non_404() -> None:
+    from k8si.operator.workflow import _wait_job_gone_sync
+
+    exc = kubernetes.client.exceptions.ApiException(status=500)
+    exc.status = 500
+    mock_batch = MagicMock()
+    mock_batch.read_namespaced_job.side_effect = exc
+
+    with patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch):
+        with pytest.raises(kubernetes.client.exceptions.ApiException):
+            _wait_job_gone_sync("test-job", "default")
+
+
+def test_wait_job_gone_sync_times_out_without_raising() -> None:
+    from k8si.operator.workflow import _wait_job_gone_sync
+
+    mock_batch = MagicMock()
+    mock_batch.read_namespaced_job.return_value = MagicMock()
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow.time.sleep"),
+        patch("k8si.operator.workflow.time.monotonic", side_effect=[0.0, 0.0, 9999.0]),
+    ):
+        _wait_job_gone_sync("test-job", "default")  # must not raise
+
+
+# ── _run_job: full pipeline ───────────────────────────────────────────────────
+
+
+def test_run_job_creates_waits_and_deletes() -> None:
+    from k8si.operator.workflow import _run_job
+
+    job_body = {"metadata": {"name": "test-job"}, "spec": {}}
+    mock_batch = MagicMock()
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow._wait_job_complete_sync"),
+        patch("k8si.operator.workflow._wait_job_gone_sync"),
+    ):
+        asyncio.run(_run_job(job_body, "default", 60, logging.getLogger("test")))
+
+    mock_batch.create_namespaced_job.assert_called_once_with("default", job_body)
+    mock_batch.delete_namespaced_job.assert_called_once()
+
+
+def test_run_job_deletes_even_on_failure() -> None:
+    from k8si.operator.workflow import _run_job
+
+    job_body = {"metadata": {"name": "test-job"}, "spec": {}}
+    mock_batch = MagicMock()
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch(
+            "k8si.operator.workflow._wait_job_complete_sync",
+            side_effect=RuntimeError("job failed"),
+        ),
+        patch("k8si.operator.workflow._wait_job_gone_sync"),
+    ):
+        with pytest.raises(RuntimeError):
+            asyncio.run(_run_job(job_body, "default", 60, logging.getLogger("test")))
+
+    mock_batch.delete_namespaced_job.assert_called_once()
+
+
+# ── run_backup: exception paths ───────────────────────────────────────────────
+
+
+def test_run_backup_snapshot_phase_exception_emits_warning() -> None:
+    spec = {"pvc": "test-pvc", "resticSecret": "test-secret"}
+    body = {"metadata": {}}
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch(
+            "k8si.operator.workflow.snapshot.create_snapshot",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("snap failed"),
+        ),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch("k8si.operator.workflow.kopf.event") as mock_event,
+    ):
+        mock_ctx.return_value = MagicMock()
+        with pytest.raises(RuntimeError, match="snap failed"):
+            asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+
+    reasons = [call[1]["reason"] for call in mock_event.call_args_list]
+    assert "SnapshotFailed" in reasons
+
+
+def test_run_backup_phase2_exception_cleans_up_snapshot() -> None:
+    """When the backup job fails, snapshot and PVC are still deleted (finally block)."""
+    spec = {"pvc": "test-pvc", "resticSecret": "test-secret"}
+    body = {"metadata": {}}
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch(
+            "k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock
+        ) as mock_delete,
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch(
+            "k8si.operator.workflow._run_job",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("backup failed"),
+        ),
+        patch("k8si.operator.workflow.kopf.event"),
+    ):
+        mock_ctx.return_value = MagicMock()
+        with pytest.raises(RuntimeError, match="backup failed"):
+            asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+
+    mock_delete.assert_called_once()
+
+
+def test_run_backup_direct_mode_exception_emits_warning() -> None:
+    spec = {"pvc": "test-pvc", "resticSecret": "test-secret", "backupMode": "direct"}
+    body = {"metadata": {}}
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch(
+            "k8si.operator.workflow._run_job",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("direct failed"),
+        ),
+        patch("k8si.operator.workflow.kopf.event") as mock_event,
+    ):
+        mock_ctx.return_value = MagicMock()
+        with pytest.raises(RuntimeError, match="direct failed"):
+            asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+
+    reasons = [call[1]["reason"] for call in mock_event.call_args_list]
+    assert "BackupFailed" in reasons
+
+
+# ── _run_hook_job ─────────────────────────────────────────────────────────────
+
+
+def test_run_hook_job_optional_failure_does_not_raise() -> None:
+    from k8si.operator.workflow import _run_hook_job
+
+    with (
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch(
+            "k8si.operator.workflow._run_job",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("hook failed"),
+        ),
+    ):
+        asyncio.run(
+            _run_hook_job("/usr/local/bin/hook.sh", False, "default", "pvc", logging.getLogger("t"))
+        )
+
+
+def test_run_hook_job_required_failure_raises() -> None:
+    from k8si.operator.workflow import _run_hook_job
+
+    with (
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch(
+            "k8si.operator.workflow._run_job",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("hook failed"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="Pre-snapshot hook"):
+            asyncio.run(
+                _run_hook_job(
+                    "/usr/local/bin/hook.sh", True, "default", "pvc", logging.getLogger("t")
+                )
+            )
+
+
+def test_run_hook_job_pins_to_node_when_found() -> None:
+    """When _find_pvc_node_sync returns a node, hook job gets nodeSelector (lines 162, 185)."""
+    from k8si.operator.workflow import _run_hook_job
+
+    with (
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value="worker-1"),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock) as mock_run,
+    ):
+        asyncio.run(_run_hook_job("/hook.sh", False, "default", "pvc", logging.getLogger("t")))
+
+    job_body = mock_run.call_args[0][0]
+    assert job_body["spec"]["template"]["spec"]["nodeSelector"] == {
+        "kubernetes.io/hostname": "worker-1"
+    }
+
+
+def test_run_backup_direct_mode_with_db_and_hook_emits_events() -> None:
+    """Direct mode with db_spec + preSnapshotHook emits QuiesceStarted and HookStarted."""
+    spec = {
+        "pvc": "test-pvc",
+        "resticSecret": "test-secret",
+        "backupMode": "direct",
+        "database": {"type": "mariadb", "secretRef": "db-secret"},
+        "preSnapshotHook": "/usr/local/bin/hook.sh",
+    }
+    body = {"metadata": {}}
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch("k8si.operator.workflow._run_hook_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.kopf.event") as mock_event,
+    ):
+        mock_ctx.return_value = MagicMock()
+        asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+
+    reasons = [call[1]["reason"] for call in mock_event.call_args_list]
+    assert "QuiesceStarted" in reasons
+    assert "HookStarted" in reasons
+
+
+def test_run_job_cleanup_exception_is_swallowed() -> None:
+    """delete_namespaced_job failure in _run_job finally is silently ignored."""
+    from k8si.operator.workflow import _run_job
+
+    job_body = {"metadata": {"name": "test-job"}, "spec": {}}
+    mock_batch = MagicMock()
+    mock_batch.delete_namespaced_job.side_effect = Exception("api error")
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow._wait_job_complete_sync"),
+        patch("k8si.operator.workflow._wait_job_gone_sync"),
+    ):
+        asyncio.run(_run_job(job_body, "default", 60, logging.getLogger("test")))  # must not raise
