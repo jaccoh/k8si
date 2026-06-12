@@ -204,3 +204,15 @@ spec:
                 lastRestoreMessage:
                   type: string
                   description: Human-readable summary of the last restore attempt
+                lastRunLog:
+                  type: array
+                  description: Phase log entries for the most recent backup run, cleared at start of each run
+                  items:
+                    type: object
+                    properties:
+                      time:
+                        type: string
+                      phase:
+                        type: string
+                      message:
+                        type: string
