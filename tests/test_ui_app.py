@@ -202,6 +202,60 @@ def test_load_k8s_falls_back_to_kube_config(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# GET /api/backups/{ns}/{name}/logs — SSE streaming endpoint
+# ---------------------------------------------------------------------------
+
+
+def _logs_client() -> TestClient:
+    from k8si.ui import app as app_module
+
+    app_module.app.router.on_startup.clear()
+    from k8si.ui.app import app
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+@patch("k8si.ui.app.kubernetes.client.CoreV1Api")
+def test_logs_endpoint_streams_phase_entries(mock_core: MagicMock, mock_custom: MagicMock) -> None:
+    """GET /logs streams phase entries from lastRunLog and closes on success."""
+    mock_obj = {
+        "status": {
+            "lastBackupResult": "success",
+            "lastRunLog": [
+                {"time": "2026-06-12T10:00:00Z", "phase": "BackupJobStarted", "message": "start"}
+            ],
+        }
+    }
+    mock_custom.return_value.get_namespaced_custom_object.return_value = mock_obj
+
+    client = _logs_client()
+    resp = client.get("/api/backups/default/myapp/logs")
+
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+    body = resp.text
+    assert "BackupJobStarted" in body
+    assert '"type": "phase"' in body
+    assert '"type": "done"' in body
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_logs_endpoint_404_on_missing_backup(mock_custom: MagicMock) -> None:
+    """GET /logs returns 404 when the CRD does not exist."""
+    import kubernetes.client.exceptions
+
+    exc = kubernetes.client.exceptions.ApiException(status=404)
+    exc.status = 404
+    mock_custom.return_value.get_namespaced_custom_object.side_effect = exc
+
+    client = _logs_client()
+    resp = client.get("/api/backups/default/missing/logs")
+
+    assert resp.status_code == 404
+
+
 @pytest.mark.anyio
 async def test_lifespan_calls_load_k8s() -> None:
     """lifespan() calls _load_k8s() on startup and yields."""
