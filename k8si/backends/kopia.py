@@ -165,8 +165,6 @@ class KopiaBackend:
                 if not raw:
                     continue
                 parts = raw.split()
-                if not parts:
-                    continue
                 path = parts[-1]
                 for sentinel in list(unfound):
                     if path in candidates[sentinel]:

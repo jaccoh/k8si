@@ -207,3 +207,239 @@ def test_unlock_runs_maintenance_force() -> None:
 
     backend.unlock()
     mock_cmd.assert_called_once_with("maintenance", "run", "--force")
+
+
+# ── check ─────────────────────────────────────────────────────────────────────
+
+
+def test_check_calls_snapshot_verify_all() -> None:
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = ""
+
+    backend.check()
+    mock_cmd.assert_called_once_with("snapshot", "verify", "--all")
+
+
+# ── _ensure_connected: non-initialization error is re-raised (line 65) ───────
+
+
+def test_ensure_connected_reraises_non_initialization_error() -> None:
+    """_ensure_connected() re-raises BackupError unchanged when not an init error."""
+    from k8si.backend import BackupError
+
+    backend, mock_cmd = _make_backend()
+    mock_cmd.side_effect = _sh_error(1, "connection refused: network timeout")
+
+    with patch("os.path.exists", return_value=False):
+        try:
+            backend._ensure_connected()
+            raise AssertionError("Expected BackupError")
+        except BackupError as e:
+            assert "connection refused" in e.stderr
+
+
+# ── _ensure_connected: config file already exists (lines 44-45) ───────────────
+
+
+def test_ensure_connected_skips_when_config_file_exists() -> None:
+    """_ensure_connected() uses cached config file instead of re-connecting."""
+    backend, mock_cmd = _make_backend()
+    mock_cmd.return_value = "[]"
+
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getsize", return_value=100),
+    ):
+        backend.snapshots()
+
+    # Connection command must NOT have been called (config file was present)
+    for call in mock_cmd.call_args_list:
+        assert call[0][0] != "repository", f"connect was called unexpectedly: {call}"
+
+
+# ── _ensure_connected: repository not initialized error (lines 59-65) ─────────
+
+
+def test_ensure_connected_raises_on_not_initialized() -> None:
+    """_ensure_connected() re-raises as 'repository does not exist' when not initialized."""
+    from k8si.backend import BackupError
+
+    backend, mock_cmd = _make_backend()
+    msg = "repository not initialized — run 'kopia repository create'"
+    mock_cmd.side_effect = _sh_error(1, msg)
+
+    try:
+        backend.snapshots()
+        raise AssertionError("Expected BackupError")
+    except BackupError as e:
+        assert "does not exist" in str(e)
+
+
+# ── _parse_sftp_repo: malformed URL (line 71) ─────────────────────────────────
+
+
+def test_parse_sftp_repo_malformed_url_raises() -> None:
+    """Malformed SFTP repo URL raises BackupError."""
+    from k8si.backend import BackupError
+
+    backend, _ = _make_backend(env={"RESTIC_REPOSITORY": "sftp:BADURL", "RESTIC_PASSWORD": "s"})
+    with patch("os.path.exists", return_value=False):
+        try:
+            backend._ensure_connected()
+            raise AssertionError("Expected BackupError")
+        except BackupError as e:
+            assert "Malformed" in str(e)
+
+
+# ── init: SFTP repo path (lines 99-100) ──────────────────────────────────────
+
+
+def test_init_calls_repository_create_sftp() -> None:
+    """init() uses sftp sub-command when repo starts with sftp:."""
+    env = {"RESTIC_REPOSITORY": "sftp:u99@host.de:backup/data", "RESTIC_PASSWORD": "s"}
+    backend, mock_cmd = _make_backend(env)
+    mock_cmd.return_value = "created"
+
+    with patch("os.path.exists", return_value=False):
+        backend.init()
+
+    args = mock_cmd.call_args[0]
+    assert args[0] == "repository"
+    assert args[1] == "create"
+    assert "sftp" in args
+
+
+# ── ls: empty lines skipped (line 132) ────────────────────────────────────────
+
+
+def test_ls_skips_empty_lines() -> None:
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = "\n\n"
+    assert backend.ls("snap-123") == []
+
+
+# ── check_sentinels: various edge cases ───────────────────────────────────────
+
+
+def _popen_ctx(lines: list[str], returncode: int = 0) -> MagicMock:
+    proc = MagicMock()
+    proc.stdout = iter(lines)
+    proc.returncode = returncode
+    proc.communicate.return_value = ("", "")
+    ctx = MagicMock()
+    ctx.__enter__.return_value = proc
+    ctx.__exit__.return_value = False
+    return ctx
+
+
+def test_check_sentinels_empty_sentinels_returns_true() -> None:
+    backend, _ = _make_backend()
+    backend._connected = True
+    assert backend.check_sentinels("snap-123", []) is True
+
+
+def test_check_sentinels_skips_empty_lines() -> None:
+    backend, _ = _make_backend()
+    backend._connected = True
+    lines = ["\n", "f /data/config.xml\n"]
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("snap-123", ["config.xml"]) is True
+
+
+def test_check_sentinels_skips_lines_with_no_parts() -> None:
+    """Lines that are all spaces (strip → empty) are skipped."""
+    backend, _ = _make_backend()
+    backend._connected = True
+    lines = ["   \n", "f /data/config.xml\n"]
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("snap-123", ["config.xml"]) is True
+
+
+def test_check_sentinels_kills_process_when_all_found_early() -> None:
+    """When all sentinels found before EOF, the kopia process is killed early."""
+    backend, _ = _make_backend()
+    backend._connected = True
+    # First line satisfies the sentinel; second line triggers kill+break.
+    lines = ["f /data/config.xml\n", "f /data/other.txt\n"]
+    ctx = _popen_ctx(lines)
+    with patch("subprocess.Popen", return_value=ctx):
+        result = backend.check_sentinels("snap-123", ["config.xml"])
+    assert result is True
+    ctx.__enter__.return_value.kill.assert_called_once()
+
+
+def test_check_sentinels_raises_on_kopia_error() -> None:
+    from k8si.backend import BackupError
+
+    backend, _ = _make_backend()
+    backend._connected = True
+    lines: list[str] = []
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines, returncode=1)):
+        try:
+            backend.check_sentinels("snap-123", ["config.xml"])
+            raise AssertionError("Expected BackupError")
+        except BackupError:
+            pass
+
+
+# ── snapshot_size: malformed JSON (lines 188-189) ─────────────────────────────
+
+
+def test_snapshot_size_returns_zero_on_malformed_json() -> None:
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = "not-json"
+    assert backend.snapshot_size("snap-123") == 0
+
+
+# ── restore: not-found → NoSnapshotsError (lines 195-198) ────────────────────
+
+
+def test_restore_raises_no_snapshots_on_not_found() -> None:
+    from k8si.backend import NoSnapshotsError
+
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.side_effect = _sh_error(1, "snapshot not found in repository")
+    try:
+        backend.restore("missing-snap")
+        raise AssertionError("Expected NoSnapshotsError")
+    except NoSnapshotsError:
+        pass
+
+
+# ── restore: non-"not found" error is re-raised (line 198) ──────────────────
+
+
+def test_restore_reraises_non_not_found_error() -> None:
+    """restore() re-raises BackupError unchanged when error is not 'not found'."""
+    from k8si.backend import BackupError
+
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.side_effect = _sh_error(1, "connection refused")
+
+    try:
+        backend.restore("snap-123")
+        raise AssertionError("Expected BackupError")
+    except BackupError as e:
+        assert "connection refused" in e.stderr
+
+
+# ── _invoke: sh.ErrorReturnCode (lines 246-252) ───────────────────────────────
+
+
+def test_invoke_converts_error_return_code_to_backup_error() -> None:
+    from k8si.backend import BackupError
+
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.side_effect = _sh_error(2, "some kopia error")
+    try:
+        backend.check()
+        raise AssertionError("Expected BackupError")
+    except BackupError as e:
+        assert e.returncode == 2
+        assert "some kopia error" in e.stderr
