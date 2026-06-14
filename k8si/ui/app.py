@@ -247,14 +247,16 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
                     return
                 consecutive_errors += 1
                 if consecutive_errors >= 5:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'API unavailable after {consecutive_errors} attempts'})}\n\n"
+                    msg = f"API unavailable after {consecutive_errors} attempts"
+                    yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
                     return
                 await asyncio.sleep(2)
                 continue
             except Exception:
                 consecutive_errors += 1
                 if consecutive_errors >= 5:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'API unavailable after {consecutive_errors} attempts'})}\n\n"
+                    msg = f"API unavailable after {consecutive_errors} attempts"
+                    yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
                     return
                 await asyncio.sleep(2)
                 continue
