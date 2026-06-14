@@ -96,6 +96,7 @@ def test_trigger_returns_500_on_create_error(mock_api_cls: MagicMock) -> None:
     mock_api = MagicMock()
     mock_api_cls.return_value = mock_api
     mock_api.get_namespaced_custom_object.return_value = _backup_obj()
+    mock_api.list_namespaced_custom_object.return_value = {"items": []}
     mock_api.create_namespaced_custom_object.side_effect = (
         kubernetes.client.exceptions.ApiException(status=500)
     )
@@ -104,3 +105,46 @@ def test_trigger_returns_500_on_create_error(mock_api_cls: MagicMock) -> None:
     resp = client.post("/api/backups/default/mybackup/trigger")
 
     assert resp.status_code == 500
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_trigger_returns_409_when_run_active(mock_api_cls: MagicMock) -> None:
+    """POST trigger returns 409 when a K8siBackupRun is already Pending or Running."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _backup_obj()
+    mock_api.list_namespaced_custom_object.return_value = {
+        "items": [
+            {
+                "metadata": {"name": "mybackup-20260614120000"},
+                "status": {"phase": "Running"},
+            }
+        ]
+    }
+
+    client = _make_client()
+    resp = client.post("/api/backups/default/mybackup/trigger")
+
+    assert resp.status_code == 409
+    assert "mybackup-20260614120000" in resp.json()["detail"]
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_trigger_allows_when_no_active_runs(mock_api_cls: MagicMock) -> None:
+    """POST trigger succeeds when all existing runs are Succeeded or Failed."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _backup_obj()
+    mock_api.list_namespaced_custom_object.return_value = {
+        "items": [
+            {
+                "metadata": {"name": "mybackup-20260613120000"},
+                "status": {"phase": "Succeeded"},
+            }
+        ]
+    }
+
+    client = _make_client()
+    resp = client.post("/api/backups/default/mybackup/trigger")
+
+    assert resp.status_code == 200

@@ -55,12 +55,10 @@ spec:
               properties:
                 phase:
                   type: string
-                  enum: [Pending, Running, Verifying, Succeeded, Failed]
+                  enum: [Pending, Running, Succeeded, Failed]
                 startTime:
                   type: string
                 completionTime:
-                  type: string
-                snapshotId:
                   type: string
                 message:
                   type: string

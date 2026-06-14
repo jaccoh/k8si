@@ -150,12 +150,11 @@ def test_on_run_create_sets_failed_on_exception():
 
 
 def test_on_run_create_discards_running_key_on_completion():
-    """_running key (set by the timer) is discarded after the reconciler finishes."""
+    """on_run_create adds (ns, backup_name) to _running and discards it on completion."""
     import k8si.operator.main as main_module
     from k8si.operator.main import on_run_create
 
     key = ("default", "test")
-    main_module._running.add(key)
 
     async def _run():
         with (
@@ -181,3 +180,64 @@ def test_on_run_create_discards_running_key_on_completion():
     run_coro(_run())
 
     assert key not in main_module._running
+
+
+def test_on_run_create_rejects_concurrent_run():
+    """A second on_run_create for the same backup is marked Failed if key is in _running."""
+    import k8si.operator.main as main_module
+    from k8si.operator.main import on_run_create
+
+    key = ("default", "test")
+    main_module._running.add(key)  # simulate first run already in progress
+
+    async def _run():
+        with patch("k8si.operator.main._patch_run_status") as mock_patch:
+            await on_run_create(
+                body={},
+                spec=_run_spec(),
+                name="test-run-duplicate",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+            failed_call = next(
+                (c for c in mock_patch.call_args_list if c.args[2].get("phase") == "Failed"), None
+            )
+            assert failed_call is not None
+            assert "concurrent" in failed_call.args[2].get("message", "")
+
+    run_coro(_run())
+    assert key in main_module._running  # first run's key untouched
+
+
+def test_on_run_create_adds_key_to_running():
+    """on_run_create claims _running before starting the backup, preventing duplicates."""
+    import k8si.operator.main as main_module
+    from k8si.operator.main import on_run_create
+
+    captured_during = []
+
+    async def fake_run_backup(*args, **kwargs):
+        captured_during.append(("default", "test") in main_module._running)
+        return {}
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status"),
+            patch("k8si.operator.main.workflow.run_backup", side_effect=fake_run_backup),
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record"),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = _BACKUP_OBJ
+            mock_k8s_cls.return_value = mock_k8s
+            await on_run_create(
+                body={},
+                spec=_run_spec(),
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+    run_coro(_run())
+    assert captured_during == [True], "key must be in _running while backup executes"

@@ -19,8 +19,31 @@ from .workflow import _patch_run_status
 log = logging.getLogger(__name__)
 
 # Process-local guard against concurrent runs of the same backup.
-# Safe only because Kopf uses leader election — only one operator pod is active at a time.
+# Populated and owned by on_run_create; backup_timer only reads it.
 _running: set[tuple[str, str]] = set()
+
+
+def _has_active_run_sync(namespace: str, backup_name: str) -> bool:
+    """Return True if any K8siBackupRun for this backup is Pending or Running in K8s.
+
+    Used by backup_timer to guard against creating a duplicate run after an operator
+    restart (when the in-memory _running set is empty).
+    """
+    try:
+        custom = kubernetes.client.CustomObjectsApi()
+        runs = custom.list_namespaced_custom_object(
+            "k8si.io",
+            "v1",
+            namespace,
+            "k8sibackupruns",
+            label_selector=f"k8si.io/backup={backup_name}",
+        )
+        for run in runs.get("items", []):
+            if run.get("status", {}).get("phase", "Pending") in ("Pending", "Running"):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _daily_failure_count(status: dict) -> int:
@@ -202,6 +225,10 @@ async def backup_timer(
         logger.warning("Backup %s/%s still running, skipping", namespace, name)
         return
 
+    if await asyncio.to_thread(_has_active_run_sync, namespace, name):
+        logger.warning("Backup %s/%s has active K8siBackupRun in K8s, skipping", namespace, name)
+        return
+
     if not is_triggered:
         max_retries = spec.get("maxRetriesPerDay", 3)
         failures_today = _daily_failure_count(status)
@@ -225,8 +252,6 @@ async def backup_timer(
         patch.status["triggeredAt"] = None
         logger.info("Backup %s/%s triggered manually, clearing triggeredAt", namespace, name)
 
-    _running.add(key)
-
     run_obj = {
         "apiVersion": "k8si.io/v1",
         "kind": "K8siBackupRun",
@@ -241,7 +266,7 @@ async def backup_timer(
                     "name": name,
                     "uid": body["metadata"]["uid"],
                     "controller": True,
-                    "blockOwnerDeletion": True,
+                    "blockOwnerDeletion": False,
                 }
             ],
         },
@@ -269,7 +294,6 @@ async def backup_timer(
         metrics.record(name, namespace, "running", last_backup)
         kopf.event(body, type="Normal", reason="BackupStarted", message=f"Created run {run_name}")
     except Exception as e:
-        _running.discard(key)
         logger.error("Failed to create K8siBackupRun %s/%s: %s", namespace, run_name, e)
 
 
@@ -293,6 +317,20 @@ async def on_run_create(
         logger.info("K8siBackupRun %s/%s is backfilled, skipping execution", namespace, name)
         return
 
+    if key in _running:
+        logger.warning(
+            "Concurrent on_run_create for %s/%s, marking Failed", namespace, backup_name
+        )
+        await asyncio.to_thread(
+            _patch_run_status,
+            namespace,
+            name,
+            {"phase": "Failed", "message": "concurrent run rejected"},
+        )
+        return
+
+    _running.add(key)
+
     custom = kubernetes.client.CustomObjectsApi()
     try:
         backup_obj = await asyncio.to_thread(
@@ -305,13 +343,17 @@ async def on_run_create(
         )
     except Exception as e:
         logger.error("K8siBackupRun %s: could not get parent backup %s: %s", name, backup_name, e)
-        _patch_run_status(namespace, name, {"phase": "Failed", "message": str(e)})
+        await asyncio.to_thread(
+            _patch_run_status, namespace, name, {"phase": "Failed", "message": str(e)}
+        )
         _running.discard(key)
         return
 
     backup_spec = backup_obj.get("spec", {})
     start_time = datetime.now(tz=UTC).isoformat()
-    _patch_run_status(namespace, name, {"phase": "Running", "startTime": start_time})
+    await asyncio.to_thread(
+        _patch_run_status, namespace, name, {"phase": "Running", "startTime": start_time}
+    )
 
     backup_start_dt = datetime.now(tz=UTC)
     try:
@@ -326,8 +368,11 @@ async def on_run_create(
         )
         duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
         completion = datetime.now(tz=UTC).isoformat()
-        _patch_run_status(
-            namespace, name, {"phase": "Succeeded", "completionTime": completion, "message": ""}
+        await asyncio.to_thread(
+            _patch_run_status,
+            namespace,
+            name,
+            {"phase": "Succeeded", "completionTime": completion, "message": ""},
         )
         await _update_parent_backup(
             custom,
@@ -344,7 +389,8 @@ async def on_run_create(
         duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
         logger.error("K8siBackupRun %s/%s failed: %s", namespace, name, e)
         completion = datetime.now(tz=UTC).isoformat()
-        _patch_run_status(
+        await asyncio.to_thread(
+            _patch_run_status,
             namespace,
             name,
             {"phase": "Failed", "completionTime": completion, "message": str(e)},

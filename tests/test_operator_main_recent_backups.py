@@ -237,3 +237,35 @@ def test_paused_skips_backup():
             mock_run.assert_not_called()
 
     run_coro(_run_timer())
+
+
+def test_backup_timer_skips_when_active_run_exists_in_k8s():
+    """backup_timer skips creating a run if _has_active_run_sync returns True.
+
+    This guards against duplicate runs after an operator restart when the in-memory
+    _running set is empty but K8siBackupRun resources are already Pending/Running.
+    """
+    from k8si.operator import main
+
+    logger = logging.getLogger("test")
+
+    async def _run_timer():
+        with (
+            patch("k8si.operator.main._has_active_run_sync", return_value=True),
+            patch("k8si.operator.main._is_due", return_value=True),
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s_cls.return_value = mock_k8s
+            await main.backup_timer(
+                body=BODY,
+                spec=SPEC,
+                name="test",
+                namespace="default",
+                status={},
+                patch=FakePatch(),
+                logger=logger,
+            )
+            mock_k8s.create_namespaced_custom_object.assert_not_called()
+
+    run_coro(_run_timer())

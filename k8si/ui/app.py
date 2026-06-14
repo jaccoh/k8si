@@ -134,6 +134,27 @@ def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=f"{namespace}/{name} not found")
         raise HTTPException(status_code=500, detail=str(e))
 
+    try:
+        runs = custom.list_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            namespace,
+            RUN_PLURAL,
+            label_selector=f"{GROUP}/backup={name}",
+        )
+        for run in runs.get("items", []):
+            phase = run.get("status", {}).get("phase", "Pending")
+            if phase in ("Pending", "Running"):
+                run_name_active = run["metadata"]["name"]
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"run {run_name_active} is already active (phase={phase})",
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     ts = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
     run_name = f"{name}-{ts}"
     triggered_at = datetime.now(tz=UTC).isoformat()
@@ -153,7 +174,7 @@ def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
                     "name": name,
                     "uid": backup_obj["metadata"]["uid"],
                     "controller": True,
-                    "blockOwnerDeletion": True,
+                    "blockOwnerDeletion": False,
                 }
             ],
         },
@@ -207,8 +228,9 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
 
     async def _generate():
         seen = 0
+        consecutive_errors = 0
         yield ": connected\n\n"
-        for _ in range(600):  # max 20 min at 2s/poll
+        for _ in range(150):  # max 5 min at 2s/poll
             try:
                 obj = await asyncio.to_thread(
                     custom.get_namespaced_custom_object,
@@ -218,7 +240,22 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
                     RUN_PLURAL,
                     run_name,
                 )
+                consecutive_errors = 0
+            except kubernetes.client.exceptions.ApiException as e:
+                if e.status == 404:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'run not found'})}\n\n"
+                    return
+                consecutive_errors += 1
+                if consecutive_errors >= 5:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'API unavailable after {consecutive_errors} attempts'})}\n\n"
+                    return
+                await asyncio.sleep(2)
+                continue
             except Exception:
+                consecutive_errors += 1
+                if consecutive_errors >= 5:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'API unavailable after {consecutive_errors} attempts'})}\n\n"
+                    return
                 await asyncio.sleep(2)
                 continue
 
