@@ -198,6 +198,7 @@ async def stream_logs(
         seen = 0
         log_lines_seen = 0
         since_dt = _parse_since(since)
+        yield ": connected\n\n"  # flush headers through ingress; triggers onopen in browser
         for _ in range(300):  # max ~10 min at 2s/poll
             try:
                 obj = await asyncio.to_thread(
