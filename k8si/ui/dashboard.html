@@ -674,6 +674,7 @@
 <!-- Footer -->
 <div class="footer">
   <span>k8si</span>
+  <span id="footer-version" style="color:#484f58"></span>
   <span class="footer-dot">·</span>
   <span id="footer-summary">Loading…</span>
   <span class="footer-dot">·</span>
@@ -1181,7 +1182,7 @@
       var data = JSON.parse(e.data);
       var content = document.getElementById('log-content');
       if (data.type === 'phase') {
-        var t = data.time ? new Date(data.time).toLocaleTimeString() : '';
+        var t = data.time ? new Date(data.time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false}) : '';
         content.innerHTML += '<div class="log-phase"><span class="phase-time">' + escapeHtml(t) + '</span>'
           + '<span class="phase-name">' + escapeHtml(data.phase) + '</span>'
           + '<span>' + escapeHtml(data.message) + '</span></div>';
@@ -1212,6 +1213,15 @@
   loadBackups();
   setInterval(loadBackups, 30000);
   startRefreshCounter();
+
+  fetch('/api/version')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.version) {
+        document.getElementById('footer-version').textContent = ' ' + d.version;
+      }
+    })
+    .catch(function() {});
 </script>
 
 </body>

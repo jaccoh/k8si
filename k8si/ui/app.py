@@ -1,6 +1,7 @@
 """k8si web UI — read-only backup status dashboard."""
 
 import asyncio
+import importlib.metadata
 import json
 import os
 from contextlib import asynccontextmanager
@@ -27,8 +28,31 @@ def _is_new_run(last_backup_time: str | None, since: str | None) -> bool:
         return False
     try:
         return datetime.fromisoformat(last_backup_time) > datetime.fromisoformat(since)
-    except ValueError:
+    except (ValueError, TypeError):
         return True
+
+
+def _parse_since(since: str | None) -> datetime | None:
+    """Parse the since query parameter into a datetime, or None if absent/invalid."""
+    if since is None:
+        return None
+    try:
+        return datetime.fromisoformat(since)
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_stale_entry(entry: dict, since_dt: datetime | None) -> bool:
+    """Return True if entry belongs to a previous run (time <= since)."""
+    if since_dt is None:
+        return False
+    entry_time = entry.get("time")
+    if not entry_time:
+        return False
+    try:
+        return datetime.fromisoformat(entry_time) <= since_dt
+    except (ValueError, TypeError):
+        return False
 
 
 VERSION = "v1"
@@ -173,6 +197,7 @@ async def stream_logs(
     async def _generate():
         seen = 0
         log_lines_seen = 0
+        since_dt = _parse_since(since)
         for _ in range(300):  # max ~10 min at 2s/poll
             try:
                 obj = await asyncio.to_thread(
@@ -190,8 +215,13 @@ async def stream_logs(
             status = obj.get("status", {})
             run_log = status.get("lastRunLog", [])
 
+            # Operator cleared the log → new run started; reset position
+            if len(run_log) < seen:
+                seen = 0
+
             for entry in run_log[seen:]:
-                yield f"data: {json.dumps({'type': 'phase', **entry})}\n\n"
+                if not _is_stale_entry(entry, since_dt):
+                    yield f"data: {json.dumps({'type': 'phase', **entry})}\n\n"
             seen = len(run_log)
 
             result = status.get("lastBackupResult")
@@ -229,6 +259,15 @@ async def stream_logs(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/version")
+def get_version() -> dict[str, str]:
+    try:
+        ver = importlib.metadata.version("k8si")
+    except importlib.metadata.PackageNotFoundError:
+        ver = "dev"
+    return {"version": ver}
 
 
 @app.get("/healthz")
