@@ -29,6 +29,8 @@ def _is_new_run(last_backup_time: str | None, since: str | None) -> bool:
         return datetime.fromisoformat(last_backup_time) > datetime.fromisoformat(since)
     except ValueError:
         return True
+
+
 VERSION = "v1"
 PLURAL = "k8sibackups"
 
