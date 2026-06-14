@@ -11,3 +11,6 @@ htmlcov/
 .superpowers/
 *.png
 CLAUDE.md
+.gitea/
+docs/superpowers/
+docs/operator-plan.md
