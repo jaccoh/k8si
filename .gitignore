@@ -10,3 +10,4 @@ htmlcov/
 .playwright-mcp/
 .superpowers/
 *.png
+CLAUDE.md
