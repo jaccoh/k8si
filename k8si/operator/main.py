@@ -318,9 +318,7 @@ async def on_run_create(
         return
 
     if key in _running:
-        logger.warning(
-            "Concurrent on_run_create for %s/%s, marking Failed", namespace, backup_name
-        )
+        logger.warning("Concurrent on_run_create for %s/%s, marking Failed", namespace, backup_name)
         await asyncio.to_thread(
             _patch_run_status,
             namespace,

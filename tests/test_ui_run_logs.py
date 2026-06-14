@@ -61,7 +61,7 @@ def test_stream_run_logs_emits_error_event_on_404_during_stream(
     poll_exc = kubernetes.client.exceptions.ApiException(status=404)
     mock_api.get_namespaced_custom_object.side_effect = [
         _run_obj("Running"),  # initial existence check
-        poll_exc,             # first poll inside _generate
+        poll_exc,  # first poll inside _generate
     ]
 
     client = _make_client()
