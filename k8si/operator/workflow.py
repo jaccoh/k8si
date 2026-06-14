@@ -22,7 +22,7 @@ _JOB_GONE_TIMEOUT = 120
 
 
 def _write_run_log(name: str, namespace: str, entries: list[dict]) -> None:
-    """Directly PATCH CRD status with the current phase log. Best-effort — swallows all errors."""
+    """Directly PATCH K8siBackup status.lastRunLog. Best-effort — swallows all errors."""
     try:
         api = kubernetes.client.CustomObjectsApi()
         api.patch_namespaced_custom_object_status(
@@ -32,6 +32,22 @@ def _write_run_log(name: str, namespace: str, entries: list[dict]) -> None:
             plural="k8sibackups",
             name=name,
             body={"status": {"lastRunLog": entries}},
+        )
+    except Exception:
+        pass
+
+
+def _patch_run_status(run_ns: str, run_name: str, fields: dict) -> None:
+    """Directly PATCH K8siBackupRun status fields. Best-effort — swallows all errors."""
+    try:
+        api = kubernetes.client.CustomObjectsApi()
+        api.patch_namespaced_custom_object_status(
+            group="k8si.io",
+            version="v1",
+            namespace=run_ns,
+            plural="k8sibackupruns",
+            name=run_name,
+            body={"status": fields},
         )
     except Exception:
         pass
@@ -70,16 +86,30 @@ async def run_backup(
     spec: dict[str, Any],
     logger: logging.Logger,
     body: dict[str, Any] | None = None,
+    run_name: str | None = None,
+    run_ns: str | None = None,
 ) -> dict[str, str]:
-    """Run the full snapshot-first backup. Returns status fields on success."""
+    """Run the full snapshot-first backup. Returns status fields on success.
+
+    When run_name is provided, live log entries are patched to K8siBackupRun status.
+    Otherwise they are patched to K8siBackup status (legacy, for tests).
+    """
     run_log: list[dict] = []
-    _write_run_log(name, namespace, run_log)  # clear previous run's log immediately
+    _effective_run_ns = run_ns or namespace
+
+    if run_name:
+        _patch_run_status(_effective_run_ns, run_name, {"log": []})
+    else:
+        _write_run_log(name, namespace, run_log)
 
     def _log_phase(phase: str, message: str) -> None:
         run_log.append(
             {"time": datetime.now(tz=UTC).isoformat(), "phase": phase, "message": message}
         )
-        _write_run_log(name, namespace, run_log)
+        if run_name:
+            _patch_run_status(_effective_run_ns, run_name, {"log": run_log})
+        else:
+            _write_run_log(name, namespace, run_log)
 
     await _cleanup_orphan_snap_pvcs(name, namespace)
     pvc_name = spec["pvc"]

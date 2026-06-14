@@ -1,16 +1,40 @@
-"""Tests for recentBackups rolling history in k8si/operator/main.py backup_timer."""
+"""Tests for recentBackups rolling history — now via _update_parent_backup in main.py."""
 
 import logging
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
-_SUCCESS_RESULT = {
-    "lastBackupResult": "success",
-    "lastBackupTime": "2026-06-09T02:00:00+00:00",
-    "message": "",
-}
+_LAST_BACKUP_TIME = "2026-06-09T02:00:00+00:00"
+
+
+def _run_update(
+    result: str,
+    existing_recent: list,
+    error: str = "",
+    run_result: dict | None = None,
+) -> list:
+    """Run _update_parent_backup and return the recentBackups list from the PATCH call."""
+    from k8si.operator.main import _update_parent_backup
+
+    custom = MagicMock()
+    backup_obj = {"status": {"recentBackups": existing_recent}}
+    run_result = run_result or {"lastBackupTime": _LAST_BACKUP_TIME, "message": ""}
+
+    async def _run():
+        with (
+            patch("k8si.operator.main.metrics.record"),
+            patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock),
+        ):
+            await _update_parent_backup(
+                custom, "test", "default", "test-run", result, run_result, backup_obj, SPEC, 30, error=error
+            )
+
+    run_coro(_run())
+    call = custom.patch_namespaced_custom_object_status.call_args
+    body = call.args[5] if len(call.args) > 5 else call.kwargs.get("body", {})
+    return body["status"]["recentBackups"]
 
 
 # ---------------------------------------------------------------------------
@@ -19,37 +43,13 @@ _SUCCESS_RESULT = {
 
 
 def test_success_prepends_to_recent_backups():
-    from k8si.operator import main
-
-    patch_obj = FakePatch()
-    logger = logging.getLogger("test")
-
     existing_entry = {"time": "2026-06-08T02:00:00+00:00", "result": "success"}
 
-    async def _run_timer():
-        with (
-            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
-            patch("k8si.operator.main.metrics.record"),
-            patch("k8si.operator.main.kopf.event"),
-            patch("k8si.operator.main._is_due", return_value=True),
-        ):
-            mock_run.return_value = _SUCCESS_RESULT
-            await main.backup_timer(
-                body=BODY,
-                spec=SPEC,
-                name="test",
-                namespace="default",
-                status={"recentBackups": [existing_entry]},
-                patch=patch_obj,
-                logger=logger,
-            )
+    recent = _run_update("success", [existing_entry])
 
-    run_coro(_run_timer())
-
-    recent = patch_obj.status.get("recentBackups", [])
     assert len(recent) == 2, f"Expected 2 entries, got {len(recent)}"
     assert recent[0]["result"] == "success"
-    assert recent[0]["time"] == _SUCCESS_RESULT["lastBackupTime"]
+    assert recent[0]["time"] == _LAST_BACKUP_TIME
     assert recent[1] == existing_entry
 
 
@@ -59,34 +59,10 @@ def test_success_prepends_to_recent_backups():
 
 
 def test_failure_prepends_to_recent_backups():
-    from k8si.operator import main
-
-    patch_obj = FakePatch()
-    logger = logging.getLogger("test")
-
     existing_entry = {"time": "2026-06-08T02:00:00+00:00", "result": "success"}
 
-    async def _run_timer():
-        with (
-            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
-            patch("k8si.operator.main.metrics.record"),
-            patch("k8si.operator.main.kopf.event"),
-            patch("k8si.operator.main._is_due", return_value=True),
-        ):
-            mock_run.side_effect = RuntimeError("disk full")
-            await main.backup_timer(
-                body=BODY,
-                spec=SPEC,
-                name="test",
-                namespace="default",
-                status={"recentBackups": [existing_entry]},
-                patch=patch_obj,
-                logger=logger,
-            )
+    recent = _run_update("failed", [existing_entry], error="disk full")
 
-    run_coro(_run_timer())
-
-    recent = patch_obj.status.get("recentBackups", [])
     assert len(recent) == 2, f"Expected 2 entries, got {len(recent)}"
     assert recent[0]["result"] == "failed"
     assert "time" in recent[0]
@@ -99,39 +75,15 @@ def test_failure_prepends_to_recent_backups():
 
 
 def test_recent_backups_trimmed_to_30():
-    from k8si.operator import main
-
-    patch_obj = FakePatch()
-    logger = logging.getLogger("test")
-
     existing_entries = [
         {"time": f"2026-06-0{(i % 9) + 1}T0{i % 10}:00:00+00:00", "result": "success"}
         for i in range(30)
     ]
 
-    async def _run_timer():
-        with (
-            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
-            patch("k8si.operator.main.metrics.record"),
-            patch("k8si.operator.main.kopf.event"),
-            patch("k8si.operator.main._is_due", return_value=True),
-        ):
-            mock_run.return_value = _SUCCESS_RESULT
-            await main.backup_timer(
-                body=BODY,
-                spec=SPEC,
-                name="test",
-                namespace="default",
-                status={"recentBackups": list(existing_entries)},
-                patch=patch_obj,
-                logger=logger,
-            )
+    recent = _run_update("success", list(existing_entries))
 
-    run_coro(_run_timer())
-
-    recent = patch_obj.status.get("recentBackups", [])
     assert len(recent) == 30, f"Expected exactly 30 entries, got {len(recent)}"
-    assert recent[0]["time"] == _SUCCESS_RESULT["lastBackupTime"]
+    assert recent[0]["time"] == _LAST_BACKUP_TIME
     assert recent[0]["result"] == "success"
     assert recent[-1] != existing_entries[-1]
 
@@ -181,7 +133,6 @@ def test_max_retries_per_day_skips_when_limit_reached():
 def test_max_retries_per_day_runs_when_under_limit():
     from k8si.operator import main
 
-    patch_obj = FakePatch()
     logger = logging.getLogger("test")
 
     today = _today_iso()
@@ -193,22 +144,23 @@ def test_max_retries_per_day_runs_when_under_limit():
 
     async def _run_timer():
         with (
-            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
             patch("k8si.operator.main.metrics.record"),
             patch("k8si.operator.main.kopf.event"),
             patch("k8si.operator.main._is_due", return_value=True),
         ):
-            mock_run.return_value = _SUCCESS_RESULT
+            mock_k8s = MagicMock()
+            mock_k8s_cls.return_value = mock_k8s
             await main.backup_timer(
                 body=BODY,
                 spec=spec_with_limit,
                 name="test",
                 namespace="default",
                 status={"recentBackups": failed_entries},
-                patch=patch_obj,
+                patch=FakePatch(),
                 logger=logger,
             )
-            mock_run.assert_called_once()
+            mock_k8s.create_namespaced_custom_object.assert_called_once()
 
     run_coro(_run_timer())
 

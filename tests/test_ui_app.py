@@ -46,6 +46,7 @@ EXPECTED_SHAPED = {
     "lastBackupResult": "success",
     "nextBackupTime": "2024-01-16T02:00:00Z",
     "triggeredAt": None,
+    "lastRunRef": None,
     "message": "Backup completed",
     "recentBackups": [
         {"time": "2024-01-15T02:00:00Z", "result": "success"},
@@ -381,6 +382,62 @@ def test_logs_seen_resets_on_log_clear(
 
     assert resp.status_code == 200
     assert "NewPhase" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# GET /api/runs/{ns}/{runName}/logs — run-specific SSE endpoint
+# ---------------------------------------------------------------------------
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_run_logs_streams_phase_entries(mock_custom: MagicMock) -> None:
+    """GET /api/runs logs streams phase entries and closes on Succeeded."""
+    run_obj_succeeded = {
+        "status": {
+            "phase": "Succeeded",
+            "log": [{"time": "2026-06-14T10:00:00Z", "phase": "Snapshot", "message": "done"}],
+        }
+    }
+    mock_custom.return_value.get_namespaced_custom_object.return_value = run_obj_succeeded
+
+    client = _logs_client()
+    resp = client.get("/api/runs/default/mybackup-20260614/logs")
+
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+    body = resp.text
+    assert "Snapshot" in body
+    assert '"type": "phase"' in body
+    assert '"type": "done"' in body
+    assert '"result": "success"' in body
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_run_logs_emits_done_failed_on_failed_phase(mock_custom: MagicMock) -> None:
+    """GET /api/runs logs emits done with result=failed when phase=Failed."""
+    run_obj_failed = {"status": {"phase": "Failed", "log": [], "message": "timeout"}}
+    mock_custom.return_value.get_namespaced_custom_object.return_value = run_obj_failed
+
+    client = _logs_client()
+    resp = client.get("/api/runs/default/mybackup-20260614/logs")
+
+    assert resp.status_code == 200
+    assert '"result": "failed"' in resp.text
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_run_logs_404_on_missing_run(mock_custom: MagicMock) -> None:
+    """GET /api/runs logs returns 404 when the run does not exist."""
+    import kubernetes.client.exceptions
+
+    exc = kubernetes.client.exceptions.ApiException(status=404)
+    exc.status = 404
+    mock_custom.return_value.get_namespaced_custom_object.side_effect = exc
+
+    client = _logs_client()
+    resp = client.get("/api/runs/default/missing-run/logs")
+
+    assert resp.status_code == 404
 
 
 def test_version_endpoint_returns_version() -> None:

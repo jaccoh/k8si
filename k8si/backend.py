@@ -1,5 +1,6 @@
 """BackupBackend protocol — swap restic for kopia (or anything) without touching callers."""
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -15,6 +16,13 @@ class NoSnapshotsError(BackupError):
     pass
 
 
+@dataclass
+class SnapshotInfo:
+    id: str
+    short_id: str
+    size_bytes: int
+
+
 @runtime_checkable
 class BackupBackend(Protocol):
     def init(self) -> None: ...
@@ -27,3 +35,4 @@ class BackupBackend(Protocol):
     def forget(self, daily: int, weekly: int, monthly: int, prune: bool = True) -> None: ...
     def unlock(self) -> None: ...
     def check(self) -> None: ...
+    def verify_snapshot(self, run_tag: str) -> SnapshotInfo: ...

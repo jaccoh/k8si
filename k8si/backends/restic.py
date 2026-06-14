@@ -11,7 +11,7 @@ from pathlib import Path
 
 import sh
 
-from ..backend import BackupError, NoSnapshotsError
+from ..backend import BackupError, NoSnapshotsError, SnapshotInfo
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +137,16 @@ class ResticBackend:
 
     def check(self) -> None:
         self._invoke("check")
+
+    def verify_snapshot(self, run_tag: str) -> SnapshotInfo:
+        snaps = self.snapshots(tags=[run_tag])
+        if len(snaps) == 0:
+            raise BackupError(f"no snapshot found with tag {run_tag!r}")
+        if len(snaps) > 1:
+            raise BackupError(f"ambiguous: {len(snaps)} snapshots found with tag {run_tag!r}")
+        snap = snaps[0]
+        size = self.snapshot_size(snap["id"])
+        return SnapshotInfo(id=snap["id"], short_id=snap["short_id"], size_bytes=size)
 
     # ── internal ───────────────────────────────────────────────────────────────
 

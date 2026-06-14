@@ -407,3 +407,50 @@ def test_invoke_raises_backup_error_on_timeout() -> None:
     mock_cmd.side_effect = _sh.TimeoutException(1, "restic init")
     with pytest.raises(BackupError, match="timed out"):
         backend.init()
+
+
+# ── verify_snapshot ────────────────────────────────────────────────────────────
+
+
+def test_verify_snapshot_returns_snapshot_info() -> None:
+    from k8si.backend import SnapshotInfo
+
+    data = [{"id": "abc123full", "short_id": "abc123", "time": "2026-06-14T10:00:00Z"}]
+    backend, mock_cmd = _make_backend()
+    mock_cmd.side_effect = [
+        json.dumps(data),
+        json.dumps({"total_size": 1024}),
+    ]
+    info = backend.verify_snapshot("k8si-run=myrun-20260614")
+    assert isinstance(info, SnapshotInfo)
+    assert info.id == "abc123full"
+    assert info.short_id == "abc123"
+    assert info.size_bytes == 1024
+
+
+def test_verify_snapshot_passes_run_tag_to_snapshots() -> None:
+    data = [{"id": "abc123full", "short_id": "abc123", "time": "2026-06-14T10:00:00Z"}]
+    backend, mock_cmd = _make_backend()
+    mock_cmd.side_effect = [json.dumps(data), json.dumps({"total_size": 0})]
+    backend.verify_snapshot("k8si-run=myrun")
+    first_call = mock_cmd.call_args_list[0]
+    assert "--tag" in first_call[0]
+    assert "k8si-run=myrun" in first_call[0]
+
+
+def test_verify_snapshot_raises_when_no_snapshot_found() -> None:
+    backend, mock_cmd = _make_backend()
+    mock_cmd.return_value = "[]"
+    with pytest.raises(BackupError, match="no snapshot found"):
+        backend.verify_snapshot("k8si-run=norun")
+
+
+def test_verify_snapshot_raises_on_ambiguous_match() -> None:
+    data = [
+        {"id": "abc1", "short_id": "abc1", "time": "2026-06-14T10:00:00Z"},
+        {"id": "abc2", "short_id": "abc2", "time": "2026-06-14T10:01:00Z"},
+    ]
+    backend, mock_cmd = _make_backend()
+    mock_cmd.return_value = json.dumps(data)
+    with pytest.raises(BackupError, match="ambiguous"):
+        backend.verify_snapshot("k8si-run=myrun")

@@ -15,13 +15,13 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
 GROUP = "k8si.io"
+VERSION = "v1"
+PLURAL = "k8sibackups"
+RUN_PLURAL = "k8sibackupruns"
 
 
 def _is_new_run(last_backup_time: str | None, since: str | None) -> bool:
-    """Return True if last_backup_time is strictly after since (new run completed).
-
-    If since is None, always return True (no filter requested).
-    """
+    """Return True if last_backup_time is strictly after since (new run completed)."""
     if since is None:
         return True
     if not last_backup_time:
@@ -33,7 +33,6 @@ def _is_new_run(last_backup_time: str | None, since: str | None) -> bool:
 
 
 def _parse_since(since: str | None) -> datetime | None:
-    """Parse the since query parameter into a datetime, or None if absent/invalid."""
     if since is None:
         return None
     try:
@@ -43,7 +42,6 @@ def _parse_since(since: str | None) -> datetime | None:
 
 
 def _is_stale_entry(entry: dict, since_dt: datetime | None) -> bool:
-    """Return True if entry belongs to a previous run (time <= since)."""
     if since_dt is None:
         return False
     entry_time = entry.get("time")
@@ -53,10 +51,6 @@ def _is_stale_entry(entry: dict, since_dt: datetime | None) -> bool:
         return datetime.fromisoformat(entry_time) <= since_dt
     except (ValueError, TypeError):
         return False
-
-
-VERSION = "v1"
-PLURAL = "k8sibackups"
 
 
 def _load_k8s() -> None:
@@ -83,7 +77,6 @@ def list_backups() -> list[dict[str, Any]]:
 
 
 def _compute_stats(recent: list[dict]) -> dict[str, Any]:
-    """Compute successRate and streak from a recentBackups list (most-recent-first)."""
     if not recent:
         return {"successRate": None, "streak": 0}
     success_count = sum(1 for e in recent if e.get("result") == "success")
@@ -119,6 +112,7 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "lastBackupResult": status.get("lastBackupResult", "pending"),
         "nextBackupTime": status.get("nextBackupTime"),
         "triggeredAt": status.get("triggeredAt"),
+        "lastRunRef": status.get("lastRunRef"),
         "message": status.get("message", ""),
         "recentBackups": recent,
         "successRate": stats["successRate"],
@@ -134,26 +128,49 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
 def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
     custom = kubernetes.client.CustomObjectsApi()
     try:
-        custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
+        backup_obj = custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
     except kubernetes.client.exceptions.ApiException as e:
         if e.status == 404:
             raise HTTPException(status_code=404, detail=f"{namespace}/{name} not found")
         raise HTTPException(status_code=500, detail=str(e))
 
-    now = datetime.now(tz=UTC).isoformat()
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+    run_name = f"{name}-{ts}"
+    triggered_at = datetime.now(tz=UTC).isoformat()
+    mode = backup_obj.get("spec", {}).get("backupMode", "snapshot")
+
+    run_obj = {
+        "apiVersion": f"{GROUP}/v1",
+        "kind": "K8siBackupRun",
+        "metadata": {
+            "name": run_name,
+            "namespace": namespace,
+            "labels": {f"{GROUP}/backup": name},
+            "ownerReferences": [
+                {
+                    "apiVersion": f"{GROUP}/v1",
+                    "kind": "K8siBackup",
+                    "name": name,
+                    "uid": backup_obj["metadata"]["uid"],
+                    "controller": True,
+                    "blockOwnerDeletion": True,
+                }
+            ],
+        },
+        "spec": {
+            "backupRef": name,
+            "triggeredBy": "manual",
+            "triggeredAt": triggered_at,
+            "mode": mode,
+        },
+    }
+
     try:
-        custom.patch_namespaced_custom_object_status(
-            GROUP,
-            VERSION,
-            namespace,
-            PLURAL,
-            name,
-            {"status": {"triggeredAt": now}},
-        )
+        custom.create_namespaced_custom_object(GROUP, VERSION, namespace, RUN_PLURAL, run_obj)
     except kubernetes.client.exceptions.ApiException as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return {"triggered": True, "triggeredAt": now}
+    return {"triggered": True, "triggeredAt": triggered_at, "runName": run_name}
 
 
 @app.patch("/api/backups/{namespace}/{name}/paused")
@@ -169,12 +186,7 @@ def set_paused(namespace: str, name: str, body: dict[str, Any]) -> dict[str, Any
     paused = bool(body.get("paused", False))
     try:
         custom.patch_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            namespace,
-            PLURAL,
-            name,
-            {"spec": {"paused": paused}},
+            GROUP, VERSION, namespace, PLURAL, name, {"spec": {"paused": paused}}
         )
     except kubernetes.client.exceptions.ApiException as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -182,10 +194,63 @@ def set_paused(namespace: str, name: str, body: dict[str, Any]) -> dict[str, Any
     return {"paused": paused}
 
 
+@app.get("/api/runs/{namespace}/{run_name}/logs")
+async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
+    """SSE stream for a specific K8siBackupRun — polls phase and log until terminal."""
+    custom = kubernetes.client.CustomObjectsApi()
+    try:
+        custom.get_namespaced_custom_object(GROUP, VERSION, namespace, RUN_PLURAL, run_name)
+    except kubernetes.client.exceptions.ApiException as e:
+        if e.status == 404:
+            raise HTTPException(status_code=404, detail=f"run {namespace}/{run_name} not found")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    async def _generate():
+        seen = 0
+        yield ": connected\n\n"
+        for _ in range(600):  # max 20 min at 2s/poll
+            try:
+                obj = await asyncio.to_thread(
+                    custom.get_namespaced_custom_object,
+                    GROUP,
+                    VERSION,
+                    namespace,
+                    RUN_PLURAL,
+                    run_name,
+                )
+            except Exception:
+                await asyncio.sleep(2)
+                continue
+
+            status = obj.get("status", {})
+            run_log = status.get("log", [])
+            phase = status.get("phase", "Pending")
+
+            for entry in run_log[seen:]:
+                yield f"data: {json.dumps({'type': 'phase', **entry})}\n\n"
+            seen = len(run_log)
+
+            if phase in ("Succeeded", "Failed"):
+                result = "success" if phase == "Succeeded" else "failed"
+                yield f"data: {json.dumps({'type': 'done', 'result': result, 'phase': phase})}\n\n"
+                return
+
+            await asyncio.sleep(2)
+
+        yield f"data: {json.dumps({'type': 'done', 'result': 'timeout'})}\n\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/api/backups/{namespace}/{name}/logs")
 async def stream_logs(
     namespace: str, name: str, since: str | None = Query(None)
 ) -> StreamingResponse:
+    """Legacy SSE endpoint — watches K8siBackup.status.lastRunLog."""
     custom = kubernetes.client.CustomObjectsApi()
     try:
         custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
@@ -198,8 +263,8 @@ async def stream_logs(
         seen = 0
         log_lines_seen = 0
         since_dt = _parse_since(since)
-        yield ": connected\n\n"  # flush headers through ingress; triggers onopen in browser
-        for _ in range(300):  # max ~10 min at 2s/poll
+        yield ": connected\n\n"
+        for _ in range(300):
             try:
                 obj = await asyncio.to_thread(
                     custom.get_namespaced_custom_object,
@@ -216,7 +281,6 @@ async def stream_logs(
             status = obj.get("status", {})
             run_log = status.get("lastRunLog", [])
 
-            # Operator cleared the log → new run started; reset position
             if len(run_log) < seen:
                 seen = 0
 

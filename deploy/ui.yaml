@@ -16,6 +16,12 @@ rules:
   - apiGroups: ["k8si.io"]
     resources: ["k8sibackups/status"]
     verbs: ["patch"]
+  - apiGroups: ["k8si.io"]
+    resources: ["k8sibackupruns"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["k8si.io"]
+    resources: ["k8sibackupruns/status"]
+    verbs: ["patch"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1

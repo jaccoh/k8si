@@ -12,7 +12,7 @@ from pathlib import Path
 
 import sh
 
-from ..backend import BackupError, NoSnapshotsError
+from ..backend import BackupError, NoSnapshotsError, SnapshotInfo
 
 log = logging.getLogger(__name__)
 
@@ -234,6 +234,21 @@ class KopiaBackend:
     def check(self) -> None:
         self._ensure_connected()
         self._invoke("snapshot", "verify", "--all")
+
+    def verify_snapshot(self, run_tag: str) -> SnapshotInfo:
+        self._ensure_connected()
+        raw = self._invoke("snapshot", "list", "--json")
+        data = json.loads(raw.strip() or "[]")
+        key, val = run_tag.split("=", 1) if "=" in run_tag else ("tag", run_tag)
+        matches = [s for s in data if s.get("tags", {}).get(key) == val]
+        if len(matches) == 0:
+            raise BackupError(f"no snapshot found with tag {run_tag!r}")
+        if len(matches) > 1:
+            raise BackupError(f"ambiguous: {len(matches)} snapshots found with tag {run_tag!r}")
+        snap = matches[0]
+        snap_id = snap["id"]
+        size = self.snapshot_size(snap_id)
+        return SnapshotInfo(id=snap_id, short_id=snap_id[:8], size_bytes=size)
 
     # ── internal ───────────────────────────────────────────────────────────────
 

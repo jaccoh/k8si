@@ -14,6 +14,7 @@ from croniter import croniter
 from . import metrics, workflow
 from .cronjob import K8SI_IMAGE, build_restore_patch
 from .status import compute_next_backup
+from .workflow import _patch_run_status
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ def _init_metrics(logger: logging.Logger) -> None:
         )
 
 
-# ── CRD lifecycle ──────────────────────────────────────────────────────────────
+# ── K8siBackup lifecycle ──────────────────────────────────────────────────────
 
 
 @kopf.on.create("k8si.io", "v1", "k8sibackups")  # type: ignore[arg-type]
@@ -214,63 +215,212 @@ async def backup_timer(
             )
             return
 
-    _running.add(key)
-    patch.status["lastBackupResult"] = "running"
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+    run_name = f"{name}-{ts}"
+    triggered_by = "manual" if is_triggered else "schedule"
+    triggered_at = datetime.now(tz=UTC).isoformat()
+    mode = spec.get("backupMode", "snapshot")
+
     if is_triggered:
         patch.status["triggeredAt"] = None
         logger.info("Backup %s/%s triggered manually, clearing triggeredAt", namespace, name)
-    metrics.record(name, namespace, "running", last_backup)
-    kopf.event(body, type="Normal", reason="BackupStarted", message=f"Backup started for {name}")
-    backup_start = datetime.now(tz=UTC)
+
+    _running.add(key)
+
+    run_obj = {
+        "apiVersion": "k8si.io/v1",
+        "kind": "K8siBackupRun",
+        "metadata": {
+            "name": run_name,
+            "namespace": namespace,
+            "labels": {"k8si.io/backup": name},
+            "ownerReferences": [
+                {
+                    "apiVersion": "k8si.io/v1",
+                    "kind": "K8siBackup",
+                    "name": name,
+                    "uid": body["metadata"]["uid"],
+                    "controller": True,
+                    "blockOwnerDeletion": True,
+                }
+            ],
+        },
+        "spec": {
+            "backupRef": name,
+            "triggeredBy": triggered_by,
+            "triggeredAt": triggered_at,
+            "mode": mode,
+        },
+    }
+
+    custom = kubernetes.client.CustomObjectsApi()
     try:
-        result = await workflow.run_backup(name, namespace, spec, logger, body)
-        duration = int((datetime.now(tz=UTC) - backup_start).total_seconds())
-        patch.status.update(result)
-        patch.status["lastBackupDuration"] = duration
-        patch.status["nextBackupTime"] = compute_next_backup(schedule)
-        now_iso = result.get("lastBackupTime") or datetime.now(tz=UTC).isoformat()
-        recent = list(status.get("recentBackups", []))
-        recent.insert(0, {"time": now_iso, "result": result.get("lastBackupResult", "success")})
-        patch.status["recentBackups"] = recent[:30]
-        metrics.record(name, namespace, "success", result.get("lastBackupTime"), duration=duration)
-        kopf.event(body, type="Normal", reason="BackupSucceeded", message=f"Backup done: {name}")
-        webhook = spec.get("notifyOnSuccess")
-        if webhook:
-            await _notify_webhook(
-                webhook,
-                {
-                    "name": name,
-                    "namespace": namespace,
-                    "result": "success",
-                    "message": result.get("message", ""),
-                    "time": now_iso,
-                    "duration": duration,
-                },
-            )
+        await asyncio.to_thread(
+            custom.create_namespaced_custom_object,
+            "k8si.io",
+            "v1",
+            namespace,
+            "k8sibackupruns",
+            run_obj,
+        )
+        logger.info("Created K8siBackupRun %s/%s", namespace, run_name)
+        patch.status["lastBackupResult"] = "running"
+        patch.status["lastRunRef"] = run_name
+        metrics.record(name, namespace, "running", last_backup)
+        kopf.event(
+            body, type="Normal", reason="BackupStarted", message=f"Created run {run_name}"
+        )
     except Exception as e:
-        duration = int((datetime.now(tz=UTC) - backup_start).total_seconds())
-        logger.error("Backup %s/%s failed: %s", namespace, name, e)
-        patch.status["lastBackupResult"] = "failed"
-        patch.status["lastBackupDuration"] = duration
-        patch.status["message"] = str(e)
-        now_iso = datetime.now(tz=UTC).isoformat()
-        recent = list(status.get("recentBackups", []))
-        recent.insert(0, {"time": now_iso, "result": "failed"})
-        patch.status["recentBackups"] = recent[:30]
-        metrics.record(name, namespace, "failed", last_backup, duration=duration)
-        kopf.event(body, type="Warning", reason="BackupFailed", message=f"PVC backup failed: {e}")
-        webhook = spec.get("notifyOnFailure")
-        if webhook:
-            await _notify_webhook(
-                webhook,
-                {
-                    "name": name,
-                    "namespace": namespace,
-                    "result": "failed",
-                    "message": str(e),
-                    "time": now_iso,
-                    "duration": duration,
-                },
-            )
+        _running.discard(key)
+        logger.error("Failed to create K8siBackupRun %s/%s: %s", namespace, run_name, e)
+
+
+# ── K8siBackupRun reconciler ──────────────────────────────────────────────────
+
+
+@kopf.on.create("k8si.io", "v1", "k8sibackupruns")  # type: ignore[arg-type]
+async def on_run_create(
+    body: dict,
+    spec: dict,
+    name: str,
+    namespace: str,
+    logger: logging.Logger,
+    **_: object,
+) -> None:
+    triggered_by = spec.get("triggeredBy", "schedule")
+    backup_name = spec["backupRef"]
+    key = (namespace, backup_name)
+
+    if triggered_by == "backfill":
+        logger.info("K8siBackupRun %s/%s is backfilled, skipping execution", namespace, name)
+        return
+
+    custom = kubernetes.client.CustomObjectsApi()
+    try:
+        backup_obj = await asyncio.to_thread(
+            custom.get_namespaced_custom_object,
+            "k8si.io",
+            "v1",
+            namespace,
+            "k8sibackups",
+            backup_name,
+        )
+    except Exception as e:
+        logger.error("K8siBackupRun %s: could not get parent backup %s: %s", name, backup_name, e)
+        _patch_run_status(namespace, name, {"phase": "Failed", "message": str(e)})
+        _running.discard(key)
+        return
+
+    backup_spec = backup_obj.get("spec", {})
+    start_time = datetime.now(tz=UTC).isoformat()
+    _patch_run_status(namespace, name, {"phase": "Running", "startTime": start_time})
+
+    backup_start_dt = datetime.now(tz=UTC)
+    try:
+        result = await workflow.run_backup(
+            backup_name,
+            namespace,
+            backup_spec,
+            logger,
+            body=backup_obj,
+            run_name=name,
+            run_ns=namespace,
+        )
+        duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
+        completion = datetime.now(tz=UTC).isoformat()
+        _patch_run_status(
+            namespace, name, {"phase": "Succeeded", "completionTime": completion, "message": ""}
+        )
+        await _update_parent_backup(
+            custom, backup_name, namespace, name, "success", result, backup_obj, backup_spec, duration
+        )
+    except Exception as e:
+        duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
+        logger.error("K8siBackupRun %s/%s failed: %s", namespace, name, e)
+        completion = datetime.now(tz=UTC).isoformat()
+        _patch_run_status(
+            namespace,
+            name,
+            {"phase": "Failed", "completionTime": completion, "message": str(e)},
+        )
+        await _update_parent_backup(
+            custom,
+            backup_name,
+            namespace,
+            name,
+            "failed",
+            {},
+            backup_obj,
+            backup_spec,
+            duration,
+            error=str(e),
+        )
     finally:
         _running.discard(key)
+
+
+async def _update_parent_backup(
+    custom: Any,
+    backup_name: str,
+    namespace: str,
+    run_name: str,
+    result: str,
+    run_result: dict,
+    backup_obj: dict,
+    backup_spec: dict,
+    duration: int,
+    error: str = "",
+) -> None:
+    """Update parent K8siBackup status after a run completes."""
+    status = backup_obj.get("status", {})
+    schedule = backup_spec.get("schedule", "0 2 * * *")
+    now_iso = run_result.get("lastBackupTime") or datetime.now(tz=UTC).isoformat()
+
+    recent_backups = list(status.get("recentBackups", []))
+    recent_backups.insert(0, {"time": now_iso, "result": result})
+
+    recent_runs = list(status.get("recentRuns", []))
+    recent_runs.insert(0, {"name": run_name, "time": now_iso, "result": result})
+
+    fields: dict[str, Any] = {
+        "lastRunRef": run_name,
+        "recentRuns": recent_runs[:30],
+        # Legacy fields — kept for v0.8.0 backward compat
+        "lastBackupResult": result,
+        "lastBackupDuration": duration,
+        "nextBackupTime": compute_next_backup(schedule),
+        "recentBackups": recent_backups[:30],
+        "message": error or run_result.get("message", ""),
+    }
+    if result == "success":
+        fields["lastSuccessfulRunRef"] = run_name
+        fields["lastBackupTime"] = now_iso
+
+    try:
+        await asyncio.to_thread(
+            custom.patch_namespaced_custom_object_status,
+            "k8si.io",
+            "v1",
+            namespace,
+            "k8sibackups",
+            backup_name,
+            {"status": fields},
+        )
+    except Exception as e:
+        log.warning("Failed to update parent K8siBackup %s/%s: %s", namespace, backup_name, e)
+
+    metrics.record(backup_name, namespace, result, now_iso if result == "success" else None, duration=duration)
+
+    webhook_url = backup_spec.get("notifyOnSuccess") if result == "success" else backup_spec.get("notifyOnFailure")
+    if webhook_url:
+        await _notify_webhook(
+            webhook_url,
+            {
+                "name": backup_name,
+                "namespace": namespace,
+                "result": result,
+                "message": error or run_result.get("message", ""),
+                "time": now_iso,
+                "duration": duration,
+            },
+        )

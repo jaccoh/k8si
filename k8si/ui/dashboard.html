@@ -1089,11 +1089,6 @@
   // ── Backup trigger ──────────────────────────────────────────────────────────
 
   function triggerBackup(namespace, name, btn) {
-    // Capture current lastBackupTime before the trigger so the SSE knows
-    // to wait for a new run rather than closing on the previous result.
-    var backup = allBackups.find(function(b) { return b.namespace === namespace && b.name === name; });
-    var since = backup ? (backup.lastBackupTime || new Date(0).toISOString()) : new Date(0).toISOString();
-
     btn.disabled = true;
     btn.textContent = 'Queuing…';
     btn.className = 'btn-trigger';
@@ -1103,16 +1098,17 @@
     })
       .then(function(resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      })
+      .then(function(data) {
         btn.textContent = 'Running…';
         btn.className = 'btn-trigger queued';
-        // Auto-open the log drawer anchored to this run.
-        openLogs(namespace, name, since);
-        // Poll fast so the status row updates promptly.
+        // Open run-specific log drawer via new SSE endpoint.
+        openRunLogs(namespace, data.runName);
         loadBackups();
-        // Re-enable button once we see a terminal state via fast-poll.
         var check = setInterval(function() {
           var b = allBackups.find(function(x) { return x.namespace === namespace && x.name === name; });
-          if (b && b.lastBackupResult !== 'running' && !b.triggeredAt) {
+          if (b && b.lastBackupResult !== 'running') {
             clearInterval(check);
             btn.textContent = 'Backup now';
             btn.className = 'btn-trigger';
@@ -1159,6 +1155,41 @@
   // ── Log drawer ──────────────────────────────────────────────────────────────
 
   let logsEventSource = null;
+
+  function openRunLogs(namespace, runName) {
+    if (logsEventSource) logsEventSource.close();
+    const drawer = document.getElementById('log-drawer');
+    drawer.style.display = 'flex';
+    document.getElementById('log-drawer-title').textContent = namespace + '/' + runName;
+    document.getElementById('log-drawer-status').textContent = 'connecting…';
+    document.getElementById('log-content').innerHTML = '';
+
+    var url = '/api/runs/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(runName) + '/logs';
+    logsEventSource = new EventSource(url);
+    logsEventSource.onopen = function() {
+      document.getElementById('log-drawer-status').textContent = 'live';
+    };
+    logsEventSource.onmessage = function(e) {
+      var data = JSON.parse(e.data);
+      var content = document.getElementById('log-content');
+      if (data.type === 'phase') {
+        var t = data.time ? new Date(data.time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false}) : '';
+        content.innerHTML += '<div class="log-phase"><span class="phase-time">' + escapeHtml(t) + '</span>'
+          + '<span class="phase-name">' + escapeHtml(data.phase) + '</span>'
+          + '<span>' + escapeHtml(data.message) + '</span></div>';
+      } else if (data.type === 'done') {
+        var cls = data.result === 'failed' ? 'log-done failed' : 'log-done';
+        content.innerHTML += '<div class="' + cls + '">— ' + escapeHtml(data.result || 'done') + ' —</div>';
+        document.getElementById('log-drawer-status').textContent = data.result || 'done';
+        logsEventSource.close();
+      }
+      content.scrollTop = content.scrollHeight;
+    };
+    logsEventSource.onerror = function() {
+      document.getElementById('log-drawer-status').textContent = 'disconnected';
+      logsEventSource.close();
+    };
+  }
 
   function openLogs(namespace, name, since) {
     if (logsEventSource) logsEventSource.close();

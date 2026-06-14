@@ -8,7 +8,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 SPEC = {"schedule": "0 2 * * *", "pvc": "test-pvc", "resticSecret": "test-secret"}
-BODY = {"metadata": {"name": "test", "namespace": "default"}}
+BODY = {"metadata": {"name": "test", "namespace": "default", "uid": "test-uid"}}
 
 
 class _StatusDict(dict):

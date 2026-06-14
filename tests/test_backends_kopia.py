@@ -431,3 +431,52 @@ def test_invoke_converts_error_return_code_to_backup_error() -> None:
     except BackupError as e:
         assert e.returncode == 2
         assert "some kopia error" in e.stderr
+
+
+# ── verify_snapshot ────────────────────────────────────────────────────────────
+
+
+def test_verify_snapshot_returns_snapshot_info() -> None:
+    from k8si.backend import BackupError, SnapshotInfo
+
+    kopia_data = [
+        {
+            "id": "snap-abc12345",
+            "startTime": "2026-06-14T10:00:00Z",
+            "tags": {"k8si-run": "myrun-20260614"},
+        }
+    ]
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.side_effect = [
+        json.dumps(kopia_data),
+        json.dumps({"rootEntry": {"summ": {"size": 2048}}}),
+    ]
+    info = backend.verify_snapshot("k8si-run=myrun-20260614")
+    assert isinstance(info, SnapshotInfo)
+    assert info.id == "snap-abc12345"
+    assert info.size_bytes == 2048
+
+
+def test_verify_snapshot_raises_when_no_snapshot_found() -> None:
+    from k8si.backend import BackupError
+
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = "[]"
+    with pytest.raises(BackupError, match="no snapshot found"):
+        backend.verify_snapshot("k8si-run=norun")
+
+
+def test_verify_snapshot_raises_on_ambiguous_match() -> None:
+    from k8si.backend import BackupError
+
+    kopia_data = [
+        {"id": "snap-1", "startTime": "...", "tags": {"k8si-run": "myrun"}},
+        {"id": "snap-2", "startTime": "...", "tags": {"k8si-run": "myrun"}},
+    ]
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = json.dumps(kopia_data)
+    with pytest.raises(BackupError, match="ambiguous"):
+        backend.verify_snapshot("k8si-run=myrun")

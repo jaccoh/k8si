@@ -2,7 +2,7 @@
 
 import logging
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tests.helpers import BODY, SPEC, FakePatch, run_coro
 
@@ -110,7 +110,7 @@ def test_outside_window_skips_backup():
 
 
 def test_inside_window_runs_backup():
-    """backup_timer must run a backup when inside the configured window."""
+    """backup_timer must create a K8siBackupRun when inside the configured window."""
     from k8si.operator import main
 
     patch_obj = FakePatch()
@@ -119,13 +119,14 @@ def test_inside_window_runs_backup():
 
     async def _run_timer():
         with (
-            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
             patch("k8si.operator.main.metrics.record"),
             patch("k8si.operator.main.kopf.event"),
             patch("k8si.operator.main._is_due", return_value=True),
             patch("k8si.operator.main._is_in_window", return_value=True),
         ):
-            mock_run.return_value = _SUCCESS_RESULT
+            mock_k8s = MagicMock()
+            mock_k8s_cls.return_value = mock_k8s
             await main.backup_timer(
                 body=BODY,
                 spec=spec,
@@ -135,6 +136,6 @@ def test_inside_window_runs_backup():
                 patch=patch_obj,
                 logger=logger,
             )
-            mock_run.assert_called_once()
+            mock_k8s.create_namespaced_custom_object.assert_called_once()
 
     run_coro(_run_timer())
