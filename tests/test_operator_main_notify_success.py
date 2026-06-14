@@ -6,7 +6,7 @@ from tests.helpers import SPEC, run_coro
 
 
 def test_notify_called_on_backup_success():
-    """_update_parent_backup calls _notify_webhook when spec.notifyOnSuccess is set and run succeeds."""
+    """_update_parent_backup calls _notify_webhook on success when notifyOnSuccess is set."""
     from k8si.operator.main import _update_parent_backup
 
     custom = MagicMock()
@@ -35,7 +35,7 @@ def test_notify_called_on_backup_success():
 
 
 def test_notify_not_called_on_failure_when_only_success_configured():
-    """_update_parent_backup does NOT call _notify_webhook for failure when only notifyOnSuccess is set."""
+    """_update_parent_backup does NOT notify for failure when only notifyOnSuccess is set."""
     from k8si.operator.main import _update_parent_backup
 
     custom = MagicMock()
@@ -48,7 +48,16 @@ def test_notify_not_called_on_failure_when_only_success_configured():
             patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock) as mock_notify,
         ):
             await _update_parent_backup(
-                custom, "test", "default", "test-run", "failed", {}, backup_obj, spec, 30, error="disk full"
+                custom,
+                "test",
+                "default",
+                "test-run",
+                "failed",
+                {},
+                backup_obj,
+                spec,
+                30,
+                error="disk full",
             )
             mock_notify.assert_not_called()
 

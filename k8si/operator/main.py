@@ -267,9 +267,7 @@ async def backup_timer(
         patch.status["lastBackupResult"] = "running"
         patch.status["lastRunRef"] = run_name
         metrics.record(name, namespace, "running", last_backup)
-        kopf.event(
-            body, type="Normal", reason="BackupStarted", message=f"Created run {run_name}"
-        )
+        kopf.event(body, type="Normal", reason="BackupStarted", message=f"Created run {run_name}")
     except Exception as e:
         _running.discard(key)
         logger.error("Failed to create K8siBackupRun %s/%s: %s", namespace, run_name, e)
@@ -332,7 +330,15 @@ async def on_run_create(
             namespace, name, {"phase": "Succeeded", "completionTime": completion, "message": ""}
         )
         await _update_parent_backup(
-            custom, backup_name, namespace, name, "success", result, backup_obj, backup_spec, duration
+            custom,
+            backup_name,
+            namespace,
+            name,
+            "success",
+            result,
+            backup_obj,
+            backup_spec,
+            duration,
         )
     except Exception as e:
         duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
@@ -409,9 +415,14 @@ async def _update_parent_backup(
     except Exception as e:
         log.warning("Failed to update parent K8siBackup %s/%s: %s", namespace, backup_name, e)
 
-    metrics.record(backup_name, namespace, result, now_iso if result == "success" else None, duration=duration)
+    metrics.record(
+        backup_name, namespace, result, now_iso if result == "success" else None, duration=duration
+    )
 
-    webhook_url = backup_spec.get("notifyOnSuccess") if result == "success" else backup_spec.get("notifyOnFailure")
+    if result == "success":
+        webhook_url = backup_spec.get("notifyOnSuccess")
+    else:
+        webhook_url = backup_spec.get("notifyOnFailure")
     if webhook_url:
         await _notify_webhook(
             webhook_url,

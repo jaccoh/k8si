@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import sh as _sh
 
 from k8si.backends.kopia import KopiaBackend
@@ -437,7 +438,7 @@ def test_invoke_converts_error_return_code_to_backup_error() -> None:
 
 
 def test_verify_snapshot_returns_snapshot_info() -> None:
-    from k8si.backend import BackupError, SnapshotInfo
+    from k8si.backend import SnapshotInfo
 
     kopia_data = [
         {

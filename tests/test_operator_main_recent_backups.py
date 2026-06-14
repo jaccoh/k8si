@@ -28,7 +28,16 @@ def _run_update(
             patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock),
         ):
             await _update_parent_backup(
-                custom, "test", "default", "test-run", result, run_result, backup_obj, SPEC, 30, error=error
+                custom,
+                "test",
+                "default",
+                "test-run",
+                result,
+                run_result,
+                backup_obj,
+                SPEC,
+                30,
+                error=error,
             )
 
     run_coro(_run())

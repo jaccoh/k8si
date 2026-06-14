@@ -1,9 +1,8 @@
 """Tests for spec.notifyOnFailure webhook notifications in k8si/operator/main.py."""
 
-import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.helpers import BODY, SPEC, FakePatch, run_coro
+from tests.helpers import SPEC, run_coro
 
 # ── unit tests for _notify_webhook ────────────────────────────────────────────
 
@@ -41,7 +40,7 @@ def test_notify_webhook_swallows_http_errors():
 
 
 def test_notify_called_on_backup_failure():
-    """_update_parent_backup calls _notify_webhook when spec.notifyOnFailure is set and run fails."""
+    """_update_parent_backup calls _notify_webhook on failure when notifyOnFailure is set."""
     from k8si.operator.main import _update_parent_backup
 
     custom = MagicMock()
@@ -54,7 +53,16 @@ def test_notify_called_on_backup_failure():
             patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock) as mock_notify,
         ):
             await _update_parent_backup(
-                custom, "test", "default", "test-run", "failed", {}, backup_obj, spec, 30, error="disk full"
+                custom,
+                "test",
+                "default",
+                "test-run",
+                "failed",
+                {},
+                backup_obj,
+                spec,
+                30,
+                error="disk full",
             )
             mock_notify.assert_called_once()
             call_args = mock_notify.call_args
@@ -69,7 +77,7 @@ def test_notify_called_on_backup_failure():
 
 
 def test_notify_not_called_on_success_when_only_failure_configured():
-    """_update_parent_backup does NOT call _notify_webhook for success when only notifyOnFailure is set."""
+    """_update_parent_backup does NOT notify for success when only notifyOnFailure is set."""
     from k8si.operator.main import _update_parent_backup
 
     custom = MagicMock()
@@ -103,7 +111,16 @@ def test_notify_not_called_when_not_configured():
             patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock) as mock_notify,
         ):
             await _update_parent_backup(
-                custom, "test", "default", "test-run", "failed", {}, backup_obj, SPEC, 30, error="disk full"
+                custom,
+                "test",
+                "default",
+                "test-run",
+                "failed",
+                {},
+                backup_obj,
+                SPEC,
+                30,
+                error="disk full",
             )
             mock_notify.assert_not_called()
 

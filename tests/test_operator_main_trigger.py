@@ -54,7 +54,7 @@ def test_invalid_triggered_at_is_false():
 
 
 def test_triggered_bypasses_schedule():
-    """triggeredAt newer than lastBackupTime causes a K8siBackupRun to be created even if _is_due is False."""
+    """triggeredAt newer than lastBackupTime creates a K8siBackupRun even if _is_due is False."""
     from k8si.operator import main
 
     patch_obj = FakePatch()
@@ -84,7 +84,7 @@ def test_triggered_bypasses_schedule():
 
 
 def test_triggered_bypasses_window():
-    """triggeredAt causes a K8siBackupRun to be created even when outside the configured backupWindow."""
+    """triggeredAt creates a K8siBackupRun even when outside the configured backupWindow."""
     from k8si.operator import main
 
     patch_obj = FakePatch()
