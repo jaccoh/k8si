@@ -246,6 +246,68 @@ def test_logs_endpoint_404_on_missing_backup(mock_custom: MagicMock) -> None:
     assert resp.status_code == 404
 
 
+def test_is_new_run_none_since() -> None:
+    """since=None → always treat as new run."""
+    from k8si.ui.app import _is_new_run
+
+    assert _is_new_run("2026-01-01T00:00:00Z", None) is True
+
+
+def test_is_new_run_same_timestamp() -> None:
+    """since == lastBackupTime → not a new run (stale)."""
+    from k8si.ui.app import _is_new_run
+
+    assert _is_new_run("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z") is False
+
+
+def test_is_new_run_newer_timestamp() -> None:
+    """lastBackupTime > since → new run completed."""
+    from k8si.ui.app import _is_new_run
+
+    assert _is_new_run("2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z") is True
+
+
+def test_is_new_run_missing_last_time() -> None:
+    """No lastBackupTime → not a new run yet."""
+    from k8si.ui.app import _is_new_run
+
+    assert _is_new_run(None, "2026-01-01T00:00:00Z") is False
+
+
+@patch("k8si.ui.app.asyncio.sleep")
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+@patch("k8si.ui.app.kubernetes.client.CoreV1Api")
+def test_logs_endpoint_since_new_run_emits_done(
+    mock_core: MagicMock, mock_custom: MagicMock, mock_sleep: MagicMock
+) -> None:
+    """GET /logs?since=T emits done when lastBackupTime > T (new run completed)."""
+    mock_sleep.return_value = None
+    stale = {
+        "status": {
+            "lastBackupResult": "success",
+            "lastBackupTime": "2026-01-01T00:00:00Z",
+            "lastRunLog": [],
+        }
+    }
+    new_run = {
+        "status": {
+            "lastBackupResult": "success",
+            "lastBackupTime": "2026-01-02T00:00:00Z",
+            "lastRunLog": [
+                {"time": "2026-01-02T00:00:00Z", "phase": "BackupJobStarted", "message": "go"}
+            ],
+        }
+    }
+    mock_custom.return_value.get_namespaced_custom_object.side_effect = [stale, new_run]
+
+    client = _logs_client()
+    resp = client.get("/api/backups/default/myapp/logs?since=2026-01-01T00:00:00Z")
+
+    assert resp.status_code == 200
+    assert "BackupJobStarted" in resp.text
+    assert '"result": "success"' in resp.text
+
+
 @pytest.mark.anyio
 async def test_lifespan_calls_load_k8s() -> None:
     """lifespan() calls _load_k8s() on startup and yields."""

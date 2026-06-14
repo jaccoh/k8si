@@ -10,10 +10,25 @@ from typing import Any
 import kubernetes
 import kubernetes.client
 import kubernetes.client.exceptions
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
 GROUP = "k8si.io"
+
+
+def _is_new_run(last_backup_time: str | None, since: str | None) -> bool:
+    """Return True if last_backup_time is strictly after since (new run completed).
+
+    If since is None, always return True (no filter requested).
+    """
+    if since is None:
+        return True
+    if not last_backup_time:
+        return False
+    try:
+        return datetime.fromisoformat(last_backup_time) > datetime.fromisoformat(since)
+    except ValueError:
+        return True
 VERSION = "v1"
 PLURAL = "k8sibackups"
 
@@ -142,7 +157,9 @@ def set_paused(namespace: str, name: str, body: dict[str, Any]) -> dict[str, Any
 
 
 @app.get("/api/backups/{namespace}/{name}/logs")
-async def stream_logs(namespace: str, name: str) -> StreamingResponse:
+async def stream_logs(
+    namespace: str, name: str, since: str | None = Query(None)
+) -> StreamingResponse:
     custom = kubernetes.client.CustomObjectsApi()
     try:
         custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
@@ -176,6 +193,7 @@ async def stream_logs(namespace: str, name: str) -> StreamingResponse:
             seen = len(run_log)
 
             result = status.get("lastBackupResult")
+            last_time = status.get("lastBackupTime")
             if result == "running":
                 try:
                     v1 = kubernetes.client.CoreV1Api()
@@ -196,7 +214,7 @@ async def stream_logs(namespace: str, name: str) -> StreamingResponse:
                             break
                 except Exception:
                     pass
-            elif result in ("success", "failed") and seen > 0:
+            elif result in ("success", "failed") and seen > 0 and _is_new_run(last_time, since):
                 yield f"data: {json.dumps({'type': 'done', 'result': result})}\n\n"
                 return
 

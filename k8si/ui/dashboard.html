@@ -687,6 +687,7 @@
   let searchQuery = '';
   let lastFetchTime = null;
   let refreshCounterInterval = null;
+  let fastPollTimer = null;
 
   // ── Utility: relative time ──────────────────────────────────────────────────
 
@@ -1052,11 +1053,25 @@
         renderSidebar();
         render();
         renderRefreshStatus(false);
+        scheduleFastPoll();
       })
       .catch(function() {
         fetchError = true;
         renderRefreshStatus(true);
       });
+  }
+
+  function scheduleFastPoll() {
+    if (fastPollTimer) return; // already scheduled
+    var hasActive = allBackups.some(function(b) {
+      return b.lastBackupResult === 'running' || b.triggeredAt;
+    });
+    if (hasActive) {
+      fastPollTimer = setTimeout(function() {
+        fastPollTimer = null;
+        loadBackups();
+      }, 3000);
+    }
   }
 
   // ── Refresh counter tick ────────────────────────────────────────────────────
@@ -1073,6 +1088,11 @@
   // ── Backup trigger ──────────────────────────────────────────────────────────
 
   function triggerBackup(namespace, name, btn) {
+    // Capture current lastBackupTime before the trigger so the SSE knows
+    // to wait for a new run rather than closing on the previous result.
+    var backup = allBackups.find(function(b) { return b.namespace === namespace && b.name === name; });
+    var since = backup ? (backup.lastBackupTime || new Date(0).toISOString()) : new Date(0).toISOString();
+
     btn.disabled = true;
     btn.textContent = 'Queuing…';
     btn.className = 'btn-trigger';
@@ -1082,12 +1102,21 @@
     })
       .then(function(resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        btn.textContent = 'Queued';
+        btn.textContent = 'Running…';
         btn.className = 'btn-trigger queued';
-        setTimeout(function() {
-          btn.textContent = 'Backup now';
-          btn.className = 'btn-trigger';
-          btn.disabled = false;
+        // Auto-open the log drawer anchored to this run.
+        openLogs(namespace, name, since);
+        // Poll fast so the status row updates promptly.
+        loadBackups();
+        // Re-enable button once we see a terminal state via fast-poll.
+        var check = setInterval(function() {
+          var b = allBackups.find(function(x) { return x.namespace === namespace && x.name === name; });
+          if (b && b.lastBackupResult !== 'running' && !b.triggeredAt) {
+            clearInterval(check);
+            btn.textContent = 'Backup now';
+            btn.className = 'btn-trigger';
+            btn.disabled = false;
+          }
         }, 3000);
       })
       .catch(function() {
@@ -1130,7 +1159,7 @@
 
   let logsEventSource = null;
 
-  function openLogs(namespace, name) {
+  function openLogs(namespace, name, since) {
     if (logsEventSource) logsEventSource.close();
     const drawer = document.getElementById('log-drawer');
     drawer.style.display = 'flex';
@@ -1142,9 +1171,9 @@
     const activeBtn = document.querySelector('.btn-logs[data-ns="' + namespace + '"][data-nm="' + name + '"]');
     if (activeBtn) activeBtn.classList.add('active');
 
-    logsEventSource = new EventSource(
-      '/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/logs'
-    );
+    var url = '/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/logs';
+    if (since) url += '?since=' + encodeURIComponent(since);
+    logsEventSource = new EventSource(url);
     logsEventSource.onopen = function() {
       document.getElementById('log-drawer-status').textContent = 'live';
     };
