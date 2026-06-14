@@ -365,4 +365,4 @@ uv run pytest tests/ -v
 docker build -t k8si:dev .
 ```
 
-CI runs on every push to `main`: lint → unit tests → kaniko image build (`docker.hoeve.nu/k8si:{sha}` + `latest`) → e2e tests against the real cluster → Gitea release tagged `v{version}` from `pyproject.toml`. Release is skipped if the tag already exists (idempotent on re-run).
+CI runs on every push to `main` via GitHub Actions: lint (`ruff` + `mypy`) → unit tests → multi-arch image build (linux/amd64 + linux/arm64) pushed to `ghcr.io/jaccoh/k8si:{sha}` and `ghcr.io/jaccoh/k8si-ui:{sha}` → GitHub release tagged `v{version}` from `pyproject.toml`. The release step is idempotent and skips if the tag already exists. e2e tests require a real cluster and run separately on private infrastructure.
