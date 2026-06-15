@@ -335,6 +335,7 @@ async def run_reconcile_timer(
 
     now = datetime.now(tz=UTC)
     meta = body.get("metadata", {})
+    message: str | None = None
 
     if phase == "Pending":
         created_str = meta.get("creationTimestamp", "")
@@ -348,17 +349,9 @@ async def run_reconcile_timer(
                     name,
                     age_min,
                 )
-                await asyncio.to_thread(
-                    _patch_run_status,
-                    namespace,
-                    name,
-                    {
-                        "phase": "Failed",
-                        "message": (
-                            f"stuck in Pending for {age_min:.0f}m"
-                            " — operator may have missed the create event"
-                        ),
-                    },
+                message = (
+                    f"stuck in Pending for {age_min:.0f}m"
+                    " — operator may have missed the create event"
                 )
     elif phase == "Running":
         start_str = status.get("startTime", "")
@@ -372,15 +365,61 @@ async def run_reconcile_timer(
                     name,
                     age_min,
                 )
-                await asyncio.to_thread(
-                    _patch_run_status,
-                    namespace,
-                    name,
-                    {
-                        "phase": "Failed",
-                        "message": f"stuck in Running for {age_min:.0f}m — job may have crashed",
-                    },
-                )
+                message = f"stuck in Running for {age_min:.0f}m — job may have crashed"
+
+    if message is None:
+        return
+
+    completion = now.isoformat()
+    await asyncio.to_thread(
+        _patch_run_status,
+        namespace,
+        name,
+        {"phase": "Failed", "completionTime": completion, "message": message},
+    )
+
+    backup_name = meta.get("labels", {}).get("k8si.io/backup", "")
+    if not backup_name:
+        return
+
+    custom = kubernetes.client.CustomObjectsApi()
+    try:
+        backup_obj = await asyncio.to_thread(
+            custom.get_namespaced_custom_object,
+            "k8si.io",
+            "v1",
+            namespace,
+            "k8sibackups",
+            backup_name,
+        )
+    except Exception as e:
+        logger.warning(
+            "run_reconcile_timer: could not fetch parent %s/%s: %s", namespace, backup_name, e
+        )
+        return
+
+    backup_spec = backup_obj.get("spec", {})
+    duration = int(
+        (
+            now
+            - datetime.fromisoformat(
+                status.get("startTime") or meta.get("creationTimestamp", now.isoformat())
+            )
+        ).total_seconds()
+    )
+
+    await _update_parent_backup(
+        custom,
+        backup_name,
+        namespace,
+        name,
+        "failed",
+        {},
+        backup_obj,
+        backup_spec,
+        duration,
+        error=message,
+    )
 
 
 @kopf.on.create("k8si.io", "v1", "k8sibackupruns")  # type: ignore[arg-type]
@@ -470,12 +509,8 @@ async def on_run_create(
         duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
         logger.error("K8siBackupRun %s/%s failed: %s", namespace, name, e)
         completion = datetime.now(tz=UTC).isoformat()
-        await asyncio.to_thread(
-            _patch_run_status,
-            namespace,
-            name,
-            {"phase": "Failed", "completionTime": completion, "message": str(e)},
-        )
+        # Update parent BEFORE marking run Failed — SSE detects phase=Failed and
+        # immediately calls loadBackups(); parent must already reflect the failure.
         await _update_parent_backup(
             custom,
             backup_name,
@@ -487,6 +522,12 @@ async def on_run_create(
             backup_spec,
             duration,
             error=str(e),
+        )
+        await asyncio.to_thread(
+            _patch_run_status,
+            namespace,
+            name,
+            {"phase": "Failed", "completionTime": completion, "message": str(e)},
         )
     finally:
         _running.discard(key)
