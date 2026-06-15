@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 def wait_pod_phase(ns: str, pod_name: str, phase: str, timeout: int = 180) -> None:
     v1 = kubernetes.client.CoreV1Api()
     deadline = time.monotonic() + timeout
+    last_log = time.monotonic()
     while time.monotonic() < deadline:
         try:
             pod = v1.read_namespaced_pod(pod_name, ns)
@@ -30,11 +31,48 @@ def wait_pod_phase(ns: str, pod_name: str, phase: str, timeout: int = 180) -> No
                     if bad:
                         raise RuntimeError(f"Pod {ns}/{pod_name} container error: {bad}")
                 return
+            # Log init-container progress every 30s so CI logs show what's happening
+            if time.monotonic() - last_log >= 30:
+                last_log = time.monotonic()
+                cur_phase = (pod.status.phase or "unknown") if pod.status else "unknown"
+                init_states = []
+                for cs in pod.status.init_container_statuses or []:
+                    if cs.state and cs.state.running:
+                        init_states.append(f"{cs.name}=running")
+                    elif cs.state and cs.state.waiting:
+                        init_states.append(f"{cs.name}=waiting({cs.state.waiting.reason})")
+                    elif cs.state and cs.state.terminated:
+                        init_states.append(f"{cs.name}=done(rc={cs.state.terminated.exit_code})")
+                elapsed = int(timeout - (deadline - time.monotonic()))
+                log.info(
+                    "wait_pod_phase: %s/%s phase=%s inits=[%s] elapsed=%ds",
+                    ns,
+                    pod_name,
+                    cur_phase,
+                    ", ".join(init_states),
+                    elapsed,
+                )
         except kubernetes.client.exceptions.ApiException as e:
             if e.status != 404:
                 raise
         time.sleep(3)
-    raise TimeoutError(f"Pod {ns}/{pod_name} did not reach phase {phase!r} within {timeout}s")
+    # Collect final pod state for diagnostic message
+    diag = ""
+    try:
+        pod = v1.read_namespaced_pod(pod_name, ns)
+        cur_phase = (pod.status.phase or "unknown") if pod.status else "unknown"
+        init_states = []
+        for cs in pod.status.init_container_statuses or []:
+            if cs.state and cs.state.running:
+                init_states.append(f"{cs.name}=running")
+            elif cs.state and cs.state.waiting:
+                init_states.append(f"{cs.name}=waiting({cs.state.waiting.reason})")
+            elif cs.state and cs.state.terminated:
+                init_states.append(f"{cs.name}=done(rc={cs.state.terminated.exit_code})")
+        diag = f" (phase={cur_phase}, inits=[{', '.join(init_states)}])"
+    except Exception:
+        pass
+    raise TimeoutError(f"Pod {ns}/{pod_name} did not reach phase {phase!r} within {timeout}s{diag}")
 
 
 def wait_pod_condition(

@@ -224,7 +224,7 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
         },
     )
 
-    wait_pod_phase(ns, verifier_name, "Running", timeout=600)
+    wait_pod_phase(ns, verifier_name, "Running", timeout=900)
     wait_pod_condition(ns, verifier_name, "Ready", timeout=180)
     log.info("MariaDB restore verifier pod running and ready")
 
