@@ -70,7 +70,8 @@ def test_run_timer_pending_old_marks_failed():
     ) as mock_thread:
         run_coro(
             run_reconcile_timer(
-                body=body, name="stuck-run", namespace="ns", status=status, logger=logging.getLogger()
+                body=body, name="stuck-run", namespace="ns",
+                status=status, logger=logging.getLogger()
             )
         )
     mock_thread.assert_awaited_once()
@@ -104,7 +105,8 @@ def test_run_timer_running_old_marks_failed():
     ) as mock_thread:
         run_coro(
             run_reconcile_timer(
-                body=body, name="stuck-run", namespace="ns", status=status, logger=logging.getLogger()
+                body=body, name="stuck-run", namespace="ns",
+                status=status, logger=logging.getLogger()
             )
         )
     mock_thread.assert_awaited_once()
@@ -164,7 +166,9 @@ def test_run_timer_sets_completion_time_when_running_old():
 # ── parent backup update ──────────────────────────────────────────────────────
 
 
-def _body_with_labels(phase: str, backup_name: str, created_ago_min: int = 0, start_ago_min: int = 0) -> tuple[dict, dict]:
+def _body_with_labels(
+    phase: str, backup_name: str, created_ago_min: int = 0, start_ago_min: int = 0
+) -> tuple[dict, dict]:
     created = (datetime.now(tz=UTC) - timedelta(minutes=created_ago_min)).isoformat()
     status: dict = {"phase": phase}
     if phase == "Running":
@@ -172,7 +176,7 @@ def _body_with_labels(phase: str, backup_name: str, created_ago_min: int = 0, st
     body = {
         "metadata": {
             "creationTimestamp": created,
-            "labels": {f"k8si.io/backup": backup_name},
+            "labels": {"k8si.io/backup": backup_name},
         }
     }
     return body, status
