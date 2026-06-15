@@ -65,13 +65,14 @@ def test_run_timer_pending_old_marks_failed():
     from k8si.operator.main import run_reconcile_timer
 
     body, status = _body("Pending", created_ago_min=6)
-    with patch(
-        "k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock
-    ) as mock_thread:
+    with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
         run_coro(
             run_reconcile_timer(
-                body=body, name="stuck-run", namespace="ns",
-                status=status, logger=logging.getLogger()
+                body=body,
+                name="stuck-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
             )
         )
     mock_thread.assert_awaited_once()
@@ -100,13 +101,14 @@ def test_run_timer_running_old_marks_failed():
     from k8si.operator.main import run_reconcile_timer
 
     body, status = _body("Running", start_ago_min=65)
-    with patch(
-        "k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock
-    ) as mock_thread:
+    with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
         run_coro(
             run_reconcile_timer(
-                body=body, name="stuck-run", namespace="ns",
-                status=status, logger=logging.getLogger()
+                body=body,
+                name="stuck-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
             )
         )
     mock_thread.assert_awaited_once()
@@ -187,8 +189,10 @@ def test_run_timer_updates_parent_backup_when_pending_old():
     from k8si.operator.main import run_reconcile_timer
 
     body, status = _body_with_labels("Pending", "my-backup", created_ago_min=6)
-    with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock), \
-         patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock) as mock_update:
+    with (
+        patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock),
+        patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock) as mock_update,
+    ):
         run_coro(
             run_reconcile_timer(
                 body=body, name="stuck", namespace="ns", status=status, logger=logging.getLogger()
@@ -204,8 +208,10 @@ def test_run_timer_updates_parent_backup_when_running_old():
     from k8si.operator.main import run_reconcile_timer
 
     body, status = _body_with_labels("Running", "my-backup", start_ago_min=65)
-    with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock), \
-         patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock) as mock_update:
+    with (
+        patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock),
+        patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock) as mock_update,
+    ):
         run_coro(
             run_reconcile_timer(
                 body=body, name="stuck", namespace="ns", status=status, logger=logging.getLogger()
