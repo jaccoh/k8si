@@ -57,9 +57,7 @@ def _check_prerequisites(logger: logging.Logger) -> None:
                 "HEALTH: k8sibackupruns CRD missing — apply: kubectl apply -f deploy/crd_run.yaml"
             )
         elif e.status == 403:
-            logger.error(
-                "HEALTH: operator lacks RBAC for k8sibackupruns — check: deploy/rbac.yaml"
-            )
+            logger.error("HEALTH: operator lacks RBAC for k8sibackupruns — check: deploy/rbac.yaml")
         else:
             logger.warning("HEALTH: k8sibackupruns check failed: %s", e)
     except Exception as e:
@@ -356,7 +354,10 @@ async def run_reconcile_timer(
                     name,
                     {
                         "phase": "Failed",
-                        "message": f"stuck in Pending for {age_min:.0f}m — operator may have missed the create event",
+                        "message": (
+                            f"stuck in Pending for {age_min:.0f}m"
+                            " — operator may have missed the create event"
+                        ),
                     },
                 )
     elif phase == "Running":
