@@ -16,7 +16,13 @@ def _make_client() -> TestClient:
 def _run_obj(phase: str = "Succeeded", log: list | None = None) -> dict:
     return {
         "metadata": {"name": "mybackup-20260614120000"},
-        "status": {"phase": phase, "log": log or []},
+        "status": {
+            "phase": phase,
+            "log": log or [],
+            "startTime": "2026-06-14T12:00:00+00:00",
+            "completionTime": "2026-06-14T12:04:27+00:00",
+            "message": "",
+        },
     }
 
 
@@ -119,7 +125,12 @@ def test_stream_run_logs_emits_done_on_succeeded(mock_api_cls: MagicMock) -> Non
     resp = client.get("/api/runs/default/mybackup-20260614120000/logs")
 
     events = _sse_events(resp)
-    assert any(e == {"type": "done", "result": "success", "phase": "Succeeded"} for e in events)
+    done = next((e for e in events if e.get("type") == "done"), None)
+    assert done is not None
+    assert done["result"] == "success"
+    assert done["phase"] == "Succeeded"
+    assert "startTime" in done
+    assert "completionTime" in done
 
 
 @patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")

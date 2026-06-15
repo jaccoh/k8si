@@ -28,6 +28,7 @@ Backend is pluggable — restic over SFTP (Hetzner Storagebox) ships by default.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/crd.yaml
+kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/crd_run.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/rbac.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/operator.yaml
 

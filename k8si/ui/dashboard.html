@@ -287,8 +287,16 @@
     background: #2d0f0f;
     color: #f85149;
     border: 1px solid #4a1515;
+    cursor: pointer;
   }
+  .status.failed:hover { opacity: 0.85; }
   .status.failed .status-dot { background: #f85149; }
+  .status.queued {
+    background: #2d2007;
+    color: #d29922;
+    border: 1px solid #5a3e00;
+  }
+  .status.queued .status-dot { background: #d29922; animation: pulse 1.2s infinite; }
   .status.running {
     background: #0d2340;
     color: #58a6ff;
@@ -467,10 +475,14 @@
     cursor: not-allowed;
   }
   .btn-trigger.queued {
-    border-color: #3fb950;
-    color: #3fb950;
+    border-color: #d29922;
+    color: #d29922;
   }
-  .btn-trigger.failed {
+  .btn-trigger.running {
+    border-color: #58a6ff;
+    color: #58a6ff;
+  }
+  .btn-trigger.error {
     border-color: #f85149;
     color: #f85149;
   }
@@ -547,18 +559,73 @@
   .log-phase {
     display: flex;
     gap: 10px;
-    padding-top: 3px;
-    padding-bottom: 3px;
-    padding-left: 8px;
-    color: #58a6ff;
-    border-left: 2px solid #1a3a6e;
+    padding: 3px 0 3px 8px;
+    color: #8b949e;
+    border-left: 2px solid #30363d;
     margin-bottom: 2px;
+  }
+  .log-phase.active {
+    color: #58a6ff;
+    border-left-color: #58a6ff;
+    animation: phase-rail-pulse 1.2s infinite;
+  }
+  @keyframes phase-rail-pulse {
+    0%,100% { border-left-color: #58a6ff; }
+    50% { border-left-color: #1a3a6e; }
   }
   .log-phase .phase-time { color: #6e7681; font-size: 10px; white-space: nowrap; }
   .log-phase .phase-name { font-weight: 600; }
   .log-line { color: #8b949e; padding: 1px 0; }
-  .log-done { color: #3fb950; padding: 4px 0; border-top: 1px solid #21262d; margin-top: 4px; }
-  .log-done.failed { color: #f85149; }
+  @keyframes shimmer {
+    0%   { background-position: -200px 0; }
+    100% { background-position: 200px 0; }
+  }
+  .log-activity-bar {
+    height: 3px;
+    margin: 6px 0 6px 8px;
+    width: 120px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #21262d 0%, #58a6ff 50%, #21262d 100%);
+    background-size: 200px 3px;
+    animation: shimmer 1.5s infinite linear;
+  }
+  .log-summary {
+    margin-top: 8px;
+    border-top: 1px solid #1a4428;
+    background: #0d2818;
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: #3fb950;
+  }
+  .log-summary.failed {
+    border-top-color: #4a1515;
+    background: #2d0f0f;
+    color: #f85149;
+  }
+  .log-summary-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .log-summary-grid {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 3px 8px;
+    color: #8b949e;
+    font-size: 11px;
+  }
+  .log-summary-grid .summary-key { color: #6e7681; }
+  .log-summary-grid .summary-val { color: #c9d1d9; }
+  .drawer-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #6e7681;
+    flex-shrink: 0;
+  }
+  .drawer-status-dot.live { background: #58a6ff; animation: pulse 1.2s infinite; }
+  .drawer-status-dot.done { background: #3fb950; }
+  .drawer-status-dot.failed { background: #f85149; }
   .btn-logs {
     font-size: 11px;
     padding: 3px 9px;
@@ -664,6 +731,7 @@
 <!-- Log drawer -->
 <div class="log-drawer" id="log-drawer">
   <div class="log-drawer-header">
+    <span class="drawer-status-dot" id="drawer-status-dot"></span>
     <span class="log-drawer-title" id="log-drawer-title">Logs</span>
     <span class="log-drawer-status" id="log-drawer-status">connecting…</span>
     <button class="log-drawer-close" onclick="closeLogs()">Close</button>
@@ -689,6 +757,8 @@
   let lastFetchTime = null;
   let refreshCounterInterval = null;
   let fastPollTimer = null;
+  // Client-side run state: key = "ns/name" → {runName, phase: 'queued'|'running'}
+  let activeRunState = {};
 
   // ── Utility: relative time ──────────────────────────────────────────────────
 
@@ -816,9 +886,23 @@
     return s > 0 ? m + 'm ' + s + 's' : m + 'm';
   }
 
+  function buildStatusBadge(backup, statusClass, statusLabel) {
+    var badge = '<span class="status ' + statusClass + '">'
+      + '<span class="status-dot"></span>' + statusLabel + '</span>';
+    if (statusClass === 'failed' && backup.lastRunRef) {
+      var ns = escapeHtml(backup.namespace);
+      var runRef = escapeHtml(backup.lastRunRef);
+      badge = '<span class="status failed" onclick="openRunLogs(\'' + ns + '\',\'' + runRef + '\')" title="Click to view failure logs">'
+        + '<span class="status-dot"></span>failed</span>';
+    }
+    return badge;
+  }
+
   function buildRow(backup) {
-    const statusClass = escapeHtml(backup.lastBackupResult || 'pending');
-    const statusLabel = escapeHtml(backup.lastBackupResult || 'pending');
+    const runKey = backup.namespace + '/' + backup.name;
+    const liveRun = activeRunState[runKey];
+    const statusClass = liveRun ? escapeHtml(liveRun.phase) : escapeHtml(backup.lastBackupResult || 'pending');
+    const statusLabel = statusClass;
 
     const lastTime = backup.lastBackupTime ? formatDateTime(backup.lastBackupTime) : null;
     const lastAgo  = backup.lastBackupTime ? relativeTime(backup.lastBackupTime) : null;
@@ -864,7 +948,7 @@
       + '<span class="app-name">' + nm + pausedBadge + restoreBadge + '</span>'
       + '<span class="app-ns">' + ns + '</span>'
       + '</div></td>'
-      + '<td><span class="status ' + statusClass + '"><span class="status-dot"></span>' + statusLabel + '</span></td>'
+      + '<td>' + buildStatusBadge(backup, statusClass, statusLabel) + '</td>'
       + '<td>' + lastCell + '</td>'
       + '<td>' + nextCell + '</td>'
       + '<td><span class="schedule-tag">' + escapeHtml(backup.schedule || '—') + '</span>' + windowLine + '</td>'
@@ -1089,41 +1173,58 @@
   // ── Backup trigger ──────────────────────────────────────────────────────────
 
   function triggerBackup(namespace, name, btn) {
+    // Optimistic: immediately show queued state
     btn.disabled = true;
-    btn.textContent = 'Queuing…';
-    btn.className = 'btn-trigger';
+    btn.textContent = 'Queued…';
+    btn.className = 'btn-trigger queued';
+    var runKey = namespace + '/' + name;
+    activeRunState[runKey] = {runName: null, phase: 'queued'};
+    render();
 
     fetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/trigger', {
       method: 'POST',
     })
       .then(function(resp) {
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!resp.ok) {
+          return resp.json().then(function(body) {
+            throw new Error(body.detail || ('HTTP ' + resp.status));
+          }).catch(function() {
+            throw new Error('HTTP ' + resp.status);
+          });
+        }
         return resp.json();
       })
       .then(function(data) {
-        btn.textContent = 'Running…';
-        btn.className = 'btn-trigger queued';
-        // Open run-specific log drawer via new SSE endpoint.
-        openRunLogs(namespace, data.runName);
-        loadBackups();
-        var check = setInterval(function() {
-          var b = allBackups.find(function(x) { return x.namespace === namespace && x.name === name; });
-          if (b && b.lastBackupResult !== 'running') {
-            clearInterval(check);
+        activeRunState[runKey] = {runName: data.runName, phase: 'queued'};
+        render();
+        openRunLogs(namespace, data.runName, function(phase) {
+          // SSE phase callback: update button and badge as run progresses
+          if (phase === 'running') {
+            btn.textContent = 'Running…';
+            btn.className = 'btn-trigger running';
+            activeRunState[runKey].phase = 'running';
+            render();
+          } else if (phase === 'done') {
             btn.textContent = 'Backup now';
             btn.className = 'btn-trigger';
             btn.disabled = false;
+            delete activeRunState[runKey];
+            render();
+            loadBackups();
           }
-        }, 3000);
+        });
       })
-      .catch(function() {
-        btn.textContent = 'Failed';
-        btn.className = 'btn-trigger failed';
+      .catch(function(err) {
+        delete activeRunState[runKey];
+        render();
+        var msg = err.message || 'error';
+        btn.textContent = 'Failed: ' + msg;
+        btn.className = 'btn-trigger error';
+        btn.disabled = false;
         setTimeout(function() {
           btn.textContent = 'Backup now';
           btn.className = 'btn-trigger';
-          btn.disabled = false;
-        }, 3000);
+        }, 4000);
       });
   }
 
@@ -1156,37 +1257,117 @@
 
   let logsEventSource = null;
 
-  function openRunLogs(namespace, runName) {
+  function setDrawerStatus(dotClass, label) {
+    var dot = document.getElementById('drawer-status-dot');
+    dot.className = 'drawer-status-dot' + (dotClass ? ' ' + dotClass : '');
+    document.getElementById('log-drawer-status').textContent = label;
+  }
+
+  function formatDrawerTime(isoString) {
+    if (!isoString) return '—';
+    var d = new Date(isoString);
+    var day = String(d.getDate()).padStart(2, '0');
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var h = String(d.getHours()).padStart(2, '0');
+    var m = String(d.getMinutes()).padStart(2, '0');
+    var s = String(d.getSeconds()).padStart(2, '0');
+    return day + ' ' + months[d.getMonth()] + ' ' + h + ':' + m + ':' + s;
+  }
+
+  function durationStr(startIso, endIso) {
+    if (!startIso || !endIso) return null;
+    var secs = Math.round((new Date(endIso) - new Date(startIso)) / 1000);
+    if (secs < 60) return secs + 's';
+    var m = Math.floor(secs / 60), s = secs % 60;
+    return s > 0 ? m + 'm ' + s + 's' : m + 'm';
+  }
+
+  function openRunLogs(namespace, runName, phaseCallback) {
     if (logsEventSource) logsEventSource.close();
-    const drawer = document.getElementById('log-drawer');
+    var drawer = document.getElementById('log-drawer');
     drawer.style.display = 'flex';
     document.getElementById('log-drawer-title').textContent = namespace + '/' + runName;
-    document.getElementById('log-drawer-status').textContent = 'connecting…';
     document.getElementById('log-content').innerHTML = '';
+    setDrawerStatus('', 'connecting…');
 
     var url = '/api/runs/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(runName) + '/logs';
     logsEventSource = new EventSource(url);
+
     logsEventSource.onopen = function() {
-      document.getElementById('log-drawer-status').textContent = 'live';
+      setDrawerStatus('live', 'live');
     };
+
     logsEventSource.onmessage = function(e) {
       var data = JSON.parse(e.data);
       var content = document.getElementById('log-content');
+
       if (data.type === 'phase') {
-        var t = data.time ? new Date(data.time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false}) : '';
-        content.innerHTML += '<div class="log-phase"><span class="phase-time">' + escapeHtml(t) + '</span>'
-          + '<span class="phase-name">' + escapeHtml(data.phase) + '</span>'
-          + '<span>' + escapeHtml(data.message) + '</span></div>';
-      } else if (data.type === 'done') {
-        var cls = data.result === 'failed' ? 'log-done failed' : 'log-done';
-        content.innerHTML += '<div class="' + cls + '">— ' + escapeHtml(data.result || 'done') + ' —</div>';
-        document.getElementById('log-drawer-status').textContent = data.result || 'done';
+        // Mark previous active phase as completed
+        var prev = content.querySelector('.log-phase.active');
+        if (prev) prev.className = 'log-phase';
+        // Remove old shimmer bar
+        var oldBar = content.querySelector('.log-activity-bar');
+        if (oldBar) oldBar.remove();
+
+        var t = data.time
+          ? new Date(data.time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false})
+          : '';
+        var line = document.createElement('div');
+        line.className = 'log-phase active';
+        line.innerHTML = '<span class="phase-time">' + escapeHtml(t) + '</span>'
+          + '<span class="phase-name">' + escapeHtml(data.phase || '') + '</span>'
+          + '<span>' + escapeHtml(data.message || '') + '</span>';
+        content.appendChild(line);
+
+        // Add shimmer bar below
+        var bar = document.createElement('div');
+        bar.className = 'log-activity-bar';
+        content.appendChild(bar);
+
+        if (phaseCallback) phaseCallback('running');
+
+      } else if (data.type === 'error') {
+        setDrawerStatus('failed', 'error');
+        var errEl = document.createElement('div');
+        errEl.className = 'log-line';
+        errEl.style.color = '#f85149';
+        errEl.textContent = data.message || 'stream error';
+        content.appendChild(errEl);
         logsEventSource.close();
+
+      } else if (data.type === 'done') {
+        // Remove shimmer + deactivate last phase
+        var lastBar = content.querySelector('.log-activity-bar');
+        if (lastBar) lastBar.remove();
+        var lastActive = content.querySelector('.log-phase.active');
+        if (lastActive) lastActive.className = 'log-phase';
+
+        var isSuccess = data.result === 'success';
+        setDrawerStatus(isSuccess ? 'done' : 'failed', isSuccess ? 'completed' : 'failed');
+
+        var summary = document.createElement('div');
+        summary.className = 'log-summary' + (isSuccess ? '' : ' failed');
+        var dur = durationStr(data.startTime, data.completionTime);
+        summary.innerHTML = '<div class="log-summary-title">'
+          + (isSuccess ? 'Backup completed successfully' : 'Backup failed') + '</div>'
+          + '<div class="log-summary-grid">'
+          + '<span class="summary-key">' + (isSuccess ? 'Finished' : 'Failed at') + '</span>'
+          + '<span class="summary-val">' + escapeHtml(formatDrawerTime(data.completionTime)) + '</span>'
+          + (dur ? '<span class="summary-key">Duration</span><span class="summary-val">' + escapeHtml(dur) + '</span>' : '')
+          + '<span class="summary-key">Run</span><span class="summary-val">' + escapeHtml(namespace + '/' + runName) + '</span>'
+          + (data.message ? '<span class="summary-key">Message</span><span class="summary-val">' + escapeHtml(data.message) + '</span>' : '')
+          + '</div>';
+        content.appendChild(summary);
+
+        logsEventSource.close();
+        if (phaseCallback) phaseCallback('done');
       }
+
       content.scrollTop = content.scrollHeight;
     };
+
     logsEventSource.onerror = function() {
-      document.getElementById('log-drawer-status').textContent = 'disconnected';
+      setDrawerStatus('', 'disconnected');
       logsEventSource.close();
     };
   }
@@ -1238,6 +1419,13 @@
     document.getElementById('log-drawer').style.display = 'none';
     document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
   }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      var drawer = document.getElementById('log-drawer');
+      if (drawer && drawer.style.display !== 'none') closeLogs();
+    }
+  });
 
   // ── Bootstrap ───────────────────────────────────────────────────────────────
 

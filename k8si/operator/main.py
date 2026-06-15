@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 import kopf
 import kubernetes
 import kubernetes.client
@@ -44,6 +44,26 @@ def _has_active_run_sync(namespace: str, backup_name: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def _check_prerequisites(logger: logging.Logger) -> None:
+    """Check that required CRDs and RBAC are in place; log errors if not."""
+    custom = kubernetes.client.CustomObjectsApi()
+    try:
+        custom.list_cluster_custom_object("k8si.io", "v1", "k8sibackupruns")
+    except kubernetes.client.exceptions.ApiException as e:
+        if e.status == 404:
+            logger.error(
+                "HEALTH: k8sibackupruns CRD missing — apply: kubectl apply -f deploy/crd_run.yaml"
+            )
+        elif e.status == 403:
+            logger.error(
+                "HEALTH: operator lacks RBAC for k8sibackupruns — check: deploy/rbac.yaml"
+            )
+        else:
+            logger.warning("HEALTH: k8sibackupruns check failed: %s", e)
+    except Exception as e:
+        logger.warning("HEALTH: k8sibackupruns check failed: %s", e)
 
 
 def _daily_failure_count(status: dict) -> int:
@@ -123,6 +143,7 @@ def login(**kwargs: object) -> kopf.ConnectionInfo:
 def startup(logger: logging.Logger, **_: object) -> None:
     kubernetes.config.load_incluster_config()
     metrics.start()
+    _check_prerequisites(logger)
     _init_metrics(logger)
     logger.info("k8si operator started, image=%s", K8SI_IMAGE)
 
@@ -298,6 +319,67 @@ async def backup_timer(
 
 
 # ── K8siBackupRun reconciler ──────────────────────────────────────────────────
+
+
+@kopf.timer("k8si.io", "v1", "k8sibackupruns", interval=60.0)  # type: ignore[arg-type]
+async def run_reconcile_timer(
+    body: dict,
+    name: str,
+    namespace: str,
+    status: dict,
+    logger: logging.Logger,
+    **_: object,
+) -> None:
+    """Mark orphaned K8siBackupRuns as Failed so the backup timer can retry."""
+    phase = status.get("phase", "Pending")
+    if phase in ("Succeeded", "Failed"):
+        return
+
+    now = datetime.now(tz=UTC)
+    meta = body.get("metadata", {})
+
+    if phase == "Pending":
+        created_str = meta.get("creationTimestamp", "")
+        if created_str:
+            created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+            age_min = (now - created).total_seconds() / 60
+            if age_min >= 5:
+                logger.warning(
+                    "K8siBackupRun %s/%s stuck Pending for %.0f min, marking Failed",
+                    namespace,
+                    name,
+                    age_min,
+                )
+                await asyncio.to_thread(
+                    _patch_run_status,
+                    namespace,
+                    name,
+                    {
+                        "phase": "Failed",
+                        "message": f"stuck in Pending for {age_min:.0f}m — operator may have missed the create event",
+                    },
+                )
+    elif phase == "Running":
+        start_str = status.get("startTime", "")
+        if start_str:
+            start = datetime.fromisoformat(start_str)
+            age_min = (now - start).total_seconds() / 60
+            if age_min >= 60:
+                logger.warning(
+                    "K8siBackupRun %s/%s stuck Running for %.0f min, marking Failed",
+                    namespace,
+                    name,
+                    age_min,
+                )
+                await asyncio.to_thread(
+                    _patch_run_status,
+                    namespace,
+                    name,
+                    {
+                        "phase": "Failed",
+                        "message": f"stuck in Running for {age_min:.0f}m — job may have crashed",
+                    },
+                )
 
 
 @kopf.on.create("k8si.io", "v1", "k8sibackupruns")  # type: ignore[arg-type]

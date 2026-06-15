@@ -271,7 +271,15 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
 
             if phase in ("Succeeded", "Failed"):
                 result = "success" if phase == "Succeeded" else "failed"
-                yield f"data: {json.dumps({'type': 'done', 'result': result, 'phase': phase})}\n\n"
+                done_payload = {
+                    "type": "done",
+                    "result": result,
+                    "phase": phase,
+                    "startTime": status.get("startTime"),
+                    "completionTime": status.get("completionTime"),
+                    "message": status.get("message", ""),
+                }
+                yield f"data: {json.dumps(done_payload)}\n\n"
                 return
 
             await asyncio.sleep(2)

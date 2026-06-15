@@ -11,7 +11,7 @@ def test_notify_webhook_posts_to_url():
     from k8si.operator.main import _notify_webhook
 
     async def _run_notify():
-        with patch("httpx.post") as mock_post:
+        with patch("k8si.operator.main.httpx.post") as mock_post:
             await _notify_webhook(
                 "http://hooks.example.com/alert",
                 {"name": "test", "result": "failed"},
@@ -29,7 +29,7 @@ def test_notify_webhook_swallows_http_errors():
     from k8si.operator.main import _notify_webhook
 
     async def _run_notify():
-        with patch("httpx.post", side_effect=Exception("connection refused")):
+        with patch("k8si.operator.main.httpx.post", side_effect=Exception("connection refused")):
             # Must not raise — webhook failures are best-effort
             await _notify_webhook("http://bad-host/", {"name": "test"})
 
