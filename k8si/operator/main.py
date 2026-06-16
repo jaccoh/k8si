@@ -338,10 +338,39 @@ async def run_reconcile_timer(
     message: str | None = None
 
     if phase == "Pending":
-        # If there are log entries the workflow already started — _patch_run_status(Running)
-        # may have failed silently.  Don't kill; the backup is actually executing.
+        # Fast path: cached status already has log entries — workflow is running.
         if status.get("log"):
             return
+        # Kopf's cache can be stale right after an operator restart.  Re-read from
+        # the API before deciding to kill so we don't falsely terminate a live run.
+        try:
+            custom = kubernetes.client.CustomObjectsApi()
+            live = await asyncio.to_thread(
+                custom.get_namespaced_custom_object,
+                "k8si.io",
+                "v1",
+                namespace,
+                "k8sibackupruns",
+                name,
+            )
+            live_status = live.get("status", {})
+            if live_status.get("phase") in ("Succeeded", "Failed"):
+                return  # already terminal in the API
+            if live_status.get("log"):
+                logger.info(
+                    "K8siBackupRun %s/%s Pending in cache but log entries found in API"
+                    " — backup is executing, skipping kill",
+                    namespace,
+                    name,
+                )
+                return
+        except Exception as exc:
+            logger.warning(
+                "run_reconcile_timer: could not re-read %s/%s: %s — proceeding with kill",
+                namespace,
+                name,
+                exc,
+            )
         created_str = meta.get("creationTimestamp", "")
         if created_str:
             created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))

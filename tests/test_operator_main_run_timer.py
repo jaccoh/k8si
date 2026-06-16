@@ -66,6 +66,9 @@ def test_run_timer_pending_old_marks_failed():
 
     body, status = _body("Pending", created_ago_min=6)
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        # first call: re-read (returns empty status → proceed to kill)
+        # second call: _patch_run_status; third: delete_job
+        mock_thread.side_effect = [{"status": {}}, None, None]
         run_coro(
             run_reconcile_timer(
                 body=body,
@@ -75,8 +78,8 @@ def test_run_timer_pending_old_marks_failed():
                 logger=logging.getLogger(),
             )
         )
-    mock_thread.assert_awaited()  # first call is _patch_run_status; delete_job comes after
-    patch_kwargs = mock_thread.call_args_list[0][0][3]
+    mock_thread.assert_awaited()
+    patch_kwargs = mock_thread.call_args_list[1][0][3]  # index 1: _patch_run_status
     assert patch_kwargs["phase"] == "Failed"
     assert "Pending" in patch_kwargs["message"]
 
@@ -141,12 +144,13 @@ def test_run_timer_sets_completion_time_when_pending_old():
 
     body, status = _body("Pending", created_ago_min=6)
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.side_effect = [{"status": {}}, None, None]
         run_coro(
             run_reconcile_timer(
                 body=body, name="stuck", namespace="ns", status=status, logger=logging.getLogger()
             )
         )
-    patch_kwargs = mock_thread.call_args_list[0][0][3]
+    patch_kwargs = mock_thread.call_args_list[1][0][3]  # index 1: _patch_run_status
     assert "completionTime" in patch_kwargs, "completionTime must be set on timer-killed runs"
 
 
@@ -190,9 +194,16 @@ def test_run_timer_updates_parent_backup_when_pending_old():
 
     body, status = _body_with_labels("Pending", "my-backup", created_ago_min=6)
     with (
-        patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock),
+        patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread,
         patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock) as mock_update,
     ):
+        # re-read run, _patch_run_status, delete_job, fetch parent backup
+        mock_thread.side_effect = [
+            {"status": {}},
+            None,
+            None,
+            {"spec": {}, "metadata": {"name": "my-backup"}},
+        ]
         run_coro(
             run_reconcile_timer(
                 body=body, name="stuck", namespace="ns", status=status, logger=logging.getLogger()
@@ -254,14 +265,88 @@ def test_run_timer_still_kills_pending_with_no_log_entries():
     body, status = _body("Pending", created_ago_min=6)
 
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.side_effect = [{"status": {}}, None, None]  # re-read: no log → kill
         run_coro(
             run_reconcile_timer(
                 body=body, name="stuck", namespace="ns", status=status, logger=logging.getLogger()
             )
         )
-    mock_thread.assert_awaited()  # at least one call — timer fired
-    first_call_fields = mock_thread.call_args_list[0][0][3]
-    assert first_call_fields["phase"] == "Failed"
+    mock_thread.assert_awaited()
+    patch_fields = mock_thread.call_args_list[1][0][3]  # index 1: _patch_run_status
+    assert patch_fields["phase"] == "Failed"
+
+
+# ── stale-cache guard: re-read from API before killing ───────────────────────
+
+
+def test_run_timer_skips_pending_when_api_shows_log_entries():
+    """Timer must re-read the run from the API before killing a stuck Pending run.
+
+    The Kopf cache can be stale after an operator restart.  If the cache shows
+    empty log but the live API shows log entries the backup is actively running —
+    the timer must NOT kill it.
+    """
+    from k8si.operator.main import run_reconcile_timer
+
+    body, status = _body("Pending", created_ago_min=6)
+    # Cache is empty (stale after restart), but the live resource has log entries.
+    live_run = {
+        "status": {
+            "phase": "Pending",
+            "log": [{"time": "t", "phase": "QuiesceStarted", "message": ""}],
+        }
+    }
+
+    with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.return_value = live_run  # re-read returns run with log entries
+        run_coro(
+            run_reconcile_timer(
+                body=body,
+                name="active-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
+            )
+        )
+    # Only the re-read to_thread call should have been made; no kill
+    reread_calls = [
+        c
+        for c in mock_thread.call_args_list
+        if getattr(c[0][0], "__name__", "") == "get_namespaced_custom_object"
+    ]
+    assert reread_calls, "Timer must re-read the run from the API before deciding to kill"
+    kill_calls = [
+        c
+        for c in mock_thread.call_args_list
+        if getattr(c[0][0], "__name__", "") == "patch_namespaced_custom_object_status"
+    ]
+    assert not kill_calls, "Timer must not kill a run that is actively executing (API shows log)"
+
+
+def test_run_timer_skips_pending_when_api_shows_already_terminal():
+    """If the live API shows the run already reached a terminal phase, timer skips."""
+    from k8si.operator.main import run_reconcile_timer
+
+    body, status = _body("Pending", created_ago_min=6)
+    live_run = {"status": {"phase": "Succeeded"}}
+
+    with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.return_value = live_run
+        run_coro(
+            run_reconcile_timer(
+                body=body,
+                name="done-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
+            )
+        )
+    kill_calls = [
+        c
+        for c in mock_thread.call_args_list
+        if getattr(c[0][0], "__name__", "") == "patch_namespaced_custom_object_status"
+    ]
+    assert not kill_calls, "Timer must not kill a run that is already terminal in the API"
 
 
 # ── orphaned Job cleanup ──────────────────────────────────────────────────────
@@ -277,6 +362,7 @@ def test_run_timer_deletes_orphaned_job_when_killing_pending():
 
     body, status = _body("Pending", created_ago_min=6)
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.side_effect = [{"status": {}}, None, None]
         run_coro(
             run_reconcile_timer(
                 body=body,

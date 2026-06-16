@@ -207,6 +207,7 @@ jobs:
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
           JOB="buildah-ui-arm64-${SHORT}"
+          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -233,7 +234,6 @@ jobs:
                   - |
                     set -e
                     curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
-                    VERSION=$(grep '^version' k8si/pyproject.toml | sed 's/version = "//;s/"//')
                     cd k8si/k8si/ui/
                     buildah build \
                       --arch arm64 --os linux \
@@ -277,6 +277,7 @@ jobs:
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
           JOB="buildah-ui-amd64-${SHORT}"
+          VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -303,7 +304,6 @@ jobs:
                   - |
                     set -e
                     curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
-                    VERSION=$(grep '^version' k8si/pyproject.toml | sed 's/version = "//;s/"//')
                     cd k8si/k8si/ui/
                     buildah build \
                       --arch amd64 --os linux \
