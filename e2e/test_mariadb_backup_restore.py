@@ -190,7 +190,7 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
                         ],
                         "resources": {
                             "requests": {"cpu": "50m", "memory": "64Mi"},
-                            "limits": {"cpu": "200m", "memory": "256Mi"},
+                            "limits": {"cpu": "200m", "memory": "512Mi"},
                         },
                     }
                 ],
@@ -337,7 +337,7 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
                         ],
                         "resources": {
                             "requests": {"cpu": "50m", "memory": "64Mi"},
-                            "limits": {"cpu": "200m", "memory": "256Mi"},
+                            "limits": {"cpu": "200m", "memory": "512Mi"},
                         },
                     }
                 ],
