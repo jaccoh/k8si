@@ -461,11 +461,9 @@ def test_version_endpoint_prefers_k8si_version_env_var() -> None:
     import importlib
     import os
 
+    not_found = importlib.metadata.PackageNotFoundError
     with patch.dict(os.environ, {"K8SI_VERSION": "0.8.0rc8-test"}):
-        # Re-importing would cache — call the endpoint logic via the test client instead
-        from k8si.ui import app as ui_app
-
-        with patch.object(importlib.metadata, "version", side_effect=importlib.metadata.PackageNotFoundError):
+        with patch.object(importlib.metadata, "version", side_effect=not_found):
             client = _make_client()
             resp = client.get("/api/version")
 

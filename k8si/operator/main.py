@@ -531,13 +531,19 @@ async def on_run_create(
             )
             if current.get("status", {}).get("phase") == "Failed":
                 logger.warning(
-                    "K8siBackupRun %s/%s was killed by timer during execution, skipping Succeeded patch",
+                    "K8siBackupRun %s/%s was killed by timer during execution,"
+                    " skipping Succeeded patch",
                     namespace,
                     name,
                 )
                 return
         except Exception as e:
-            logger.warning("Could not re-read run %s/%s: %s — proceeding with Succeeded", namespace, name, e)
+            logger.warning(
+                "Could not re-read run %s/%s: %s — proceeding with Succeeded",
+                namespace,
+                name,
+                e,
+            )
 
         await asyncio.to_thread(
             _patch_run_status,

@@ -267,7 +267,9 @@ def test_on_run_create_sets_completion_time_when_concurrent_rejected():
             (c for c in mock_patch.call_args_list if c.args[2].get("phase") == "Failed"), None
         )
         assert failed_call is not None
-        assert "completionTime" in failed_call.args[2], "completionTime must be set on concurrent rejection"
+        assert "completionTime" in failed_call.args[2], (
+            "completionTime must be set on concurrent rejection"
+        )
 
     run_coro(_run())
     assert key in main_module._running  # first run's key untouched
@@ -298,7 +300,9 @@ def test_on_run_create_sets_completion_time_when_parent_missing():
             (c for c in mock_patch.call_args_list if c.args[2].get("phase") == "Failed"), None
         )
         assert failed_call is not None
-        assert "completionTime" in failed_call.args[2], "completionTime must be set on parent-fetch failure"
+        assert "completionTime" in failed_call.args[2], (
+            "completionTime must be set on parent-fetch failure"
+        )
 
     run_coro(_run())
 
@@ -320,8 +324,8 @@ def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
             patch("k8si.operator.main.metrics.record"),
         ):
             mock_k8s = MagicMock()
-            # First get_namespaced_custom_object: backup lookup
-            # Second get_namespaced_custom_object: re-read run after backup — timer already killed it
+            # First get_namespaced_custom_object: backup lookup.
+            # Second: re-read run after backup — timer already killed it.
             mock_k8s.get_namespaced_custom_object.side_effect = [
                 _BACKUP_OBJ,
                 {"status": {"phase": "Failed"}, "metadata": {"name": "test-run"}},
