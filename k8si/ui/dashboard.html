@@ -1150,7 +1150,7 @@
     if (fastPollTimer) return; // already scheduled
     var hasActive = allBackups.some(function(b) {
       return b.lastBackupResult === 'running' || b.triggeredAt;
-    });
+    }) || Object.keys(activeRunState).length > 0;
     if (hasActive) {
       fastPollTimer = setTimeout(function() {
         fastPollTimer = null;
@@ -1197,6 +1197,7 @@
       .then(function(data) {
         activeRunState[runKey] = {runName: data.runName, phase: 'queued'};
         render();
+        loadBackups(); // refresh counter tiles immediately — backend just set lastBackupResult=running
         openRunLogs(namespace, data.runName, function(phase) {
           // SSE phase callback: update button and badge as run progresses
           if (phase === 'running') {

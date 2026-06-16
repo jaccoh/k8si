@@ -191,6 +191,19 @@ def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
     except kubernetes.client.exceptions.ApiException as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Best-effort: immediately mark parent as running so counter tiles reflect active state.
+    try:
+        custom.patch_namespaced_custom_object_status(
+            GROUP,
+            VERSION,
+            namespace,
+            PLURAL,
+            name,
+            {"status": {"lastBackupResult": "running", "lastRunRef": run_name}},
+        )
+    except Exception:
+        pass  # Non-fatal — run was created; counter will catch up on next poll.
+
     return {"triggered": True, "triggeredAt": triggered_at, "runName": run_name}
 
 
@@ -375,10 +388,15 @@ async def stream_logs(
 
 @app.get("/api/version")
 def get_version() -> dict[str, str]:
-    try:
-        ver = importlib.metadata.version("k8si")
-    except importlib.metadata.PackageNotFoundError:
-        ver = "dev"
+    # K8SI_VERSION is injected at image build time; takes priority over package metadata.
+    # The UI container copies app.py directly (no pip install), so importlib.metadata
+    # returns PackageNotFoundError there unless this env var is set.
+    ver = os.environ.get("K8SI_VERSION")
+    if not ver:
+        try:
+            ver = importlib.metadata.version("k8si")
+        except importlib.metadata.PackageNotFoundError:
+            ver = "dev"
     return {"version": ver}
 
 

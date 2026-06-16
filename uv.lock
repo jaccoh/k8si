@@ -556,7 +556,7 @@ wheels = [
 
 [[package]]
 name = "k8si"
-version = "0.6.20"
+version = "0.8.0rc4"
 source = { editable = "." }
 dependencies = [
     { name = "croniter" },

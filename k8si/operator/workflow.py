@@ -38,7 +38,7 @@ def _write_run_log(name: str, namespace: str, entries: list[dict]) -> None:
 
 
 def _patch_run_status(run_ns: str, run_name: str, fields: dict) -> None:
-    """Directly PATCH K8siBackupRun status fields. Best-effort — swallows all errors."""
+    """Directly PATCH K8siBackupRun status fields. Best-effort — logs on failure."""
     try:
         api = kubernetes.client.CustomObjectsApi()
         api.patch_namespaced_custom_object_status(
@@ -49,8 +49,11 @@ def _patch_run_status(run_ns: str, run_name: str, fields: dict) -> None:
             name=run_name,
             body={"status": fields},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning(
+            "_patch_run_status %s/%s fields=%s failed: %s",
+            run_ns, run_name, list(fields), exc,
+        )
 
 
 def _emit_event(body: dict[str, Any] | None, type_str: str, reason: str, message: str) -> None:

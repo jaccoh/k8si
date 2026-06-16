@@ -130,6 +130,27 @@ def test_trigger_returns_409_when_run_active(mock_api_cls: MagicMock) -> None:
 
 
 @patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_trigger_sets_lastbackupresult_running_on_parent(mock_api_cls: MagicMock) -> None:
+    """POST trigger must patch lastBackupResult=running on the parent K8siBackup immediately,
+    so the counter tiles reflect the active state without waiting for operator reconciliation."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _backup_obj()
+    mock_api.list_namespaced_custom_object.return_value = {"items": []}
+
+    client = _make_client()
+    resp = client.post("/api/backups/default/mybackup/trigger")
+
+    assert resp.status_code == 200
+    run_name = resp.json()["runName"]
+
+    mock_api.patch_namespaced_custom_object_status.assert_called_once()
+    patch_body = mock_api.patch_namespaced_custom_object_status.call_args.args[5]
+    assert patch_body["status"]["lastBackupResult"] == "running"
+    assert patch_body["status"]["lastRunRef"] == run_name
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
 def test_trigger_allows_when_no_active_runs(mock_api_cls: MagicMock) -> None:
     """POST trigger succeeds when all existing runs are Succeeded or Failed."""
     mock_api = MagicMock()

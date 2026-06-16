@@ -451,6 +451,28 @@ def test_version_endpoint_returns_version() -> None:
     assert len(data["version"]) > 0
 
 
+def test_version_endpoint_prefers_k8si_version_env_var() -> None:
+    """GET /api/version must return the K8SI_VERSION env var when set.
+
+    The UI container copies app.py directly (no pip install), so importlib.metadata
+    cannot resolve the package version. K8SI_VERSION is injected at image build time
+    via --build-arg and must take precedence over any package lookup.
+    """
+    import importlib
+    import os
+
+    with patch.dict(os.environ, {"K8SI_VERSION": "0.8.0rc8-test"}):
+        # Re-importing would cache — call the endpoint logic via the test client instead
+        from k8si.ui import app as ui_app
+
+        with patch.object(importlib.metadata, "version", side_effect=importlib.metadata.PackageNotFoundError):
+            client = _make_client()
+            resp = client.get("/api/version")
+
+    assert resp.status_code == 200
+    assert resp.json()["version"] == "0.8.0rc8-test"
+
+
 @pytest.mark.anyio
 async def test_lifespan_calls_load_k8s() -> None:
     """lifespan() calls _load_k8s() on startup and yields."""

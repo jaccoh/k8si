@@ -338,6 +338,10 @@ async def run_reconcile_timer(
     message: str | None = None
 
     if phase == "Pending":
+        # If there are log entries the workflow already started — _patch_run_status(Running)
+        # may have failed silently.  Don't kill; the backup is actually executing.
+        if status.get("log"):
+            return
         created_str = meta.get("creationTimestamp", "")
         if created_str:
             created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
@@ -377,6 +381,20 @@ async def run_reconcile_timer(
         name,
         {"phase": "Failed", "completionTime": completion, "message": message},
     )
+
+    # Delete any associated K8s Job so it doesn't continue running orphaned.
+    batch = kubernetes.client.BatchV1Api()
+    try:
+        await asyncio.to_thread(
+            batch.delete_namespaced_job,
+            name,
+            namespace,
+            propagation_policy="Background",
+        )
+        logger.info("Deleted orphaned Job %s/%s", namespace, name)
+    except kubernetes.client.exceptions.ApiException as exc:
+        if exc.status != 404:
+            logger.warning("Could not delete orphaned Job %s/%s: %s", namespace, name, exc)
 
     backup_name = meta.get("labels", {}).get("k8si.io/backup", "")
     if not backup_name:
@@ -445,7 +463,11 @@ async def on_run_create(
             _patch_run_status,
             namespace,
             name,
-            {"phase": "Failed", "message": "concurrent run rejected"},
+            {
+                "phase": "Failed",
+                "completionTime": datetime.now(tz=UTC).isoformat(),
+                "message": "concurrent run rejected",
+            },
         )
         return
 
@@ -464,7 +486,14 @@ async def on_run_create(
     except Exception as e:
         logger.error("K8siBackupRun %s: could not get parent backup %s: %s", name, backup_name, e)
         await asyncio.to_thread(
-            _patch_run_status, namespace, name, {"phase": "Failed", "message": str(e)}
+            _patch_run_status,
+            namespace,
+            name,
+            {
+                "phase": "Failed",
+                "completionTime": datetime.now(tz=UTC).isoformat(),
+                "message": str(e),
+            },
         )
         _running.discard(key)
         return
@@ -488,6 +517,28 @@ async def on_run_create(
         )
         duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
         completion = datetime.now(tz=UTC).isoformat()
+
+        # Guard: timer may have killed the run while backup was executing.
+        # Re-read current phase; if already Failed, don't overwrite.
+        try:
+            current = await asyncio.to_thread(
+                custom.get_namespaced_custom_object,
+                "k8si.io",
+                "v1",
+                namespace,
+                "k8sibackupruns",
+                name,
+            )
+            if current.get("status", {}).get("phase") == "Failed":
+                logger.warning(
+                    "K8siBackupRun %s/%s was killed by timer during execution, skipping Succeeded patch",
+                    namespace,
+                    name,
+                )
+                return
+        except Exception as e:
+            logger.warning("Could not re-read run %s/%s: %s — proceeding with Succeeded", namespace, name, e)
+
         await asyncio.to_thread(
             _patch_run_status,
             namespace,

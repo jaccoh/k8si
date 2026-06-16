@@ -233,10 +233,12 @@ jobs:
                   - |
                     set -e
                     curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
+                    VERSION=$(grep '^version' k8si/pyproject.toml | sed 's/version = "//;s/"//')
                     cd k8si/k8si/ui/
                     buildah build \
                       --arch arm64 --os linux \
                       --tls-verify=false \
+                      --build-arg K8SI_VERSION=${VERSION} \
                       --tag docker.hoeve.nu/k8si-ui:${SHA}-arm64 \
                       .
                     buildah push --tls-verify=false docker.hoeve.nu/k8si-ui:${SHA}-arm64
@@ -301,10 +303,12 @@ jobs:
                   - |
                     set -e
                     curl -sL "https://git.hoeve.nu/hoeve/k8si/archive/${SHA}.tar.gz" | tar xz
+                    VERSION=$(grep '^version' k8si/pyproject.toml | sed 's/version = "//;s/"//')
                     cd k8si/k8si/ui/
                     buildah build \
                       --arch amd64 --os linux \
                       --tls-verify=false \
+                      --build-arg K8SI_VERSION=${VERSION} \
                       --tag docker.hoeve.nu/k8si-ui:${SHA}-amd64 \
                       .
                     buildah push --tls-verify=false docker.hoeve.nu/k8si-ui:${SHA}-amd64
