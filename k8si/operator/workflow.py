@@ -52,7 +52,10 @@ def _patch_run_status(run_ns: str, run_name: str, fields: dict) -> None:
     except Exception as exc:
         log.warning(
             "_patch_run_status %s/%s fields=%s failed: %s",
-            run_ns, run_name, list(fields), exc,
+            run_ns,
+            run_name,
+            list(fields),
+            exc,
         )
 
 

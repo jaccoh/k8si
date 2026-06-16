@@ -234,7 +234,9 @@ def test_run_timer_skips_pending_with_log_entries():
     from k8si.operator.main import run_reconcile_timer
 
     body, status = _body("Pending", created_ago_min=6)
-    status["log"] = [{"time": "2026-06-16T13:37:00+00:00", "phase": "QuiesceStarted", "message": ""}]  # noqa: E501
+    status["log"] = [
+        {"time": "2026-06-16T13:37:00+00:00", "phase": "QuiesceStarted", "message": ""}
+    ]  # noqa: E501
 
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
         run_coro(
@@ -277,12 +279,16 @@ def test_run_timer_deletes_orphaned_job_when_killing_pending():
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
         run_coro(
             run_reconcile_timer(
-                body=body, name="stuck-run", namespace="ns", status=status,
+                body=body,
+                name="stuck-run",
+                namespace="ns",
+                status=status,
                 logger=logging.getLogger(),
             )
         )
     delete_calls = [
-        c for c in mock_thread.call_args_list
+        c
+        for c in mock_thread.call_args_list
         if getattr(c[0][0], "__name__", "") == "delete_namespaced_job"
     ]
     assert delete_calls, "Timer must call delete_namespaced_job for orphaned Job"
