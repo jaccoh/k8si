@@ -1343,25 +1343,36 @@
         var lastActive = content.querySelector('.log-phase.active');
         if (lastActive) lastActive.className = 'log-phase';
 
-        var isSuccess = data.result === 'success';
-        setDrawerStatus(isSuccess ? 'done' : 'failed', isSuccess ? 'completed' : 'failed');
-
         var summary = document.createElement('div');
-        summary.className = 'log-summary' + (isSuccess ? '' : ' failed');
-        var dur = durationStr(data.startTime, data.completionTime);
-        summary.innerHTML = '<div class="log-summary-title">'
-          + (isSuccess ? 'Backup completed successfully' : 'Backup failed') + '</div>'
-          + '<div class="log-summary-grid">'
-          + '<span class="summary-key">' + (isSuccess ? 'Finished' : 'Failed at') + '</span>'
-          + '<span class="summary-val">' + escapeHtml(formatDrawerTime(data.completionTime)) + '</span>'
-          + (dur ? '<span class="summary-key">Duration</span><span class="summary-val">' + escapeHtml(dur) + '</span>' : '')
-          + '<span class="summary-key">Run</span><span class="summary-val">' + escapeHtml(namespace + '/' + runName) + '</span>'
-          + (data.message ? '<span class="summary-key">Message</span><span class="summary-val">' + escapeHtml(data.message) + '</span>' : '')
-          + '</div>';
-        content.appendChild(summary);
-
-        logsEventSource.close();
-        if (phaseCallback) phaseCallback('done');
+        if (data.result === 'timeout') {
+          // Stream expired but backup is still running — don't show "Backup failed"
+          setDrawerStatus('', 'stream closed');
+          summary.className = 'log-summary';
+          summary.innerHTML = '<div class="log-summary-title">Log stream closed</div>'
+            + '<div class="log-summary-grid">'
+            + '<span class="summary-key">Status</span><span class="summary-val">Backup still running</span>'
+            + '</div>';
+          content.appendChild(summary);
+          logsEventSource.close();
+          // Do not call phaseCallback — active-run state stays until polling detects completion
+        } else {
+          var isSuccess = data.result === 'success';
+          setDrawerStatus(isSuccess ? 'done' : 'failed', isSuccess ? 'completed' : 'failed');
+          summary.className = 'log-summary' + (isSuccess ? '' : ' failed');
+          var dur = durationStr(data.startTime, data.completionTime);
+          summary.innerHTML = '<div class="log-summary-title">'
+            + (isSuccess ? 'Backup completed successfully' : 'Backup failed') + '</div>'
+            + '<div class="log-summary-grid">'
+            + '<span class="summary-key">' + (isSuccess ? 'Finished' : 'Failed at') + '</span>'
+            + '<span class="summary-val">' + escapeHtml(formatDrawerTime(data.completionTime)) + '</span>'
+            + (dur ? '<span class="summary-key">Duration</span><span class="summary-val">' + escapeHtml(dur) + '</span>' : '')
+            + '<span class="summary-key">Run</span><span class="summary-val">' + escapeHtml(namespace + '/' + runName) + '</span>'
+            + (data.message ? '<span class="summary-key">Message</span><span class="summary-val">' + escapeHtml(data.message) + '</span>' : '')
+            + '</div>';
+          content.appendChild(summary);
+          logsEventSource.close();
+          if (phaseCallback) phaseCallback('done');
+        }
       }
 
       content.scrollTop = content.scrollHeight;

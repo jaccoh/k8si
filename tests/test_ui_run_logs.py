@@ -166,3 +166,43 @@ def test_stream_run_logs_streams_log_entries(mock_api_cls: MagicMock) -> None:
     assert len(phase_events) == 2
     assert phase_events[0]["message"] == "creating snapshot"
     assert phase_events[1]["message"] == "uploading data"
+
+
+# ── long-running backup (>5 min) ──────────────────────────────────────────────
+
+
+@patch("k8si.ui.app.asyncio.sleep", new_callable=AsyncMock)
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_stream_run_logs_continues_polling_for_long_running_backup(
+    mock_api_cls: MagicMock,
+    _mock_sleep: AsyncMock,
+) -> None:
+    """Stream must not give up after 5 min (150 polls) — long backups like bitmagnet-postgres
+    take 23+ minutes.  The generator must poll until phase goes terminal, not timeout early.
+    """
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+
+    running_obj = {
+        "metadata": {"name": "mybackup-20260614120000"},
+        "status": {"phase": "Running", "log": [], "startTime": "2026-06-14T12:00:00+00:00"},
+    }
+    succeeded_obj = _run_obj("Succeeded")
+
+    # 200 Running polls (>150) then Succeeded — the old range(150) would timeout before this
+    mock_api.get_namespaced_custom_object.side_effect = (
+        [running_obj]  # initial existence check
+        + [running_obj] * 200
+        + [succeeded_obj]
+    )
+
+    client = _make_client()
+    resp = client.get("/api/runs/default/mybackup-20260614120000/logs")
+
+    events = _sse_events(resp)
+    done = next((e for e in events if e.get("type") == "done"), None)
+    assert done is not None, f"no done event in {events}"
+    assert done["result"] == "success", (
+        f"Expected success after 200 Running polls, got {done['result']!r}. "
+        "The SSE stream timed out before the backup completed — increase the polling limit."
+    )

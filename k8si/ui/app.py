@@ -243,7 +243,7 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
         seen = 0
         consecutive_errors = 0
         yield ": connected\n\n"
-        for _ in range(150):  # max 5 min at 2s/poll
+        for _ in range(1800):  # max 60 min at 2s/poll (matches operator Running-kill timeout)
             try:
                 obj = await asyncio.to_thread(
                     custom.get_namespaced_custom_object,
