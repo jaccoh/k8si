@@ -177,8 +177,10 @@ def test_stream_run_logs_continues_polling_for_long_running_backup(
     mock_api_cls: MagicMock,
     _mock_sleep: AsyncMock,
 ) -> None:
-    """Stream must not give up after 5 min (150 polls) — long backups like bitmagnet-postgres
-    take 23+ minutes.  The generator must poll until phase goes terminal, not timeout early.
+    """Stream must poll until the run goes terminal, regardless of elapsed time.
+
+    Long backups (e.g. bitmagnet-postgres: 23+ min) must not get a premature
+    'Backup failed' because the generator timed out before Succeeded was seen.
     """
     mock_api = MagicMock()
     mock_api_cls.return_value = mock_api
@@ -204,5 +206,5 @@ def test_stream_run_logs_continues_polling_for_long_running_backup(
     assert done is not None, f"no done event in {events}"
     assert done["result"] == "success", (
         f"Expected success after 200 Running polls, got {done['result']!r}. "
-        "The SSE stream timed out before the backup completed — increase the polling limit."
+        "Generator stopped before run reached a terminal phase."
     )

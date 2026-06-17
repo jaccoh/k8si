@@ -1,6 +1,6 @@
 [project]
 name = "k8si"
-version = "0.8.0rc10"
+version = "0.8.0rc11"
 description = "Kubernetes init container + sidecar for restic backup and restore"
 requires-python = ">=3.13"
 dependencies = [
