@@ -388,17 +388,93 @@ async def run_reconcile_timer(
                 )
     elif phase == "Running":
         start_str = status.get("startTime", "")
+        age_min = 0.0
         if start_str:
             start = datetime.fromisoformat(start_str)
             age_min = (now - start).total_seconds() / 60
-            if age_min >= 60:
+
+        # Check the K8s Job — it may have finished while run status wasn't updated.
+        batch = kubernetes.client.BatchV1Api()
+        job_complete = False
+        job_failed = False
+        try:
+            job = await asyncio.to_thread(batch.read_namespaced_job, name, namespace)
+            conditions = getattr(getattr(job, "status", None), "conditions", None) or []
+            job_complete = any(c.type == "Complete" and c.status == "True" for c in conditions)
+            job_failed = any(c.type == "Failed" and c.status == "True" for c in conditions)
+        except kubernetes.client.exceptions.ApiException as exc:
+            if exc.status != 404:
                 logger.warning(
-                    "K8siBackupRun %s/%s stuck Running for %.0f min, marking Failed",
-                    namespace,
-                    name,
-                    age_min,
+                    "run_reconcile_timer: could not read job %s/%s: %s", namespace, name, exc
                 )
-                message = f"stuck in Running for {age_min:.0f}m — job may have crashed"
+        except Exception as exc:
+            logger.warning(
+                "run_reconcile_timer: could not read job %s/%s: %s", namespace, name, exc
+            )
+
+        if job_complete:
+            logger.info(
+                "K8siBackupRun %s/%s: job completed, run still Running — reconciling to Succeeded",
+                namespace,
+                name,
+            )
+            completion = now.isoformat()
+            await asyncio.to_thread(
+                _patch_run_status,
+                namespace,
+                name,
+                {
+                    "phase": "Succeeded",
+                    "completionTime": completion,
+                    "message": "reconciled from completed job",
+                },
+            )
+            backup_name = meta.get("labels", {}).get("k8si.io/backup", "")
+            if backup_name:
+                custom = kubernetes.client.CustomObjectsApi()
+                try:
+                    backup_obj = await asyncio.to_thread(
+                        custom.get_namespaced_custom_object,
+                        "k8si.io",
+                        "v1",
+                        namespace,
+                        "k8sibackups",
+                        backup_name,
+                    )
+                    backup_spec = backup_obj.get("spec", {})
+                    duration = int(
+                        (now - datetime.fromisoformat(start_str or now.isoformat())).total_seconds()
+                    )
+                    await _update_parent_backup(
+                        custom,
+                        backup_name,
+                        namespace,
+                        name,
+                        "success",
+                        {},
+                        backup_obj,
+                        backup_spec,
+                        duration,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "run_reconcile_timer: could not update parent %s/%s: %s",
+                        namespace,
+                        backup_name,
+                        e,
+                    )
+            return
+
+        if job_failed:
+            message = "job failed — reconciled by timer"
+        elif start_str and age_min >= 60:
+            logger.warning(
+                "K8siBackupRun %s/%s stuck Running for %.0f min, marking Failed",
+                namespace,
+                name,
+                age_min,
+            )
+            message = f"stuck in Running for {age_min:.0f}m — job may have crashed"
 
     if message is None:
         return

@@ -2,7 +2,7 @@
 
 import logging
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tests.helpers import run_coro
 
@@ -105,6 +105,8 @@ def test_run_timer_running_old_marks_failed():
 
     body, status = _body("Running", start_ago_min=65)
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        # job read (no conditions) → _patch_run_status → delete_job
+        mock_thread.side_effect = [_mock_job(), None, None]
         run_coro(
             run_reconcile_timer(
                 body=body,
@@ -115,7 +117,7 @@ def test_run_timer_running_old_marks_failed():
             )
         )
     mock_thread.assert_awaited()
-    patch_kwargs = mock_thread.call_args_list[0][0][3]
+    patch_kwargs = mock_thread.call_args_list[1][0][3]  # index 1: _patch_run_status
     assert patch_kwargs["phase"] == "Failed"
     assert "Running" in patch_kwargs["message"]
 
@@ -160,12 +162,17 @@ def test_run_timer_sets_completion_time_when_running_old():
 
     body, status = _body("Running", start_ago_min=65)
     with patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.side_effect = [
+            _mock_job(),
+            None,
+            None,
+        ]  # job read, _patch_run_status, delete_job
         run_coro(
             run_reconcile_timer(
                 body=body, name="stuck", namespace="ns", status=status, logger=logging.getLogger()
             )
         )
-    patch_kwargs = mock_thread.call_args_list[0][0][3]
+    patch_kwargs = mock_thread.call_args_list[1][0][3]  # index 1: _patch_run_status
     assert "completionTime" in patch_kwargs, "completionTime must be set on timer-killed runs"
 
 
@@ -347,6 +354,109 @@ def test_run_timer_skips_pending_when_api_shows_already_terminal():
         if getattr(c[0][0], "__name__", "") == "patch_namespaced_custom_object_status"
     ]
     assert not kill_calls, "Timer must not kill a run that is already terminal in the API"
+
+
+# ── Running: job-status reconciliation ───────────────────────────────────────
+
+
+def _mock_job(complete: bool = False, failed: bool = False) -> MagicMock:
+    """Return a MagicMock V1Job with the appropriate conditions."""
+    job = MagicMock()
+    conditions = []
+    if complete:
+        c = MagicMock()
+        c.type = "Complete"
+        c.status = "True"
+        conditions.append(c)
+    if failed:
+        c = MagicMock()
+        c.type = "Failed"
+        c.status = "True"
+        conditions.append(c)
+    job.status.conditions = conditions
+    return job
+
+
+def test_run_timer_reconciles_running_to_succeeded_when_job_complete():
+    """If the K8s Job completed but run is still Running, timer must patch to Succeeded.
+
+    This handles the case where the operator restarted between job completion and
+    _patch_run_status — the backup is done, but the run is stuck in Running.
+    """
+    from k8si.operator.main import run_reconcile_timer
+
+    body, status = _body_with_labels("Running", "my-backup", start_ago_min=10)
+
+    with (
+        patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread,
+        patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock) as mock_update,
+    ):
+        mock_thread.side_effect = [
+            _mock_job(complete=True),  # read_namespaced_job: job is done
+            None,  # _patch_run_status → Succeeded
+            {"spec": {}, "metadata": {"name": "my-backup"}},  # get parent backup
+        ]
+        run_coro(
+            run_reconcile_timer(
+                body=body,
+                name="my-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
+            )
+        )
+
+    status_calls = [
+        c
+        for c in mock_thread.call_args_list
+        if getattr(c[0][0], "__name__", "") == "_patch_run_status"
+    ]
+    assert status_calls, "Timer must call _patch_run_status when job completed"
+    patch_fields = status_calls[0][0][3]
+    assert patch_fields["phase"] == "Succeeded", (
+        f"Expected Succeeded (job done), got {patch_fields['phase']!r}"
+    )
+    assert "completionTime" in patch_fields
+
+    mock_update.assert_awaited_once()
+    assert mock_update.call_args[0][4] == "success"  # result arg
+
+
+def test_run_timer_reconciles_running_to_failed_when_job_failed():
+    """If the K8s Job is Failed, timer marks run Failed immediately — not after 60 min."""
+    from k8si.operator.main import run_reconcile_timer
+
+    body, status = _body_with_labels("Running", "my-backup", start_ago_min=10)  # only 10 min!
+
+    with (
+        patch("k8si.operator.main.asyncio.to_thread", new_callable=AsyncMock) as mock_thread,
+        patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+    ):
+        mock_thread.side_effect = [
+            _mock_job(failed=True),  # read_namespaced_job
+            None,  # _patch_run_status → Failed
+            None,  # delete_namespaced_job
+            {"spec": {}, "metadata": {"name": "my-backup"}},  # get parent backup
+        ]
+        run_coro(
+            run_reconcile_timer(
+                body=body,
+                name="my-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
+            )
+        )
+
+    status_calls = [
+        c
+        for c in mock_thread.call_args_list
+        if getattr(c[0][0], "__name__", "") == "_patch_run_status"
+    ]
+    assert status_calls, "Timer must patch run to Failed when job failed"
+    patch_fields = status_calls[0][0][3]
+    assert patch_fields["phase"] == "Failed"
+    assert "job failed" in patch_fields.get("message", "").lower()
 
 
 # ── orphaned Job cleanup ──────────────────────────────────────────────────────
