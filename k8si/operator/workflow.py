@@ -95,6 +95,7 @@ def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | Non
 
     return None, None
 
+
 _BACKUP_JOB_TIMEOUT = 3600
 _HOOK_JOB_TIMEOUT = 300
 _JOB_GONE_TIMEOUT = 120
