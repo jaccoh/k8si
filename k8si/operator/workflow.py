@@ -40,8 +40,8 @@ def _resolve_backup_secret(spec: dict[str, Any], backend_type: str) -> str:
     restic always uses spec.resticSecret.
     """
     if backend_type == "kopia":
-        return spec.get("kopiaSecret") or spec.get("resticSecret", "")
-    return spec.get("resticSecret", "")
+        return str(spec.get("kopiaSecret") or spec.get("resticSecret") or "")
+    return str(spec.get("resticSecret") or "")
 
 
 def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | None]:
@@ -174,7 +174,7 @@ async def run_backup(
     body: dict[str, Any] | None = None,
     run_name: str | None = None,
     run_ns: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Run the full snapshot-first backup. Returns status fields on success.
 
     When run_name is provided, live log entries are patched to K8siBackupRun status.
