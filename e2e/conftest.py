@@ -396,10 +396,20 @@ def postgres_env(ns):
                         ],
                         "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}],
                         "readinessProbe": {
-                            "exec": {"command": ["pg_isready", "-U", "postgres"]},
+                            "exec": {
+                                "command": [
+                                    "psql",
+                                    "-U",
+                                    "postgres",
+                                    "-d",
+                                    "testdb",
+                                    "-c",
+                                    "SELECT 1",
+                                ]
+                            },
                             "initialDelaySeconds": 5,
                             "periodSeconds": 5,
-                            "failureThreshold": 12,
+                            "failureThreshold": 24,
                         },
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
