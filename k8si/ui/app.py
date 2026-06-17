@@ -109,6 +109,8 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "paused": spec.get("paused", False),
         "backupWindow": spec.get("backupWindow", {}),
         "resticSecret": spec.get("resticSecret"),
+        "kopiaSecret": spec.get("kopiaSecret"),
+        "backupSecret": spec.get("kopiaSecret") or spec.get("resticSecret"),
         "lastBackupTime": status.get("lastBackupTime"),
         "lastBackupResult": status.get("lastBackupResult", "pending"),
         "nextBackupTime": status.get("nextBackupTime"),

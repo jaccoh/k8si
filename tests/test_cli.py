@@ -1,11 +1,11 @@
-"""Tests for k8si/cli.py — main() dispatch and _build_restic_env()."""
+"""Tests for k8si/cli.py — main() dispatch and _build_backend_env()."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# _build_restic_env helpers
+# _build_backend_env helpers
 # ---------------------------------------------------------------------------
 
 
@@ -19,39 +19,39 @@ def _make_config(**kwargs) -> MagicMock:
     return cfg
 
 
-def test_build_restic_env_sets_repository() -> None:
-    from k8si.cli import _build_restic_env
+def test_build_backend_env_sets_repository() -> None:
+    from k8si.cli import _build_backend_env
 
     cfg = _make_config(restic_repository="sftp:host:/myrepo")
-    env = _build_restic_env(cfg)
+    env = _build_backend_env(cfg)
     assert env["RESTIC_REPOSITORY"] == "sftp:host:/myrepo"
 
 
-def test_build_restic_env_sets_password_when_present() -> None:
-    from k8si.cli import _build_restic_env
+def test_build_backend_env_sets_password_when_present() -> None:
+    from k8si.cli import _build_backend_env
 
     cfg = _make_config(restic_password="mysecret", restic_password_file=None)
-    env = _build_restic_env(cfg)
+    env = _build_backend_env(cfg)
     assert env["RESTIC_PASSWORD"] == "mysecret"
     assert "RESTIC_PASSWORD_FILE" not in env
 
 
-def test_build_restic_env_sets_password_file_when_no_password() -> None:
+def test_build_backend_env_sets_password_file_when_no_password() -> None:
     from pathlib import Path
 
-    from k8si.cli import _build_restic_env
+    from k8si.cli import _build_backend_env
 
     cfg = _make_config(restic_password=None, restic_password_file=Path("/run/secrets/pw"))
-    env = _build_restic_env(cfg)
+    env = _build_backend_env(cfg)
     assert env["RESTIC_PASSWORD_FILE"] == "/run/secrets/pw"
     assert "RESTIC_PASSWORD" not in env
 
 
-def test_build_restic_env_neither_password_nor_file() -> None:
-    from k8si.cli import _build_restic_env
+def test_build_backend_env_neither_password_nor_file() -> None:
+    from k8si.cli import _build_backend_env
 
     cfg = _make_config(restic_password=None, restic_password_file=None)
-    env = _build_restic_env(cfg)
+    env = _build_backend_env(cfg)
     assert "RESTIC_PASSWORD" not in env
     assert "RESTIC_PASSWORD_FILE" not in env
 

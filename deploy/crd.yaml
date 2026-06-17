@@ -42,14 +42,21 @@ spec:
           properties:
             spec:
               type: object
-              required: [pvc, resticSecret, schedule]
+              required: [pvc, schedule]
               properties:
                 pvc:
                   type: string
                   description: PVC name to back up (must be in the same namespace)
                 resticSecret:
                   type: string
-                  description: Secret with RESTIC_REPOSITORY, RESTIC_PASSWORD, RESTIC_SFTP_COMMAND, id_ed25519, known_hosts
+                  description: Secret with RESTIC_REPOSITORY, RESTIC_PASSWORD, RESTIC_SFTP_COMMAND, id_ed25519, known_hosts (restic backend)
+                kopiaSecret:
+                  type: string
+                  description: Secret with RESTIC_REPOSITORY, RESTIC_PASSWORD, RESTIC_SFTP_COMMAND, id_ed25519, known_hosts (kopia backend, same SFTP secret structure)
+                backendType:
+                  type: string
+                  enum: [restic, kopia]
+                  description: Backup backend to use. Defaults to BACKEND_TYPE env var on the operator pod.
                 schedule:
                   type: string
                   description: Cron schedule for backups, e.g. "0 3 * * *"
@@ -152,7 +159,7 @@ spec:
                 checkAfterBackup:
                   type: boolean
                   default: false
-                  description: Run restic check after each successful backup to verify repository integrity
+                  description: Run a repository integrity check after each successful backup
                 maxRetriesPerDay:
                   type: integer
                   default: 3
@@ -224,7 +231,7 @@ spec:
                   description: Timestamp of the last restore attempt (ISO 8601)
                 lastRestoreSnapshotId:
                   type: string
-                  description: Restic short ID of the snapshot restored, empty if skipped
+                  description: Short ID of the snapshot restored (restic or kopia), empty if skipped
                 lastRestoreMessage:
                   type: string
                   description: Human-readable summary of the last restore attempt

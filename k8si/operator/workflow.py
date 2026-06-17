@@ -33,6 +33,17 @@ _SIZE_UNITS: dict[str, int] = {
 }
 
 
+def _resolve_backup_secret(spec: dict[str, Any], backend_type: str) -> str:
+    """Return the secret name to use for the backup job.
+
+    kopia uses spec.kopiaSecret (falls back to resticSecret for shared SFTP secrets).
+    restic always uses spec.resticSecret.
+    """
+    if backend_type == "kopia":
+        return spec.get("kopiaSecret") or spec.get("resticSecret", "")
+    return spec.get("resticSecret", "")
+
+
 def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | None]:
     """Parse snapshot ID and total size in bytes from backup job stdout.
 
@@ -58,7 +69,30 @@ def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | Non
 
         return snap_id, size_bytes
 
-    # kopia: not yet implemented
+    if backend_type == "kopia":
+        snap_id = None
+        # Modern kopia: "Created snapshot with root <root> and ID <id> in Ns."
+        m = re.search(r"Created snapshot with root \S+ and ID (\S+)", logs)
+        if m:
+            snap_id = m.group(1).rstrip(".")
+        else:
+            # Legacy kopia: "Snapshotted source and ID <id> in 0:05"
+            m = re.search(r"Snapshotted source and ID (\S+)", logs)
+            if m:
+                snap_id = m.group(1)
+
+        size_bytes = None
+        # Progress lines: "* N hashing, N cached (SIZE), N uploading"
+        # Take the last match (final summary line has the largest/complete total).
+        for m2 in re.finditer(r"cached \(([\d.]+)\s*([A-Za-z]+)\)", logs):
+            amount = float(m2.group(1))
+            unit = m2.group(2).lower()
+            multiplier = _SIZE_UNITS.get(unit)
+            if multiplier is not None:
+                size_bytes = int(amount * multiplier)
+
+        return snap_id, size_bytes
+
     return None, None
 
 _BACKUP_JOB_TIMEOUT = 3600
@@ -164,7 +198,7 @@ async def run_backup(
 
     await _cleanup_orphan_snap_pvcs(name, namespace)
     pvc_name = spec["pvc"]
-    restic_secret = spec["resticSecret"]
+    restic_secret = _resolve_backup_secret(spec, BACKEND_TYPE)
     snapshot_class = spec.get("volumeSnapshotClass") or None
     db_spec = spec.get("database")
     hook = spec.get("preSnapshotHook")
@@ -226,7 +260,7 @@ async def run_backup(
             _log_phase("SnapshotFailed", f"Snapshot phase failed: {e}")
             raise
 
-        # Phase 2: create ephemeral PVC from snapshot, run restic backup, clean up
+        # Phase 2: create ephemeral PVC from snapshot, run backup job, clean up
         snap_pvc_created = False
         node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
         if node:
@@ -349,6 +383,7 @@ def _build_backup_job(
     env: list[dict[str, Any]] = [
         {"name": "MODE", "value": "job"},
         {"name": "DATA_PATH", "value": "/data"},
+        {"name": "BACKEND_TYPE", "value": BACKEND_TYPE},
         {"name": "RETENTION_DAILY", "value": str(retention.get("daily", 7))},
         {"name": "RETENTION_WEEKLY", "value": str(retention.get("weekly", 4))},
         {"name": "RETENTION_MONTHLY", "value": str(retention.get("monthly", 3))},

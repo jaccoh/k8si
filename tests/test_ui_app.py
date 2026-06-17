@@ -43,6 +43,8 @@ EXPECTED_SHAPED = {
     "paused": False,
     "backupWindow": {"start": "02:00", "end": "06:00"},
     "resticSecret": None,
+    "kopiaSecret": None,
+    "backupSecret": None,
     "lastBackupTime": "2024-01-15T02:00:00Z",
     "lastBackupResult": "success",
     "nextBackupTime": "2024-01-16T02:00:00Z",
@@ -156,6 +158,7 @@ def test_shape_includes_restic_secret() -> None:
 
     result = _shape(item)
     assert result.get("resticSecret") == "my-restic-secret"
+    assert result.get("backupSecret") == "my-restic-secret"
 
 
 def test_shape_restic_secret_defaults_to_none() -> None:
@@ -164,6 +167,27 @@ def test_shape_restic_secret_defaults_to_none() -> None:
 
     result = _shape(MINIMAL_ITEM)
     assert result.get("resticSecret") is None
+    assert result.get("backupSecret") is None
+
+
+def test_shape_includes_kopia_secret() -> None:
+    """_shape() exposes spec.kopiaSecret; backupSecret prefers kopiaSecret over resticSecret."""
+    from k8si.ui.app import _shape
+
+    item = {
+        "metadata": {"name": "bkp", "namespace": "default"},
+        "spec": {
+            "pvc": "data",
+            "schedule": "",
+            "kopiaSecret": "my-kopia-secret",
+            "resticSecret": "my-restic-secret",
+        },
+        "status": {},
+    }
+
+    result = _shape(item)
+    assert result.get("kopiaSecret") == "my-kopia-secret"
+    assert result.get("backupSecret") == "my-kopia-secret"
 
 
 # ---------------------------------------------------------------------------

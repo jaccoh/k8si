@@ -281,6 +281,72 @@ def test_build_backup_job_includes_tags() -> None:
     assert env_map.get("BACKUP_TAGS") == "app=test"
 
 
+# ── _build_backup_job: BACKEND_TYPE propagation ──────────────────────────────
+
+
+def test_build_backup_job_injects_backend_type() -> None:
+    """BACKEND_TYPE must appear in the Job container env so kopia/restic uses correct backend."""
+    import k8si.operator.workflow as wf
+    from k8si.operator.workflow import _build_backup_job
+
+    original = wf.BACKEND_TYPE
+    wf.BACKEND_TYPE = "kopia"
+    try:
+        job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", {}, [], {}, None)
+    finally:
+        wf.BACKEND_TYPE = original
+
+    env_map = {
+        e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map.get("BACKEND_TYPE") == "kopia"
+
+
+def test_build_backup_job_backend_type_defaults_to_restic() -> None:
+    """When BACKEND_TYPE is restic, env must still be injected with value restic."""
+    import k8si.operator.workflow as wf
+    from k8si.operator.workflow import _build_backup_job
+
+    original = wf.BACKEND_TYPE
+    wf.BACKEND_TYPE = "restic"
+    try:
+        job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", {}, [], {}, None)
+    finally:
+        wf.BACKEND_TYPE = original
+
+    env_map = {
+        e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map.get("BACKEND_TYPE") == "restic"
+
+
+# ── backup secret selection by backend type ───────────────────────────────────
+
+
+def test_resolve_backup_secret_uses_kopia_secret_for_kopia() -> None:
+    """When backend_type=kopia, _resolve_backup_secret uses kopiaSecret from spec."""
+    from k8si.operator.workflow import _resolve_backup_secret
+
+    spec = {"kopiaSecret": "my-kopia-secret", "resticSecret": "my-restic-secret"}
+    assert _resolve_backup_secret(spec, "kopia") == "my-kopia-secret"
+
+
+def test_resolve_backup_secret_falls_back_to_restic_secret_if_no_kopia_secret() -> None:
+    """kopia backend without kopiaSecret falls back to resticSecret."""
+    from k8si.operator.workflow import _resolve_backup_secret
+
+    spec = {"resticSecret": "shared-secret"}
+    assert _resolve_backup_secret(spec, "kopia") == "shared-secret"
+
+
+def test_resolve_backup_secret_uses_restic_secret_for_restic() -> None:
+    """restic backend uses resticSecret."""
+    from k8si.operator.workflow import _resolve_backup_secret
+
+    spec = {"resticSecret": "my-restic-secret", "kopiaSecret": "other-secret"}
+    assert _resolve_backup_secret(spec, "restic") == "my-restic-secret"
+
+
 # ── _get_pod_failure_reason: additional paths ─────────────────────────────────
 
 

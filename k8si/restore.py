@@ -1,4 +1,4 @@
-"""Init container mode: restore from restic with pre-restore sanity checks."""
+"""Init container mode: restore from backup backend with pre-restore sanity checks."""
 
 import fcntl
 import logging

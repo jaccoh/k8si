@@ -1455,7 +1455,7 @@
           var bk = allBackups.find(function(b) {
             return b.namespace === namespace && (b.recentRuns || []).some(function(r) { return r.name === runName; });
           });
-          var destination = bk ? (bk.resticSecret || null) : null;
+          var destination = bk ? (bk.backupSecret || bk.resticSecret || null) : null;
           summary.innerHTML = '<div class="log-summary-title">'
             + (isSuccess ? 'Backup completed successfully' : 'Backup failed') + '</div>'
             + '<div class="log-summary-grid">'

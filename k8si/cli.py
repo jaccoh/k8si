@@ -39,9 +39,9 @@ def main() -> None:
 
     backend: BackupBackend
     if config.backend_type == "kopia":
-        backend = KopiaBackend(env=_build_restic_env(config))
+        backend = KopiaBackend(env=_build_backend_env(config))
     else:
-        backend = ResticBackend(env=_build_restic_env(config))
+        backend = ResticBackend(env=_build_backend_env(config))
 
     if config.mode == "restore":
         from . import restore
@@ -57,7 +57,7 @@ def main() -> None:
         backup.run(config, backend)
 
 
-def _build_restic_env(config: Config) -> dict[str, str]:
+def _build_backend_env(config: Config) -> dict[str, str]:
     env = dict(os.environ)
     env["RESTIC_REPOSITORY"] = config.restic_repository
 

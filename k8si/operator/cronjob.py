@@ -7,20 +7,27 @@ import yaml
 
 K8SI_IMAGE = os.environ.get("K8SI_IMAGE", "ghcr.io/jaccoh/k8si:latest")
 
-_RESTIC_SECRET_KEYS = ["RESTIC_REPOSITORY", "RESTIC_PASSWORD", "RESTIC_SFTP_COMMAND"]
+# Keys pulled from the backup secret into the restore container env.
+# Both restic and kopia (SFTP mode) use the same secret structure.
+_BACKUP_SECRET_KEYS = ["RESTIC_REPOSITORY", "RESTIC_PASSWORD", "RESTIC_SFTP_COMMAND"]
 
 
 def _restic_env_vars(secret_name: str) -> list[dict[str, Any]]:
-    """Return env var entries that pull restic credentials from *secret_name*."""
+    """Return env var entries that pull backup credentials from *secret_name*."""
     return [
         {"name": key, "valueFrom": {"secretKeyRef": {"name": secret_name, "key": key}}}
-        for key in _RESTIC_SECRET_KEYS
+        for key in _BACKUP_SECRET_KEYS
     ]
 
 
 def build_restore_patch(spec: dict[str, Any]) -> str:
     """Return a YAML snippet to paste into spec.initContainers and spec.volumes."""
-    restic_secret = spec["resticSecret"]
+    backend_type = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
+    # kopia uses kopiaSecret; fall back to resticSecret for shared SFTP configs
+    if backend_type == "kopia":
+        restic_secret = spec.get("kopiaSecret") or spec.get("resticSecret", "")
+    else:
+        restic_secret = spec.get("resticSecret", "")
     restore = spec.get("restore", {})
     sentinels = restore.get("sentinels", [])
     required = restore.get("required", False)
@@ -29,7 +36,10 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
     size_max = restore.get("size", {}).get("max", "")
     tags = restore.get("tags", spec.get("tags", []))
 
-    env: list[dict[str, Any]] = [{"name": "MODE", "value": "restore"}]
+    env: list[dict[str, Any]] = [
+        {"name": "MODE", "value": "restore"},
+        {"name": "BACKEND_TYPE", "value": backend_type},
+    ]
     if sentinels:
         env.append({"name": "RESTORE_SENTINELS", "value": ",".join(sentinels)})
     if required:
