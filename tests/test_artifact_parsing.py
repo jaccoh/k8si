@@ -1,9 +1,6 @@
 """Unit tests for restic/kopia job-log artifact parsing (_parse_artifact)."""
 
-import pytest
-
 from k8si.operator.workflow import _parse_artifact
-
 
 # ---------------------------------------------------------------------------
 # Restic

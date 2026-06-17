@@ -8,6 +8,16 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+import kopf
+import kubernetes
+import kubernetes.client
+import kubernetes.client.exceptions
+
+from . import quiesce, snapshot
+from .cronjob import K8SI_IMAGE, _restic_env_vars
+
+log = logging.getLogger(__name__)
+
 BACKEND_TYPE: str = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
 
 _SIZE_UNITS: dict[str, int] = {
@@ -50,16 +60,6 @@ def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | Non
 
     # kopia: not yet implemented
     return None, None
-
-import kopf
-import kubernetes
-import kubernetes.client
-import kubernetes.client.exceptions
-
-from . import quiesce, snapshot
-from .cronjob import K8SI_IMAGE, _restic_env_vars
-
-log = logging.getLogger(__name__)
 
 _BACKUP_JOB_TIMEOUT = 3600
 _HOOK_JOB_TIMEOUT = 300
