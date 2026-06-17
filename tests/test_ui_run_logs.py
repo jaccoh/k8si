@@ -13,17 +13,24 @@ def _make_client() -> TestClient:
     return make_ui_client()
 
 
-def _run_obj(phase: str = "Succeeded", log: list | None = None) -> dict:
-    return {
-        "metadata": {"name": "mybackup-20260614120000"},
-        "status": {
-            "phase": phase,
-            "log": log or [],
-            "startTime": "2026-06-14T12:00:00+00:00",
-            "completionTime": "2026-06-14T12:04:27+00:00",
-            "message": "",
-        },
+def _run_obj(
+    phase: str = "Succeeded",
+    log: list | None = None,
+    snapshot_id: str | None = None,
+    size_bytes: int | None = None,
+) -> dict:
+    status: dict = {
+        "phase": phase,
+        "log": log or [],
+        "startTime": "2026-06-14T12:00:00+00:00",
+        "completionTime": "2026-06-14T12:04:27+00:00",
+        "message": "",
     }
+    if snapshot_id is not None:
+        status["snapshotId"] = snapshot_id
+    if size_bytes is not None:
+        status["sizeBytes"] = size_bytes
+    return {"metadata": {"name": "mybackup-20260614120000"}, "status": status}
 
 
 def _sse_events(resp) -> list[dict]:
@@ -166,6 +173,62 @@ def test_stream_run_logs_streams_log_entries(mock_api_cls: MagicMock) -> None:
     assert len(phase_events) == 2
     assert phase_events[0]["message"] == "creating snapshot"
     assert phase_events[1]["message"] == "uploading data"
+
+
+# ── artifact metadata in done event ──────────────────────────────────────────
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_stream_run_logs_done_includes_snapshot_id(mock_api_cls: MagicMock) -> None:
+    """done event includes snapshotId when present in run status."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _run_obj(
+        "Succeeded", snapshot_id="abc12345"
+    )
+
+    client = _make_client()
+    resp = client.get("/api/runs/default/mybackup-20260614120000/logs")
+
+    events = _sse_events(resp)
+    done = next((e for e in events if e.get("type") == "done"), None)
+    assert done is not None
+    assert done.get("snapshotId") == "abc12345"
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_stream_run_logs_done_includes_size_bytes(mock_api_cls: MagicMock) -> None:
+    """done event includes sizeBytes when present in run status."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _run_obj(
+        "Succeeded", snapshot_id="abc12345", size_bytes=1263
+    )
+
+    client = _make_client()
+    resp = client.get("/api/runs/default/mybackup-20260614120000/logs")
+
+    events = _sse_events(resp)
+    done = next((e for e in events if e.get("type") == "done"), None)
+    assert done is not None
+    assert done.get("sizeBytes") == 1263
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_stream_run_logs_done_omits_absent_artifact_fields(mock_api_cls: MagicMock) -> None:
+    """done event does not include snapshotId/sizeBytes when absent from run status."""
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _run_obj("Succeeded")
+
+    client = _make_client()
+    resp = client.get("/api/runs/default/mybackup-20260614120000/logs")
+
+    events = _sse_events(resp)
+    done = next((e for e in events if e.get("type") == "done"), None)
+    assert done is not None
+    assert "snapshotId" not in done
+    assert "sizeBytes" not in done
 
 
 # ── long-running backup (>5 min) ──────────────────────────────────────────────

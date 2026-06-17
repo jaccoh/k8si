@@ -62,6 +62,15 @@ spec:
                   type: string
                 message:
                   type: string
+                snapshotId:
+                  type: string
+                  description: Restic/Kopia snapshot ID from the completed backup job
+                sizeBytes:
+                  type: integer
+                  description: Size of the backup in bytes as reported by the backend
+                backendType:
+                  type: string
+                  description: Backend used for this run (restic | kopia)
                 log:
                   type: array
                   items:

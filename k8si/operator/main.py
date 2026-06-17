@@ -650,12 +650,18 @@ async def on_run_create(
                 e,
             )
 
-        await asyncio.to_thread(
-            _patch_run_status,
-            namespace,
-            name,
-            {"phase": "Succeeded", "completionTime": completion, "message": ""},
-        )
+        artifact_patch: dict[str, Any] = {
+            "phase": "Succeeded",
+            "completionTime": completion,
+            "message": "",
+        }
+        if result.get("snapshotId"):
+            artifact_patch["snapshotId"] = result["snapshotId"]
+        if result.get("sizeBytes") is not None:
+            artifact_patch["sizeBytes"] = result["sizeBytes"]
+        if result.get("backendType"):
+            artifact_patch["backendType"] = result["backendType"]
+        await asyncio.to_thread(_patch_run_status, namespace, name, artifact_patch)
         await _update_parent_backup(
             custom,
             backup_name,
@@ -716,7 +722,14 @@ async def _update_parent_backup(
     recent_backups.insert(0, {"time": now_iso, "result": result})
 
     recent_runs = list(status.get("recentRuns", []))
-    recent_runs.insert(0, {"name": run_name, "time": now_iso, "result": result})
+    run_entry: dict[str, Any] = {"name": run_name, "time": now_iso, "result": result}
+    if run_result.get("snapshotId"):
+        run_entry["snapshotId"] = run_result["snapshotId"]
+    if run_result.get("sizeBytes") is not None:
+        run_entry["sizeBytes"] = run_result["sizeBytes"]
+    if run_result.get("backendType"):
+        run_entry["backendType"] = run_result["backendType"]
+    recent_runs.insert(0, run_entry)
 
     fields: dict[str, Any] = {
         "lastRunRef": run_name,

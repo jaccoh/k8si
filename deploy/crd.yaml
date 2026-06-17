@@ -189,6 +189,30 @@ spec:
                         type: string
                       result:
                         type: string
+                recentRuns:
+                  type: array
+                  description: Rolling history of the last 30 backup runs with artifact metadata
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      time:
+                        type: string
+                      result:
+                        type: string
+                      snapshotId:
+                        type: string
+                      sizeBytes:
+                        type: integer
+                      backendType:
+                        type: string
+                lastRunRef:
+                  type: string
+                  description: Name of the most recent K8siBackupRun resource
+                lastSuccessfulRunRef:
+                  type: string
+                  description: Name of the most recent successful K8siBackupRun resource
                 lastBackupDuration:
                   type: integer
                   description: Duration of the last backup run in seconds

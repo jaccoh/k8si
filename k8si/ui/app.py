@@ -108,6 +108,7 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "schedule": spec.get("schedule", ""),
         "paused": spec.get("paused", False),
         "backupWindow": spec.get("backupWindow", {}),
+        "resticSecret": spec.get("resticSecret"),
         "lastBackupTime": status.get("lastBackupTime"),
         "lastBackupResult": status.get("lastBackupResult", "pending"),
         "nextBackupTime": status.get("nextBackupTime"),
@@ -115,6 +116,7 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
         "lastRunRef": status.get("lastRunRef"),
         "message": status.get("message", ""),
         "recentBackups": recent,
+        "recentRuns": status.get("recentRuns", []),
         "successRate": stats["successRate"],
         "streak": stats["streak"],
         "lastBackupDuration": status.get("lastBackupDuration"),
@@ -284,7 +286,7 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
 
             if phase in ("Succeeded", "Failed"):
                 result = "success" if phase == "Succeeded" else "failed"
-                done_payload = {
+                done_payload: dict[str, Any] = {
                     "type": "done",
                     "result": result,
                     "phase": phase,
@@ -292,6 +294,10 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
                     "completionTime": status.get("completionTime"),
                     "message": status.get("message", ""),
                 }
+                if status.get("snapshotId"):
+                    done_payload["snapshotId"] = status["snapshotId"]
+                if status.get("sizeBytes") is not None:
+                    done_payload["sizeBytes"] = status["sizeBytes"]
                 yield f"data: {json.dumps(done_payload)}\n\n"
                 return
 

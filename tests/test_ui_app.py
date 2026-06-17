@@ -42,6 +42,7 @@ EXPECTED_SHAPED = {
     "schedule": "0 2 * * *",
     "paused": False,
     "backupWindow": {"start": "02:00", "end": "06:00"},
+    "resticSecret": None,
     "lastBackupTime": "2024-01-15T02:00:00Z",
     "lastBackupResult": "success",
     "nextBackupTime": "2024-01-16T02:00:00Z",
@@ -51,6 +52,7 @@ EXPECTED_SHAPED = {
     "recentBackups": [
         {"time": "2024-01-15T02:00:00Z", "result": "success"},
     ],
+    "recentRuns": [],
     "successRate": 1.0,
     "streak": 1,
     "lastBackupDuration": None,
@@ -103,6 +105,65 @@ def test_shape_defaults_missing_status() -> None:
     assert result["successRate"] is None
     assert result["streak"] == 0
     assert result["lastBackupDuration"] is None
+
+
+def test_shape_includes_recent_runs() -> None:
+    """_shape() must expose recentRuns so the dashboard can populate the run-picker and teeth."""
+    from k8si.ui.app import _shape
+
+    item = {
+        "metadata": {"name": "bkp", "namespace": "default"},
+        "spec": {"pvc": "data", "schedule": "0 2 * * *"},
+        "status": {
+            "recentRuns": [
+                {"name": "bkp-20260617120000", "time": "2026-06-17T12:00:00Z", "result": "success"},
+                {"name": "bkp-20260616120000", "time": "2026-06-16T12:00:00Z", "result": "failed"},
+            ]
+        },
+    }
+
+    result = _shape(item)
+
+    assert "recentRuns" in result
+    assert len(result["recentRuns"]) == 2
+    assert result["recentRuns"][0]["name"] == "bkp-20260617120000"
+    assert result["recentRuns"][0]["result"] == "success"
+
+
+def test_shape_recent_runs_defaults_to_empty() -> None:
+    """_shape() returns empty recentRuns when the field is absent from status."""
+    from k8si.ui.app import _shape
+
+    item = {
+        "metadata": {"name": "bkp", "namespace": "default"},
+        "spec": {"pvc": "data", "schedule": ""},
+        "status": {},
+    }
+
+    result = _shape(item)
+    assert result["recentRuns"] == []
+
+
+def test_shape_includes_restic_secret() -> None:
+    """_shape() exposes spec.resticSecret so the dashboard can show the destination."""
+    from k8si.ui.app import _shape
+
+    item = {
+        "metadata": {"name": "bkp", "namespace": "default"},
+        "spec": {"pvc": "data", "schedule": "", "resticSecret": "my-restic-secret"},
+        "status": {},
+    }
+
+    result = _shape(item)
+    assert result.get("resticSecret") == "my-restic-secret"
+
+
+def test_shape_restic_secret_defaults_to_none() -> None:
+    """_shape() returns None for resticSecret when absent from spec."""
+    from k8si.ui.app import _shape
+
+    result = _shape(MINIMAL_ITEM)
+    assert result.get("resticSecret") is None
 
 
 # ---------------------------------------------------------------------------

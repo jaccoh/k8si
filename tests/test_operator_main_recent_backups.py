@@ -46,6 +46,40 @@ def _run_update(
     return body["status"]["recentBackups"]
 
 
+def _run_update_recent_runs(
+    result: str,
+    run_result: dict | None = None,
+) -> dict:
+    """Run _update_parent_backup and return the first recentRuns entry from the PATCH call."""
+    from k8si.operator.main import _update_parent_backup
+
+    custom = MagicMock()
+    backup_obj = {"status": {}}
+    run_result = run_result or {"lastBackupTime": _LAST_BACKUP_TIME, "message": ""}
+
+    async def _run():
+        with (
+            patch("k8si.operator.main.metrics.record"),
+            patch("k8si.operator.main._notify_webhook", new_callable=AsyncMock),
+        ):
+            await _update_parent_backup(
+                custom,
+                "test",
+                "default",
+                "test-run",
+                result,
+                run_result,
+                backup_obj,
+                SPEC,
+                30,
+            )
+
+    run_coro(_run())
+    call = custom.patch_namespaced_custom_object_status.call_args
+    body = call.args[5] if len(call.args) > 5 else call.kwargs.get("body", {})
+    return body["status"]["recentRuns"][0]
+
+
 # ---------------------------------------------------------------------------
 # Test 1 — success prepends a "success" entry to recentBackups
 # ---------------------------------------------------------------------------
@@ -60,6 +94,57 @@ def test_success_prepends_to_recent_backups():
     assert recent[0]["result"] == "success"
     assert recent[0]["time"] == _LAST_BACKUP_TIME
     assert recent[1] == existing_entry
+
+
+# ---------------------------------------------------------------------------
+# Test: recentRuns entry includes artifact fields from run_result
+# ---------------------------------------------------------------------------
+
+
+def test_recent_runs_entry_includes_snapshot_id():
+    """snapshotId from run_result should appear in the recentRuns entry."""
+    run_result = {
+        "lastBackupTime": _LAST_BACKUP_TIME,
+        "message": "",
+        "snapshotId": "abc12345",
+        "sizeBytes": 1263,
+        "backendType": "restic",
+    }
+    entry = _run_update_recent_runs("success", run_result)
+    assert entry["snapshotId"] == "abc12345"
+
+
+def test_recent_runs_entry_includes_size_bytes():
+    run_result = {
+        "lastBackupTime": _LAST_BACKUP_TIME,
+        "message": "",
+        "snapshotId": "abc12345",
+        "sizeBytes": 1263,
+        "backendType": "restic",
+    }
+    entry = _run_update_recent_runs("success", run_result)
+    assert entry["sizeBytes"] == 1263
+
+
+def test_recent_runs_entry_includes_backend_type():
+    run_result = {
+        "lastBackupTime": _LAST_BACKUP_TIME,
+        "message": "",
+        "snapshotId": "abc12345",
+        "sizeBytes": 1263,
+        "backendType": "restic",
+    }
+    entry = _run_update_recent_runs("success", run_result)
+    assert entry["backendType"] == "restic"
+
+
+def test_recent_runs_entry_omits_none_artifact_fields():
+    """When run_result has no artifact data, recentRuns entry should not have those keys."""
+    run_result = {"lastBackupTime": _LAST_BACKUP_TIME, "message": ""}
+    entry = _run_update_recent_runs("success", run_result)
+    assert "snapshotId" not in entry
+    assert "sizeBytes" not in entry
+    assert "backendType" not in entry
 
 
 # ---------------------------------------------------------------------------

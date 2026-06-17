@@ -2,9 +2,54 @@
 
 import asyncio
 import logging
+import os
+import re
 import time
 from datetime import UTC, datetime
 from typing import Any
+
+BACKEND_TYPE: str = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
+
+_SIZE_UNITS: dict[str, int] = {
+    "b": 1,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+    "kb": 1000,
+    "mb": 1000**2,
+    "gb": 1000**3,
+    "tb": 1000**4,
+}
+
+
+def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | None]:
+    """Parse snapshot ID and total size in bytes from backup job stdout.
+
+    Returns (snapshot_id, size_bytes). Either field may be None if not found.
+    """
+    if backend_type == "restic":
+        snap_id: str | None = None
+        m = re.search(r"snapshot ([a-f0-9]+) saved", logs)
+        if m:
+            snap_id = m.group(1)
+
+        size_bytes: int | None = None
+        # "processed N files, 23.456 GiB in 0:00"
+        m2 = re.search(
+            r"processed \d+ files?,\s+([\d.]+)\s*([A-Za-z]+)\s+in\b",
+            logs,
+        )
+        if m2:
+            amount, unit = float(m2.group(1)), m2.group(2).lower()
+            multiplier = _SIZE_UNITS.get(unit)
+            if multiplier is not None:
+                size_bytes = int(amount * multiplier)
+
+        return snap_id, size_bytes
+
+    # kopia: not yet implemented
+    return None, None
 
 import kopf
 import kubernetes
@@ -206,8 +251,24 @@ async def run_backup(
                 namespace, snap_name, snap_pvc if snap_pvc_created else None
             )
 
+    # Collect job logs to extract snapshot ID and backup size (best-effort, non-fatal)
+    v1 = kubernetes.client.CoreV1Api()
+    raw_logs = await asyncio.to_thread(_collect_job_logs, v1, job_name, namespace)
+    snapshot_id, size_bytes = _parse_artifact(raw_logs, BACKEND_TYPE)
+    if snapshot_id:
+        logger.info("Artifact: snapshot %s, size %s B", snapshot_id, size_bytes)
+    else:
+        logger.warning("Could not parse snapshot ID from job %s logs", job_name)
+
     now = datetime.now(tz=UTC).isoformat()
-    return {"lastBackupResult": "success", "lastBackupTime": now, "message": ""}
+    return {
+        "lastBackupResult": "success",
+        "lastBackupTime": now,
+        "message": "",
+        "snapshotId": snapshot_id,
+        "sizeBytes": size_bytes,
+        "backendType": BACKEND_TYPE,
+    }
 
 
 def _find_pvc_node_sync(pvc_name: str, namespace: str) -> str | None:
@@ -400,7 +461,7 @@ def _collect_job_logs(v1: Any, job_name: str, namespace: str) -> str:
         pods = v1.list_namespaced_pod(namespace, label_selector=f"job-name={job_name}")
         for pod in pods.items:
             return v1.read_namespaced_pod_log(  # type: ignore[no-any-return]
-                pod.metadata.name, namespace, tail_lines=50
+                pod.metadata.name, namespace
             )
     except Exception:
         pass
