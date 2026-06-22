@@ -50,7 +50,7 @@ class KopiaBackend:
             sftp_args = self._parse_sftp_repo()
             args.extend(["sftp", *sftp_args])
         else:
-            path = self._repo.replace("file://", "")
+            path = self._local_path()
             args.extend(["filesystem", f"--path={path}"])
 
         try:
@@ -63,6 +63,14 @@ class KopiaBackend:
             ):
                 raise BackupError("repository does not exist", e.returncode, e.stderr) from e
             raise
+
+    def _local_path(self) -> str:
+        """Extract filesystem path from a local-backend repo URL."""
+        if self._repo.startswith("local:"):
+            return self._repo[len("local:"):]
+        if self._repo.startswith("file://"):
+            return self._repo[len("file://"):]
+        return self._repo
 
     def _parse_sftp_repo(self) -> list[str]:
         # e.g. sftp:u12345@u12345.your-storagebox.de:backup/app
@@ -99,7 +107,7 @@ class KopiaBackend:
             sftp_args = self._parse_sftp_repo()
             args.extend(["sftp", *sftp_args])
         else:
-            path = self._repo.replace("file://", "")
+            path = self._local_path()
             args.extend(["filesystem", f"--path={path}"])
 
         self._invoke(*args)

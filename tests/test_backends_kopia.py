@@ -21,7 +21,7 @@ def _make_backend(
     The returned mock_cmd IS backend._k — set its return_value or side_effect
     to control what kopia "returns" or "raises" in each test.
     """
-    env = env or {"RESTIC_REPOSITORY": "file:///tmp/kopia-repo", "RESTIC_PASSWORD": "secret"}
+    env = env or {"RESTIC_REPOSITORY": "local:/tmp/kopia-repo", "RESTIC_PASSWORD": "secret"}
     with patch("k8si.backends.kopia.sh") as mock_sh:
         mock_cmd = MagicMock()
         mock_sh.kopia.bake.return_value = mock_cmd

@@ -79,7 +79,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
             "kind": "Secret",
             "metadata": {"name": restic_secret_name, "namespace": ns},
             "data": {
-                "RESTIC_REPOSITORY": _b64("file:///repo"),
+                "RESTIC_REPOSITORY": _b64("local:/repo"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
             },
         },
