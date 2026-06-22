@@ -233,7 +233,9 @@ async def run_backup(
                 )
                 _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
                 _log_phase("BackupJobStarted", f"Starting Job {job_name}")
-                await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
+                raw_logs = await _run_job(
+                    job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger
+                )
                 _emit_event(body, "Normal", "BackupJobCompleted", f"Job {job_name} completed")
                 _log_phase("BackupJobCompleted", f"Job {job_name} completed")
         except Exception as e:
@@ -274,7 +276,9 @@ async def run_backup(
             )
             _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
             _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
-            await _run_job(job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger)
+            raw_logs = await _run_job(
+                job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger
+            )
             _emit_event(body, "Normal", "BackupJobCompleted", f"Backup Job {job_name} completed")
             _log_phase("BackupJobCompleted", f"Backup Job {job_name} completed")
         except Exception as e:
@@ -286,9 +290,6 @@ async def run_backup(
                 namespace, snap_name, snap_pvc if snap_pvc_created else None
             )
 
-    # Collect job logs to extract snapshot ID and backup size (best-effort, non-fatal)
-    v1 = kubernetes.client.CoreV1Api()
-    raw_logs = await asyncio.to_thread(_collect_job_logs, v1, job_name, namespace)
     snapshot_id, size_bytes = _parse_artifact(raw_logs, BACKEND_TYPE)
     if snapshot_id:
         logger.info("Artifact: snapshot %s, size %s B", snapshot_id, size_bytes)
@@ -520,14 +521,19 @@ def _wait_job_gone_sync(job_name: str, namespace: str) -> None:
 
 async def _run_job(
     job_body: dict[str, Any], namespace: str, timeout: int, logger: logging.Logger
-) -> None:
+) -> str:
+    """Run a K8s Job, collect its pod logs on success, then delete it. Returns logs string."""
     job_name = job_body["metadata"]["name"]
     batch = kubernetes.client.BatchV1Api()
+    v1 = kubernetes.client.CoreV1Api()
     await asyncio.to_thread(batch.create_namespaced_job, namespace, job_body)
     logger.info("Created Job %s/%s", namespace, job_name)
+    raw_logs = ""
     try:
         await asyncio.to_thread(_wait_job_complete_sync, job_name, namespace, timeout)
         logger.info("Job %s/%s completed", namespace, job_name)
+        # Collect logs before pod deletion — pods are gone after Foreground delete.
+        raw_logs = await asyncio.to_thread(_collect_job_logs, v1, job_name, namespace)
     finally:
         try:
             await asyncio.to_thread(
@@ -536,3 +542,4 @@ async def _run_job(
             await asyncio.to_thread(_wait_job_gone_sync, job_name, namespace)
         except Exception:
             pass
+    return raw_logs

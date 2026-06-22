@@ -27,7 +27,7 @@ def test_run_backup_emits_kopf_events() -> None:
         patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
         patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value="node1"),
-        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
         patch("k8si.operator.workflow._run_hook_job", new_callable=AsyncMock),
         patch("k8si.operator.workflow.kopf.event") as mock_kopf_event,
     ):
@@ -63,7 +63,9 @@ def test_run_backup_direct_mode() -> None:
         patch(f"{_snap}.create_pvc_from_snapshot", new_callable=AsyncMock) as mock_create_pvc,
         patch(f"{_snap}.delete_snapshot_and_pvc", new_callable=AsyncMock) as mock_delete_snap_pvc,
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value="node1"),
-        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock) as mock_run_job,
+        patch(
+            "k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""
+        ) as mock_run_job,
         patch("k8si.operator.workflow.kopf.event"),
     ):
         mock_quiesce_ctx.return_value = MagicMock()
@@ -148,7 +150,7 @@ def test_orphan_snap_pvcs_deleted_before_backup() -> None:
         patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
         patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
-        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
         patch(
             "k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock
         ) as mock_cleanup,
@@ -512,9 +514,12 @@ def test_run_job_creates_waits_and_deletes() -> None:
 
     job_body = {"metadata": {"name": "test-job"}, "spec": {}}
     mock_batch = MagicMock()
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = []
 
     with (
         patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1),
         patch("k8si.operator.workflow._wait_job_complete_sync"),
         patch("k8si.operator.workflow._wait_job_gone_sync"),
     ):
@@ -524,14 +529,47 @@ def test_run_job_creates_waits_and_deletes() -> None:
     mock_batch.delete_namespaced_job.assert_called_once()
 
 
+def test_run_job_returns_logs_before_pod_deletion() -> None:
+    """_run_job must collect logs BEFORE deleting pods; returning them to the caller."""
+    from k8si.operator.workflow import _run_job
+
+    job_body = {"metadata": {"name": "test-job"}, "spec": {}}
+    mock_batch = MagicMock()
+    mock_v1 = MagicMock()
+    mock_pod = MagicMock()
+    mock_pod.metadata.name = "test-job-abc"
+    mock_v1.list_namespaced_pod.return_value.items = [mock_pod]
+    mock_v1.read_namespaced_pod_log.return_value = "snapshot abc12345 saved"
+
+    call_order: list[str] = []
+    mock_v1.read_namespaced_pod_log.side_effect = lambda *a, **kw: (
+        call_order.append("logs_read") or "snapshot abc12345 saved"
+    )
+    mock_batch.delete_namespaced_job.side_effect = lambda *a, **kw: call_order.append("deleted")
+
+    with (
+        patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1),
+        patch("k8si.operator.workflow._wait_job_complete_sync"),
+        patch("k8si.operator.workflow._wait_job_gone_sync"),
+    ):
+        result = asyncio.run(_run_job(job_body, "default", 60, logging.getLogger("test")))
+
+    assert result == "snapshot abc12345 saved"
+    assert call_order == ["logs_read", "deleted"], "logs must be read before pods are deleted"
+
+
 def test_run_job_deletes_even_on_failure() -> None:
     from k8si.operator.workflow import _run_job
 
     job_body = {"metadata": {"name": "test-job"}, "spec": {}}
     mock_batch = MagicMock()
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = []
 
     with (
         patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
+        patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1),
         patch(
             "k8si.operator.workflow._wait_job_complete_sync",
             side_effect=RuntimeError("job failed"),
@@ -666,7 +704,9 @@ def test_run_hook_job_pins_to_node_when_found() -> None:
 
     with (
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value="worker-1"),
-        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock) as mock_run,
+        patch(
+            "k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""
+        ) as mock_run,
     ):
         asyncio.run(_run_hook_job("/hook.sh", False, "default", "pvc", logging.getLogger("t")))
 
@@ -692,7 +732,7 @@ def test_run_backup_direct_mode_with_db_and_hook_emits_events() -> None:
         patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
         patch("k8si.operator.workflow._run_hook_job", new_callable=AsyncMock),
-        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
         patch("k8si.operator.workflow.kopf.event") as mock_event,
     ):
         mock_ctx.return_value = MagicMock()
@@ -765,7 +805,7 @@ def test_run_backup_clears_log_at_start() -> None:
         patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
         patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
-        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
         patch("k8si.operator.workflow.kopf.event"),
         patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_api_cls,
     ):
@@ -795,7 +835,7 @@ def test_run_backup_logs_backup_job_started_phase() -> None:
         patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
         patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
         patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
-        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
         patch("k8si.operator.workflow.kopf.event"),
         patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_api_cls,
     ):
