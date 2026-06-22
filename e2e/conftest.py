@@ -102,10 +102,10 @@ def ns():
 
 
 @pytest.fixture(scope="module")
-def rest_server_url(ns):
+def repo_pvc(ns):
+    """Create a PVC that backup jobs mount at /repo as the repository (file:// backend)."""
+    pvc_name = "e2e-repo-data"
     v1 = kubernetes.client.CoreV1Api()
-
-    pvc_name = "restic-rest-data"
     v1.create_namespaced_persistent_volume_claim(
         ns,
         {
@@ -119,57 +119,8 @@ def rest_server_url(ns):
             },
         },
     )
-
-    pod_name = "restic-rest"
-    v1.create_namespaced_pod(
-        ns,
-        {
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {"name": pod_name, "namespace": ns, "labels": {"app": "restic-rest"}},
-            "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
-                "restartPolicy": "Always",
-                "volumes": [
-                    {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                ],
-                "containers": [
-                    {
-                        "name": "rest-server",
-                        "image": "restic/rest-server:latest",
-                        "command": ["/usr/bin/rest-server"],
-                        "args": ["--no-auth", "--path", "/data"],
-                        "ports": [{"containerPort": 8000}],
-                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                        "resources": {
-                            "requests": {"cpu": "50m", "memory": "64Mi"},
-                            "limits": {"cpu": "200m", "memory": "256Mi"},
-                        },
-                    }
-                ],
-            },
-        },
-    )
-
-    svc_name = "restic-rest"
-    v1.create_namespaced_service(
-        ns,
-        {
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": {"name": svc_name, "namespace": ns},
-            "spec": {
-                "type": "ClusterIP",
-                "selector": {"app": "restic-rest"},
-                "ports": [{"port": 8000, "targetPort": 8000}],
-            },
-        },
-    )
-
-    wait_pod_phase(ns, pod_name, "Running", timeout=180)
-    log.info("restic rest-server running in %s", ns)
-
-    return f"rest:http://restic-rest.{ns}.svc.cluster.local:8000/"
+    log.info("Created repo PVC %s/%s", ns, pvc_name)
+    return pvc_name
 
 
 @pytest.fixture(scope="module")

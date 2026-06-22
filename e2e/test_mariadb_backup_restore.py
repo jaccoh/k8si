@@ -59,7 +59,7 @@ def _mysql_exec(ns: str, pod_name: str, sql: str) -> subprocess.CompletedProcess
     return result
 
 
-def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image):
+def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
     pvc_name, creds_secret = mariadb_env
     v1 = kubernetes.client.CoreV1Api()
 
@@ -79,11 +79,8 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
             "kind": "Secret",
             "metadata": {"name": restic_secret_name, "namespace": ns},
             "data": {
-                "RESTIC_REPOSITORY": _b64(rest_server_url),
+                "RESTIC_REPOSITORY": _b64("file:///repo"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
-                "RESTIC_SFTP_COMMAND": _b64(""),
-                "id_ed25519": _b64(""),
-                "known_hosts": _b64(""),
             },
         },
     )
@@ -91,6 +88,7 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
     spec = {
         "pvc": pvc_name,
         "resticSecret": restic_secret_name,
+        "repositoryPVC": repo_pvc,
         "schedule": "0 0 1 1 *",
         "volumeSnapshotClass": "openebs-lvm-snapclass",
         "database": {
@@ -136,17 +134,7 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                    {
-                        "name": "restic-ssh",
-                        "secret": {
-                            "secretName": restic_secret_name,
-                            "defaultMode": 0o400,
-                            "items": [
-                                {"key": "id_ed25519", "path": "id_ed25519"},
-                                {"key": "known_hosts", "path": "known_hosts"},
-                            ],
-                        },
-                    },
+                    {"name": "repo", "persistentVolumeClaim": {"claimName": repo_pvc}},
                 ],
                 "initContainers": [
                     {
@@ -174,19 +162,10 @@ def test_mariadb_backup_and_restore(ns, rest_server_url, mariadb_env, k8si_image
                                     },
                                 },
                             },
-                            {
-                                "name": "RESTIC_SFTP_COMMAND",
-                                "valueFrom": {
-                                    "secretKeyRef": {
-                                        "name": restic_secret_name,
-                                        "key": "RESTIC_SFTP_COMMAND",
-                                    },
-                                },
-                            },
                         ],
                         "volumeMounts": [
                             {"name": "data", "mountPath": "/data"},
-                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                            {"name": "repo", "mountPath": "/repo"},
                         ],
                         "resources": {
                             "requests": {"cpu": "50m", "memory": "64Mi"},
@@ -266,9 +245,6 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
             "data": {
                 "RESTIC_REPOSITORY": _b64("rest:http://restic-rest.nowhere.svc:8000/"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
-                "RESTIC_SFTP_COMMAND": _b64(""),
-                "id_ed25519": _b64(""),
-                "known_hosts": _b64(""),
             },
         },
     )
@@ -285,17 +261,6 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                    {
-                        "name": "restic-ssh",
-                        "secret": {
-                            "secretName": secret_name,
-                            "defaultMode": 0o400,
-                            "items": [
-                                {"key": "id_ed25519", "path": "id_ed25519"},
-                                {"key": "known_hosts", "path": "known_hosts"},
-                            ],
-                        },
-                    },
                 ],
                 "initContainers": [
                     {
@@ -321,19 +286,9 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
                                     "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
                                 },
                             },
-                            {
-                                "name": "RESTIC_SFTP_COMMAND",
-                                "valueFrom": {
-                                    "secretKeyRef": {
-                                        "name": secret_name,
-                                        "key": "RESTIC_SFTP_COMMAND",
-                                    },
-                                },
-                            },
                         ],
                         "volumeMounts": [
                             {"name": "data", "mountPath": "/data"},
-                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
                         ],
                         "resources": {
                             "requests": {"cpu": "50m", "memory": "64Mi"},

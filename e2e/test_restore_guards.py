@@ -49,10 +49,6 @@ def _make_restore_pod(
             "name": "RESTIC_PASSWORD",
             "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"}},
         },
-        {
-            "name": "RESTIC_SFTP_COMMAND",
-            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "RESTIC_SFTP_COMMAND"}},
-        },
     ]
     if extra_env:
         env.extend(extra_env)
@@ -66,17 +62,6 @@ def _make_restore_pod(
             "restartPolicy": "Never",
             "volumes": [
                 {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                {
-                    "name": "restic-ssh",
-                    "secret": {
-                        "secretName": secret_name,
-                        "defaultMode": 0o400,
-                        "items": [
-                            {"key": "id_ed25519", "path": "id_ed25519"},
-                            {"key": "known_hosts", "path": "known_hosts"},
-                        ],
-                    },
-                },
             ],
             "initContainers": [
                 {
@@ -86,7 +71,6 @@ def _make_restore_pod(
                     "env": env,
                     "volumeMounts": [
                         {"name": "data", "mountPath": "/data"},
-                        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
                     ],
                     "resources": {
                         "requests": {"cpu": "50m", "memory": "64Mi"},
@@ -127,9 +111,6 @@ def test_restore_required_fails_when_repo_unreachable(ns, k8si_image):
             "data": {
                 "RESTIC_REPOSITORY": _b64("rest:http://nowhere-invalid.svc:8000/"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
-                "RESTIC_SFTP_COMMAND": _b64(""),
-                "id_ed25519": _b64(""),
-                "known_hosts": _b64(""),
             },
         },
     )
@@ -199,9 +180,6 @@ def test_restore_skips_when_sentinel_present(ns, k8si_image):
             "data": {
                 "RESTIC_REPOSITORY": _b64("rest:http://nowhere-invalid.svc:8000/"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
-                "RESTIC_SFTP_COMMAND": _b64(""),
-                "id_ed25519": _b64(""),
-                "known_hosts": _b64(""),
             },
         },
     )
@@ -260,9 +238,6 @@ def test_restore_skips_with_no_restore_marker(ns, k8si_image):
             "data": {
                 "RESTIC_REPOSITORY": _b64("rest:http://nowhere-invalid.svc:8000/"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
-                "RESTIC_SFTP_COMMAND": _b64(""),
-                "id_ed25519": _b64(""),
-                "known_hosts": _b64(""),
             },
         },
     )

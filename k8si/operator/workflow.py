@@ -212,6 +212,7 @@ async def run_backup(
     snap_pvc = f"k8si-snap-{name}-{ts}"
     job_name = f"k8si-{name}-{ts}"
     backup_mode = spec.get("backupMode", "snapshot")
+    repo_pvc = spec.get("repositoryPVC") or None
 
     if backup_mode == "direct":
         if db_spec:
@@ -229,7 +230,15 @@ async def run_backup(
                     logger.info("Pinning backup job to node %s (PVC %s)", node, pvc_name)
 
                 job_body = _build_backup_job(
-                    job_name, namespace, pvc_name, restic_secret, spec, tags, retention, node
+                    job_name,
+                    namespace,
+                    pvc_name,
+                    restic_secret,
+                    spec,
+                    tags,
+                    retention,
+                    node,
+                    repo_pvc,
                 )
                 _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
                 _log_phase("BackupJobStarted", f"Starting Job {job_name}")
@@ -272,7 +281,15 @@ async def run_backup(
             await snapshot.create_pvc_from_snapshot(snap_pvc, namespace, snap_name, pvc_name)
             snap_pvc_created = True
             job_body = _build_backup_job(
-                job_name, namespace, snap_pvc, restic_secret, spec, tags, retention, node
+                job_name,
+                namespace,
+                snap_pvc,
+                restic_secret,
+                spec,
+                tags,
+                retention,
+                node,
+                repo_pvc,
             )
             _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
             _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
@@ -381,6 +398,7 @@ def _build_backup_job(
     tags: list[str],
     retention: dict[str, int],
     node: str | None = None,
+    repo_pvc: str | None = None,
 ) -> dict[str, Any]:
     env: list[dict[str, Any]] = [
         {"name": "MODE", "value": "job"},
@@ -404,6 +422,29 @@ def _build_backup_job(
         },
     )
 
+    volumes: list[dict[str, Any]] = [
+        {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
+        {
+            "name": "restic-ssh",
+            "secret": {
+                "secretName": restic_secret,
+                "optional": True,
+                "defaultMode": 0o400,
+                "items": [
+                    {"key": "id_ed25519", "path": "id_ed25519"},
+                    {"key": "known_hosts", "path": "known_hosts"},
+                ],
+            },
+        },
+    ]
+    volume_mounts: list[dict[str, Any]] = [
+        {"name": "data", "mountPath": "/data"},
+        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+    ]
+    if repo_pvc:
+        volumes.append({"name": "repo", "persistentVolumeClaim": {"claimName": repo_pvc}})
+        volume_mounts.append({"name": "repo", "mountPath": "/repo"})
+
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -415,33 +456,13 @@ def _build_backup_job(
                 "spec": {
                     "restartPolicy": "Never",
                     **({"nodeSelector": {"kubernetes.io/hostname": node}} if node else {}),
-                    "volumes": [
-                        {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                        {
-                            "name": "restic-ssh",
-                            "secret": {
-                                "secretName": restic_secret,
-                                "defaultMode": 0o400,
-                                "items": [
-                                    {"key": "id_ed25519", "path": "id_ed25519"},
-                                    {"key": "known_hosts", "path": "known_hosts"},
-                                ],
-                            },
-                        },
-                    ],
+                    "volumes": volumes,
                     "containers": [
                         {
                             "name": "k8si",
                             "image": K8SI_IMAGE,
                             "env": env,
-                            "volumeMounts": [
-                                {"name": "data", "mountPath": "/data"},
-                                {
-                                    "name": "restic-ssh",
-                                    "mountPath": "/restic-ssh",
-                                    "readOnly": True,
-                                },
-                            ],
+                            "volumeMounts": volume_mounts,
                             "resources": resources,
                         }
                     ],

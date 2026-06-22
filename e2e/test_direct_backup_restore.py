@@ -22,7 +22,7 @@ def _b64(s: str) -> str:
     return base64.b64encode(s.encode()).decode()
 
 
-def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
+def test_direct_backup_and_restore(ns, repo_pvc, k8si_image):
     v1 = kubernetes.client.CoreV1Api()
 
     # 1. Create a PVC for our test application
@@ -106,11 +106,8 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
             "kind": "Secret",
             "metadata": {"name": secret_name, "namespace": ns},
             "data": {
-                "RESTIC_REPOSITORY": _b64(rest_server_url),
+                "RESTIC_REPOSITORY": _b64("file:///repo"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
-                "RESTIC_SFTP_COMMAND": _b64(""),
-                "id_ed25519": _b64(""),
-                "known_hosts": _b64(""),
             },
         },
     )
@@ -120,6 +117,7 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
     spec = {
         "pvc": pvc_name,
         "resticSecret": secret_name,
+        "repositoryPVC": repo_pvc,
         "backupMode": "direct",
         "schedule": "0 0 1 1 *",
         "restore": {"sentinels": ["test.db"]},
@@ -177,17 +175,7 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                    {
-                        "name": "restic-ssh",
-                        "secret": {
-                            "secretName": secret_name,
-                            "defaultMode": 0o400,
-                            "items": [
-                                {"key": "id_ed25519", "path": "id_ed25519"},
-                                {"key": "known_hosts", "path": "known_hosts"},
-                            ],
-                        },
-                    },
+                    {"name": "repo", "persistentVolumeClaim": {"claimName": repo_pvc}},
                 ],
                 "initContainers": [
                     {
@@ -211,19 +199,10 @@ def test_direct_backup_and_restore(ns, rest_server_url, k8si_image):
                                     "secretKeyRef": {"name": secret_name, "key": "RESTIC_PASSWORD"},
                                 },
                             },
-                            {
-                                "name": "RESTIC_SFTP_COMMAND",
-                                "valueFrom": {
-                                    "secretKeyRef": {
-                                        "name": secret_name,
-                                        "key": "RESTIC_SFTP_COMMAND",
-                                    },
-                                },
-                            },
                         ],
                         "volumeMounts": [
                             {"name": "data", "mountPath": "/data"},
-                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                            {"name": "repo", "mountPath": "/repo"},
                         ],
                         "resources": {
                             "requests": {"cpu": "50m", "memory": "64Mi"},

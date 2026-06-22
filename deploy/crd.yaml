@@ -49,10 +49,13 @@ spec:
                   description: PVC name to back up (must be in the same namespace)
                 resticSecret:
                   type: string
-                  description: Secret with RESTIC_REPOSITORY, RESTIC_PASSWORD, RESTIC_SFTP_COMMAND, id_ed25519, known_hosts (restic backend)
+                  description: Secret with RESTIC_REPOSITORY and RESTIC_PASSWORD (required); RESTIC_SFTP_COMMAND, id_ed25519, known_hosts optional for SFTP backends (restic)
                 kopiaSecret:
                   type: string
-                  description: Secret with RESTIC_REPOSITORY, RESTIC_PASSWORD, RESTIC_SFTP_COMMAND, id_ed25519, known_hosts (kopia backend, same SFTP secret structure)
+                  description: Secret with RESTIC_REPOSITORY and RESTIC_PASSWORD (required); RESTIC_SFTP_COMMAND, id_ed25519, known_hosts optional for SFTP backends (kopia)
+                repositoryPVC:
+                  type: string
+                  description: PVC mounted at /repo inside the backup job; use with RESTIC_REPOSITORY=file:///repo for local filesystem backends
                 backendType:
                   type: string
                   enum: [restic, kopia]

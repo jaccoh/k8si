@@ -7,17 +7,26 @@ import yaml
 
 K8SI_IMAGE = os.environ.get("K8SI_IMAGE", "ghcr.io/jaccoh/k8si:latest")
 
-# Keys pulled from the backup secret into the restore container env.
-# Both restic and kopia (SFTP mode) use the same secret structure.
-_BACKUP_SECRET_KEYS = ["RESTIC_REPOSITORY", "RESTIC_PASSWORD", "RESTIC_SFTP_COMMAND"]
+# Required keys — pod fails to start if missing.
+_REQUIRED_SECRET_KEYS = ["RESTIC_REPOSITORY", "RESTIC_PASSWORD"]
+# Optional keys — absent for file:// and REST backends; only needed for SFTP.
+_OPTIONAL_SECRET_KEYS = ["RESTIC_SFTP_COMMAND"]
 
 
 def _restic_env_vars(secret_name: str) -> list[dict[str, Any]]:
     """Return env var entries that pull backup credentials from *secret_name*."""
-    return [
-        {"name": key, "valueFrom": {"secretKeyRef": {"name": secret_name, "key": key}}}
-        for key in _BACKUP_SECRET_KEYS
+    env = [
+        {"name": k, "valueFrom": {"secretKeyRef": {"name": secret_name, "key": k}}}
+        for k in _REQUIRED_SECRET_KEYS
     ]
+    env += [
+        {
+            "name": k,
+            "valueFrom": {"secretKeyRef": {"name": secret_name, "key": k, "optional": True}},
+        }
+        for k in _OPTIONAL_SECRET_KEYS
+    ]
+    return env
 
 
 def build_restore_patch(spec: dict[str, Any]) -> str:

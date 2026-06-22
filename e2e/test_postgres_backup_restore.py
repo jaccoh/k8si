@@ -54,7 +54,7 @@ def _psql_exec(ns: str, pod_name: str, sql: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_image):
+def test_postgres_backup_and_restore(ns, repo_pvc, postgres_env, k8si_image):
     pvc_name, creds_secret = postgres_env
     v1 = kubernetes.client.CoreV1Api()
 
@@ -73,11 +73,8 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
             "kind": "Secret",
             "metadata": {"name": restic_secret_name, "namespace": ns},
             "data": {
-                "RESTIC_REPOSITORY": _b64(rest_server_url),
+                "RESTIC_REPOSITORY": _b64("file:///repo"),
                 "RESTIC_PASSWORD": _b64("e2etest"),
-                "RESTIC_SFTP_COMMAND": _b64(""),
-                "id_ed25519": _b64(""),
-                "known_hosts": _b64(""),
             },
         },
     )
@@ -85,6 +82,7 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
     spec = {
         "pvc": pvc_name,
         "resticSecret": restic_secret_name,
+        "repositoryPVC": repo_pvc,
         "schedule": "0 0 1 1 *",
         "volumeSnapshotClass": "openebs-lvm-snapclass",
         "database": {
@@ -130,17 +128,7 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-                    {
-                        "name": "restic-ssh",
-                        "secret": {
-                            "secretName": restic_secret_name,
-                            "defaultMode": 0o400,
-                            "items": [
-                                {"key": "id_ed25519", "path": "id_ed25519"},
-                                {"key": "known_hosts", "path": "known_hosts"},
-                            ],
-                        },
-                    },
+                    {"name": "repo", "persistentVolumeClaim": {"claimName": repo_pvc}},
                 ],
                 "initContainers": [
                     {
@@ -168,19 +156,10 @@ def test_postgres_backup_and_restore(ns, rest_server_url, postgres_env, k8si_ima
                                     },
                                 },
                             },
-                            {
-                                "name": "RESTIC_SFTP_COMMAND",
-                                "valueFrom": {
-                                    "secretKeyRef": {
-                                        "name": restic_secret_name,
-                                        "key": "RESTIC_SFTP_COMMAND",
-                                    },
-                                },
-                            },
                         ],
                         "volumeMounts": [
                             {"name": "data", "mountPath": "/data"},
-                            {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
+                            {"name": "repo", "mountPath": "/repo"},
                         ],
                         "resources": {
                             "requests": {"cpu": "50m", "memory": "64Mi"},
