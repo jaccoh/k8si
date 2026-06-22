@@ -67,9 +67,9 @@ class KopiaBackend:
     def _local_path(self) -> str:
         """Extract filesystem path from a local-backend repo URL."""
         if self._repo.startswith("local:"):
-            return self._repo[len("local:"):]
+            return self._repo[len("local:") :]
         if self._repo.startswith("file://"):
-            return self._repo[len("file://"):]
+            return self._repo[len("file://") :]
         return self._repo
 
     def _parse_sftp_repo(self) -> list[str]:
