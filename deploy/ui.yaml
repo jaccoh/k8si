@@ -56,7 +56,7 @@ spec:
       serviceAccountName: k8si-ui
       containers:
         - name: ui
-          image: docker.hoeve.nu/k8si-ui:v0.4.2
+          image: ghcr.io/jaccoh/k8si-ui:v0.8.0
           ports:
             - containerPort: 8080
           env:

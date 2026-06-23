@@ -16,7 +16,7 @@ spec:
       serviceAccountName: k8si-operator
       containers:
         - name: operator
-          image: docker.hoeve.nu/k8si:v0.4.2
+          image: ghcr.io/jaccoh/k8si:v0.8.0
           command: [python, -m, kopf, run, --all-namespaces, -m, k8si.operator.main]
           env:
             - name: K8SI_IMAGE
