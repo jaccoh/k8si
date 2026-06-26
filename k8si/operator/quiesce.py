@@ -45,11 +45,15 @@ def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) 
     v1 = kubernetes.client.CoreV1Api()
     for db_path in db_paths:
         candidates = [
-            ["python3", "-c", (
-                f"import sqlite3; c=sqlite3.connect({db_path!r}); "
-                f"c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close(); "
-                f"print('checkpointed')"
-            )],
+            [
+                "python3",
+                "-c",
+                (
+                    f"import sqlite3; c=sqlite3.connect({db_path!r}); "
+                    f"c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close(); "
+                    f"print('checkpointed')"
+                ),
+            ],
             ["sqlite3", db_path, "PRAGMA wal_checkpoint(TRUNCATE);"],
         ]
         checkpointed = False
@@ -67,7 +71,11 @@ def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) 
                 )
                 log.info(
                     "SQLite checkpoint %s in %s/%s via %s: %s",
-                    db_path, namespace, pod_name, cmd[0], (resp or "").strip(),
+                    db_path,
+                    namespace,
+                    pod_name,
+                    cmd[0],
+                    (resp or "").strip(),
                 )
                 checkpointed = True
                 break
@@ -76,7 +84,9 @@ def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) 
         if not checkpointed:
             log.warning(
                 "SQLite checkpoint skipped for %s in %s/%s: no python3 or sqlite3 in container",
-                db_path, namespace, pod_name,
+                db_path,
+                namespace,
+                pod_name,
             )
 
 
