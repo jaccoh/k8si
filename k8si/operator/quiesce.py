@@ -44,26 +44,40 @@ def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) 
 
     v1 = kubernetes.client.CoreV1Api()
     for db_path in db_paths:
-        cmd = [
-            "python3",
-            "-c",
-            (
-                f"import sqlite3; c = sqlite3.connect({db_path!r}); "
+        candidates = [
+            ["python3", "-c", (
+                f"import sqlite3; c=sqlite3.connect({db_path!r}); "
                 f"c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close(); "
-                f"print('checkpointed', {db_path!r})"
-            ),
+                f"print('checkpointed')"
+            )],
+            ["sqlite3", db_path, "PRAGMA wal_checkpoint(TRUNCATE);"],
         ]
-        resp = stream(
-            v1.connect_get_namespaced_pod_exec,
-            pod_name,
-            namespace,
-            command=cmd,
-            stderr=True,
-            stdin=False,
-            stdout=True,
-            tty=False,
-        )
-        log.info("SQLite checkpoint %s in %s/%s: %s", db_path, namespace, pod_name, resp.strip())
+        checkpointed = False
+        for cmd in candidates:
+            try:
+                resp = stream(
+                    v1.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace,
+                    command=cmd,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                )
+                log.info(
+                    "SQLite checkpoint %s in %s/%s via %s: %s",
+                    db_path, namespace, pod_name, cmd[0], (resp or "").strip(),
+                )
+                checkpointed = True
+                break
+            except Exception as e:
+                log.debug("SQLite checkpoint via %s failed: %s", cmd[0], e)
+        if not checkpointed:
+            log.warning(
+                "SQLite checkpoint skipped for %s in %s/%s: no python3 or sqlite3 in container",
+                db_path, namespace, pod_name,
+            )
 
 
 def _mariadb_ftwrl_sync(creds: dict[str, str]) -> Any:
