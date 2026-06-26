@@ -223,6 +223,10 @@ spec:
   # Optional: max failed retries per calendar day before skipping (default: 3)
   maxRetriesPerDay: 3
 
+  # Optional: backup job timeout in seconds (default: 3600 = 1 hour)
+  # Also sets activeDeadlineSeconds on the Job itself so it self-terminates
+  jobTimeout: 7200
+
   # Optional: webhook notifications
   notifyOnSuccess: "https://hooks.example.com/ok"
   notifyOnFailure: "https://hooks.example.com/err"

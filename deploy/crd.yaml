@@ -167,6 +167,10 @@ spec:
                   type: integer
                   default: 3
                   description: Stop retrying after this many failures in a calendar day (UTC) to prevent retry storms
+                jobTimeout:
+                  type: integer
+                  default: 3600
+                  description: Maximum seconds for the backup Job to complete; also sets activeDeadlineSeconds on the Job so it self-terminates (default 3600 = 1 hour)
                 notifyOnFailure:
                   type: string
                   description: Webhook URL to POST to on backup failure (JSON payload with name/namespace/result/message/time/duration)

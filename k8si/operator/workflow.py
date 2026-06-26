@@ -213,6 +213,7 @@ async def run_backup(
     job_name = f"k8si-{name}-{ts}"
     backup_mode = spec.get("backupMode", "snapshot")
     repo_pvc = spec.get("repositoryPVC") or None
+    job_timeout = int(spec.get("jobTimeout", _BACKUP_JOB_TIMEOUT))
 
     if backup_mode == "direct":
         if db_spec:
@@ -239,12 +240,11 @@ async def run_backup(
                     retention,
                     node,
                     repo_pvc,
+                    job_timeout,
                 )
                 _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
                 _log_phase("BackupJobStarted", f"Starting Job {job_name}")
-                raw_logs = await _run_job(
-                    job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger
-                )
+                raw_logs = await _run_job(job_body, namespace, timeout=job_timeout, logger=logger)
                 _emit_event(body, "Normal", "BackupJobCompleted", f"Job {job_name} completed")
                 _log_phase("BackupJobCompleted", f"Job {job_name} completed")
         except Exception as e:
@@ -290,12 +290,11 @@ async def run_backup(
                 retention,
                 node,
                 repo_pvc,
+                job_timeout,
             )
             _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
             _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
-            raw_logs = await _run_job(
-                job_body, namespace, timeout=_BACKUP_JOB_TIMEOUT, logger=logger
-            )
+            raw_logs = await _run_job(job_body, namespace, timeout=job_timeout, logger=logger)
             _emit_event(body, "Normal", "BackupJobCompleted", f"Backup Job {job_name} completed")
             _log_phase("BackupJobCompleted", f"Backup Job {job_name} completed")
         except Exception as e:
@@ -399,6 +398,7 @@ def _build_backup_job(
     retention: dict[str, int],
     node: str | None = None,
     repo_pvc: str | None = None,
+    job_timeout: int = _BACKUP_JOB_TIMEOUT,
 ) -> dict[str, Any]:
     env: list[dict[str, Any]] = [
         {"name": "MODE", "value": "job"},
@@ -451,6 +451,7 @@ def _build_backup_job(
         "metadata": {"name": job_name, "namespace": namespace},
         "spec": {
             "backoffLimit": 0,
+            "activeDeadlineSeconds": job_timeout,
             "ttlSecondsAfterFinished": 600,
             "template": {
                 "spec": {
