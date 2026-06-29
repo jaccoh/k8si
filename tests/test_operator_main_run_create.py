@@ -310,6 +310,94 @@ def test_on_run_create_sets_completion_time_when_parent_missing():
 # ── timer-killed guard ────────────────────────────────────────────────────────
 
 
+# ── run spec mode override ────────────────────────────────────────────────────
+
+
+def test_on_run_create_run_mode_overrides_parent_backup_mode():
+    """K8siBackupRun.spec.mode must override parent K8siBackup.spec.backupMode."""
+    from k8si.operator.main import on_run_create
+
+    parent_direct = {
+        "metadata": {"name": "test", "namespace": "default"},
+        "spec": {**SPEC, "backupMode": "direct"},
+        "status": {},
+    }
+
+    captured_spec = []
+
+    async def fake_run_backup(_name, _ns, backup_spec, *args, **kwargs):
+        captured_spec.append(backup_spec.get("backupMode"))
+        return {}
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status"),
+            patch("k8si.operator.main.workflow.run_backup", side_effect=fake_run_backup),
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record"),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = parent_direct
+            mock_k8s_cls.return_value = mock_k8s
+
+            await on_run_create(
+                body={},
+                spec={**_run_spec(), "mode": "snapshot"},
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+    run_coro(_run())
+    assert captured_spec == ["snapshot"], (
+        f"run_backup must see backupMode=snapshot (from run spec), got {captured_spec}"
+    )
+
+
+def test_on_run_create_run_mode_absent_uses_parent_backup_mode():
+    """Without K8siBackupRun.spec.mode, parent K8siBackup.spec.backupMode is used unchanged."""
+    from k8si.operator.main import on_run_create
+
+    parent_direct = {
+        "metadata": {"name": "test", "namespace": "default"},
+        "spec": {**SPEC, "backupMode": "direct"},
+        "status": {},
+    }
+
+    captured_spec = []
+
+    async def fake_run_backup(_name, _ns, backup_spec, *args, **kwargs):
+        captured_spec.append(backup_spec.get("backupMode"))
+        return {}
+
+    async def _run():
+        run_spec_no_mode = {k: v for k, v in _run_spec().items() if k != "mode"}
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status"),
+            patch("k8si.operator.main.workflow.run_backup", side_effect=fake_run_backup),
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record"),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = parent_direct
+            mock_k8s_cls.return_value = mock_k8s
+
+            await on_run_create(
+                body={},
+                spec=run_spec_no_mode,
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+    run_coro(_run())
+    assert captured_spec == ["direct"], (
+        f"run_backup must see backupMode=direct (from parent), got {captured_spec}"
+    )
+
+
 def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
     """If the timer killed the run (phase=Failed) while the backup was executing,
     on_run_create must not overwrite that Failed status with Succeeded."""

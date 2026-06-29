@@ -604,6 +604,9 @@ async def on_run_create(
         return
 
     backup_spec = backup_obj.get("spec", {})
+    run_mode = spec.get("mode")
+    if run_mode:
+        backup_spec = {**backup_spec, "backupMode": run_mode}
     start_time = datetime.now(tz=UTC).isoformat()
     await asyncio.to_thread(
         _patch_run_status, namespace, name, {"phase": "Running", "startTime": start_time}
