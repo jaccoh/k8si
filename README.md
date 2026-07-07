@@ -8,14 +8,14 @@ k8si makes restore automatic. Every pod gets an init container that asks one que
 
 GitOps rebuilt your cluster. k8si extends that to your data.
 
-Backups are declared as a `K8siBackup` resource. The operator takes a consistent VolumeSnapshot on schedule — with optional DB quiescing for Postgres, MariaDB, and SQLite — clones it to an ephemeral PVC, runs a restic backup Job against the clone, then cleans up. Your live PVC is never touched during backup. `kubectl get k8sibackups` gives a live view of backup health across all apps.
+Backups are declared as a `K8siBackup` resource. On schedule the operator creates a `K8siBackupRun` resource; the run reconciler executes the pipeline: optional DB quiescing → VolumeSnapshot → ephemeral PVC clone → restic backup Job → cleanup. In `snapshot` mode your live PVC is never touched during backup. In `direct` mode the backup job mounts the live PVC read-only. `kubectl get k8sibackups` gives a live view of backup health across all apps.
 
 Three components:
 
 | Component | Mode | Description |
 |-----------|------|-------------|
 | **Restore init container** | `MODE=restore` | Checks sentinel files on the PVC on every pod start; restores from restic if data is missing or incomplete. Fails loud rather than letting the app start on empty or corrupt state. |
-| **Operator** | Kopf + `K8siBackup` CRD | Owns the full backup pipeline: scheduled VolumeSnapshot (with optional DB quiescing) → ephemeral PVC clone → restic Job → cleanup. Reports `lastBackupResult` and rolling `recentBackups` history on the CRD. |
+| **Operator** | Kopf + `K8siBackup` + `K8siBackupRun` CRDs | Scheduled timer creates a `K8siBackupRun`; the run reconciler drives the pipeline (quiesce → snapshot → clone → Job → cleanup). Reports `lastBackupResult`, `lastRunRef`, and rolling history on the parent CRD. |
 | **k8si-ui** | FastAPI dashboard | Web dashboard showing all backups across namespaces — status, schedule, last/next backup, 7-run sparkline, live log drawer, pause/resume, and manual trigger. Exposed via NodePort `:30080`. |
 
 Backend is pluggable — restic over SFTP (Hetzner Storagebox) ships by default. Image: `ghcr.io/jaccoh/k8si` for `linux/amd64` and `linux/arm64`.
@@ -125,36 +125,46 @@ The dashboard "Backup now" button does the same thing via `POST /api/backups/{ns
 ## Architecture
 
 ```
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │ Cluster                                                             │
-  │                                                                     │
-  │  ┌──────────────────┐   reconciles    ┌──────────────────────────┐  │
-  │  │ K8siBackup CRD   │────────────────►│ k8si operator (Kopf)    │  │
-  │  │                  │◄────────────────│                          │  │
-  │  │ spec.schedule    │  status updates │ 1. quiesce DB (optional) │  │
-  │  │ spec.pvc         │                 │ 2. VolumeSnapshot        │  │
-  │  │ spec.database    │                 │ 3. clone → ephemeral PVC │  │
-  │  │ spec.restore     │                 │ 4. restic backup Job     │  │
-  │  └──────────────────┘                 │ 5. cleanup               │  │
-  │                                       └──────────────────────────┘  │
-  │                                                 │                   │
-  │                                        restic over SFTP             │
-  │                                                 │                   │
-  │                                                 ▼                   │
-  │                                       Hetzner Storagebox            │
-  │                                                                     │
-  │  ┌──────────────────────────────────────────────────────────────┐   │
-  │  │ Pod (your app)                                               │   │
-  │  │                                                              │   │
-  │  │  initContainers:                                             │   │
-  │  │    k8si-restore                                              │   │
-  │  │      checks sentinels → restores from restic if missing      │   │
-  │  │                                                              │   │
-  │  │  containers:                                                 │   │
-  │  │    app + /data PVC                                           │   │
-  │  └──────────────────────────────────────────────────────────────┘   │
-  │                                                                     │
-  └─────────────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ Cluster                                                                  │
+  │                                                                          │
+  │  ┌──────────────────┐  timer (60s)  ┌──────────────────────────────┐    │
+  │  │ K8siBackup CRD   │──────────────►│ k8si operator (Kopf)         │    │
+  │  │                  │◄──────────────│                              │    │
+  │  │ spec.schedule    │ status update │ creates K8siBackupRun        │    │
+  │  │ spec.pvc         │               └──────────────────────────────┘    │
+  │  │ spec.backupMode  │                              │                    │
+  │  │ spec.restore     │                   on.create  │                    │
+  │  └──────────────────┘                              ▼                    │
+  │                                   ┌──────────────────────────────────┐  │
+  │                                   │ K8siBackupRun CRD                │  │
+  │                                   │                                  │  │
+  │                                   │ 1. quiesce DB (optional)         │  │
+  │                                   │ 2. VolumeSnapshot                │  │
+  │                                   │ 3. clone → ephemeral PVC         │  │
+  │                                   │ 4. restic backup Job             │  │
+  │                                   │ 5. cleanup                       │  │
+  │                                   │                                  │  │
+  │                                   │ status.phase: Pending→Succeeded  │  │
+  │                                   └──────────────────────────────────┘  │
+  │                                                    │                    │
+  │                                           restic over SFTP              │
+  │                                                    │                    │
+  │                                                    ▼                    │
+  │                                          Hetzner Storagebox             │
+  │                                                                          │
+  │  ┌──────────────────────────────────────────────────────────────────┐   │
+  │  │ Pod (your app)                                                   │   │
+  │  │                                                                  │   │
+  │  │  initContainers:                                                 │   │
+  │  │    k8si-restore                                                  │   │
+  │  │      checks sentinels → restores from restic if missing          │   │
+  │  │                                                                  │   │
+  │  │  containers:                                                     │   │
+  │  │    app + /data PVC                                               │   │
+  │  └──────────────────────────────────────────────────────────────────┘   │
+  │                                                                          │
+  └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -232,7 +242,7 @@ spec:
   notifyOnFailure: "https://hooks.example.com/err"
 ```
 
-**Status fields** (set by the operator, read by `kubectl get k8sibackups`):
+**K8siBackup status fields** (set by the operator, read by `kubectl get k8sibackups`):
 
 | Field | Description |
 |-------|-------------|
@@ -241,14 +251,57 @@ spec:
 | `lastBackupDuration` | Duration of last backup in seconds |
 | `nextBackupTime` | ISO-8601 timestamp of the next scheduled backup |
 | `message` | Last error message (empty on success) |
+| `lastRunRef` | Name of the most recently created `K8siBackupRun` |
+| `lastSuccessfulRunRef` | Name of the most recently succeeded `K8siBackupRun` |
 | `recentBackups` | Rolling list of the last 30 results — `[{time, result}, …]` |
-| `lastRunLog` | Phase log for the most recent run — `[{time, phase, message}, …]` |
 | `triggeredAt` | Set to trigger a manual backup; cleared when the backup runs |
 | `restorePatch` | YAML snippet to paste into your pod spec for the restore init container |
 | `lastRestoreResult` | `success` / `failed` — result of the last restore (written by init container) |
 | `lastRestoreTime` | ISO-8601 timestamp of the last restore |
 | `lastRestoreSnapshotId` | Snapshot ID used for the last restore |
 | `lastRestoreMessage` | Error message if restore failed |
+
+---
+
+## K8siBackupRun CRD reference
+
+Runs are created automatically by the operator timer. You can also create them manually to trigger a backup with a specific mode.
+
+```yaml
+apiVersion: k8si.io/v1
+kind: K8siBackupRun
+metadata:
+  name: sonarr-config-20260707020000
+  namespace: downloads
+  labels:
+    k8si.io/backup: sonarr-config
+spec:
+  backupRef: sonarr-config       # Parent K8siBackup name
+  triggeredBy: manual            # manual | schedule | backfill
+  triggeredAt: "2026-07-07T02:00:00Z"
+  mode: snapshot                 # snapshot | direct — overrides parent backupMode
+```
+
+**K8siBackupRun status fields**:
+
+| Field | Description |
+|-------|-------------|
+| `phase` | `Pending` → `Running` → `Succeeded` / `Failed` |
+| `startTime` | ISO-8601 timestamp when the run started |
+| `completionTime` | ISO-8601 timestamp when the run finished |
+| `message` | Error message on failure |
+| `snapshotId` | Restic snapshot ID written after successful backup |
+| `sizeBytes` | Snapshot size in bytes |
+| `backendType` | `restic` or `kopia` |
+| `log` | Append-only phase log — `[{time, phase, message}, …]` |
+
+```bash
+# List all runs for a backup
+kubectl get k8sibackupruns -n downloads -l k8si.io/backup=sonarr-config
+
+# Watch a run in progress
+kubectl get k8sibackupruns sonarr-config-20260707020000 -n downloads -w
+```
 
 ---
 
