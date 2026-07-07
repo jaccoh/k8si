@@ -590,17 +590,20 @@ async def on_run_create(
         )
     except Exception as e:
         logger.error("K8siBackupRun %s: could not get parent backup %s: %s", name, backup_name, e)
-        await asyncio.to_thread(
-            _patch_run_status,
-            namespace,
-            name,
-            {
-                "phase": "Failed",
-                "completionTime": datetime.now(tz=UTC).isoformat(),
-                "message": str(e),
-            },
-        )
         _running.discard(key)
+        try:
+            await asyncio.to_thread(
+                _patch_run_status,
+                namespace,
+                name,
+                {
+                    "phase": "Failed",
+                    "completionTime": datetime.now(tz=UTC).isoformat(),
+                    "message": str(e),
+                },
+            )
+        except Exception:
+            pass
         return
 
     backup_spec = backup_obj.get("spec", {})
@@ -608,12 +611,12 @@ async def on_run_create(
     if run_mode:
         backup_spec = {**backup_spec, "backupMode": run_mode}
     start_time = datetime.now(tz=UTC).isoformat()
-    await asyncio.to_thread(
-        _patch_run_status, namespace, name, {"phase": "Running", "startTime": start_time}
-    )
 
     backup_start_dt = datetime.now(tz=UTC)
     try:
+        await asyncio.to_thread(
+            _patch_run_status, namespace, name, {"phase": "Running", "startTime": start_time}
+        )
         result = await workflow.run_backup(
             backup_name,
             namespace,

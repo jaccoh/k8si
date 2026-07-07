@@ -398,6 +398,87 @@ def test_on_run_create_run_mode_absent_uses_parent_backup_mode():
     )
 
 
+# ── _running leak guards ──────────────────────────────────────────────────────
+
+
+def test_on_run_create_discards_running_key_when_patch_running_raises():
+    """If _patch_run_status(Running) raises, _running must still be discarded.
+
+    Regression guard for path-2 leak: _patch_run_status(Running) was called
+    OUTSIDE the try/finally, so an API error left the key stuck in _running
+    forever — backup_timer skips the backup on every subsequent tick.
+    """
+    import k8si.operator.main as main_module
+    from k8si.operator.main import on_run_create
+
+    key = ("default", "test")
+
+    def patch_status_side_effect(ns, name, patch):
+        if patch.get("phase") == "Running":
+            raise RuntimeError("k8s API timeout")
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status", side_effect=patch_status_side_effect),
+            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record"),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = _BACKUP_OBJ
+            mock_k8s_cls.return_value = mock_k8s
+
+            await on_run_create(
+                body={},
+                spec=_run_spec(),
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+    run_coro(_run())
+    assert key not in main_module._running, "_running must be discarded even if patch(Running) raises"
+
+
+def test_on_run_create_discards_running_key_when_parent_missing_and_patch_fails():
+    """If parent lookup fails AND _patch_run_status(Failed) also raises, key must be discarded.
+
+    Regression guard for path-1 leak: first except block called _running.discard
+    AFTER the _patch_run_status await — if that await raised, discard was skipped.
+    """
+    import k8si.operator.main as main_module
+    from k8si.operator.main import on_run_create
+
+    key = ("default", "test")
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch(
+                "k8si.operator.main._patch_run_status",
+                side_effect=RuntimeError("patch also failed"),
+            ),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.side_effect = RuntimeError("not found")
+            mock_k8s_cls.return_value = mock_k8s
+
+            try:
+                await on_run_create(
+                    body={},
+                    spec=_run_spec(),
+                    name="test-run",
+                    namespace="default",
+                    logger=logging.getLogger("test"),
+                )
+            except Exception:
+                pass  # exception may propagate — what matters is _running state
+
+    run_coro(_run())
+    assert key not in main_module._running, "_running must be discarded even if patch(Failed) raises"
+
+
 def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
     """If the timer killed the run (phase=Failed) while the backup was executing,
     on_run_create must not overwrite that Failed status with Succeeded."""
