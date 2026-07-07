@@ -438,7 +438,9 @@ def test_on_run_create_discards_running_key_when_patch_running_raises():
             )
 
     run_coro(_run())
-    assert key not in main_module._running, "_running must be discarded even if patch(Running) raises"
+    assert key not in main_module._running, (
+        "_running must be discarded even if patch(Running) raises"
+    )
 
 
 def test_on_run_create_discards_running_key_when_parent_missing_and_patch_fails():
@@ -476,7 +478,9 @@ def test_on_run_create_discards_running_key_when_parent_missing_and_patch_fails(
                 pass  # exception may propagate — what matters is _running state
 
     run_coro(_run())
-    assert key not in main_module._running, "_running must be discarded even if patch(Failed) raises"
+    assert key not in main_module._running, (
+        "_running must be discarded even if patch(Failed) raises"
+    )
 
 
 def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
