@@ -5,6 +5,7 @@ import logging
 
 import kubernetes.client
 
+from e2e.conftest import STORAGE_CLASS
 from e2e.helpers import wait_init_container_failed, wait_pod_phase
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def _make_pvc(v1, ns: str, name: str) -> None:
             "metadata": {"name": name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "openebs-lvm-worker-thin",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "100Mi"}},
             },
         },

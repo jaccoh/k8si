@@ -8,6 +8,7 @@ import uuid
 
 import kubernetes.client
 
+from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS
 from e2e.helpers import delete_pvc_with_cleanup, wait_pod_deleted, wait_pod_phase
 from k8si.operator.workflow import run_backup
 
@@ -89,7 +90,7 @@ def test_sqlite_backup_and_restore(ns, repo_pvc, data_pvc, k8si_image):
         "resticSecret": secret_name,
         "repositoryPVC": repo_pvc,
         "schedule": "0 0 1 1 *",
-        "volumeSnapshotClass": "openebs-lvm-snapclass",
+        "volumeSnapshotClass": SNAPSHOT_CLASS,
         "database": {
             "type": "sqlite",
             "podSelector": {"app": "e2e-writer"},
@@ -115,7 +116,7 @@ def test_sqlite_backup_and_restore(ns, repo_pvc, data_pvc, k8si_image):
             "metadata": {"name": data_pvc, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "openebs-lvm-worker-thin",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "100Mi"}},
             },
         },

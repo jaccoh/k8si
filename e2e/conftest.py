@@ -21,8 +21,8 @@ _POSTGRES_PASSWORD = "e2etest"
 _POSTGRES_DB = "testdb"
 
 
-def _detect_environment() -> tuple[str, str]:
-    """Detect cluster nodes and return (node_name, storage_class_name)."""
+def _detect_environment() -> tuple[str, str, str]:
+    """Detect cluster nodes and return (node_name, storage_class_name, volume_snapshot_class_name)."""
     try:
         import kubernetes.client
         import kubernetes.config
@@ -34,21 +34,43 @@ def _detect_environment() -> tuple[str, str]:
         v1 = kubernetes.client.CoreV1Api()
         nodes = [n.metadata.name for n in v1.list_node().items]
         if "orbstack" in nodes:
-            return "orbstack", "local-path"
+            return "orbstack", "local-path", "local-path-snapclass"
 
         storage_api = kubernetes.client.StorageV1Api()
         scs = [sc.metadata.name for sc in storage_api.list_storage_class().items]
+
+        custom_api = kubernetes.client.CustomObjectsApi()
+        try:
+            snaps = custom_api.list_cluster_custom_object(
+                "snapshot.storage.k8s.io", "v1", "volumesnapshotclasses"
+            )
+            vscs = [v["metadata"]["name"] for v in snaps.get("items", [])]
+        except Exception:
+            vscs = []
+
+        sc_name = "linstor-worker-replicated"
         for candidate in ["linstor-worker-replicated", "openebs-lvm-worker-thin", "local-path"]:
             if candidate in scs:
-                return "hoeve-worker01", candidate
-        if scs:
-            return "hoeve-worker01", scs[0]
+                sc_name = candidate
+                break
+        if not sc_name and scs:
+            sc_name = scs[0]
+
+        vsc_name = "linstor-snapclass"
+        for candidate in ["linstor-snapclass", "openebs-lvm-snapclass"]:
+            if candidate in vscs:
+                vsc_name = candidate
+                break
+        if not vsc_name and vscs:
+            vsc_name = vscs[0]
+
+        return "hoeve-worker01", sc_name, vsc_name
     except Exception:
         pass
-    return "hoeve-worker01", "linstor-worker-replicated"
+    return "hoeve-worker01", "linstor-worker-replicated", "linstor-snapclass"
 
 
-NODE_NAME, STORAGE_CLASS = _detect_environment()
+NODE_NAME, STORAGE_CLASS, SNAPSHOT_CLASS = _detect_environment()
 
 
 def _b64(s: str) -> str:

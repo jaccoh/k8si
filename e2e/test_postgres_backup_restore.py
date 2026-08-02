@@ -8,6 +8,7 @@ import uuid
 
 import kubernetes.client
 
+from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS
 from e2e.helpers import (
     delete_pvc_with_cleanup,
     wait_pod_condition,
@@ -84,7 +85,7 @@ def test_postgres_backup_and_restore(ns, repo_pvc, postgres_env, k8si_image):
         "resticSecret": restic_secret_name,
         "repositoryPVC": repo_pvc,
         "schedule": "0 0 1 1 *",
-        "volumeSnapshotClass": "openebs-lvm-snapclass",
+        "volumeSnapshotClass": SNAPSHOT_CLASS,
         "database": {
             "type": "postgres",
             "secretRef": creds_secret,
@@ -109,7 +110,7 @@ def test_postgres_backup_and_restore(ns, repo_pvc, postgres_env, k8si_image):
             "metadata": {"name": pvc_name, "namespace": ns},
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
-                "storageClassName": "openebs-lvm-worker-thin",
+                "storageClassName": STORAGE_CLASS,
                 "resources": {"requests": {"storage": "500Mi"}},
             },
         },
