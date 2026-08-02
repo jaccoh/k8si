@@ -376,25 +376,26 @@ jobs:
                   args:
                   - |
                     set -ex
-                    buildah login ghcr.io -u jaccoh -p ${GHCR_TOKEN}
                     buildah manifest create k8si-manifest
                     buildah manifest add --tls-verify=false k8si-manifest docker.hoeve.nu/k8si:${SHA}-arm64
                     buildah manifest add --tls-verify=false k8si-manifest docker.hoeve.nu/k8si:${SHA}-amd64
                     buildah manifest push --all --tls-verify=false k8si-manifest docker://docker.hoeve.nu/k8si:${SHA}
                     buildah manifest push --all --tls-verify=false k8si-manifest docker://docker.hoeve.nu/k8si:v${VERSION}
                     buildah manifest push --all --tls-verify=false k8si-manifest docker://docker.hoeve.nu/k8si:latest
-                    buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:${SHA}
-                    buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:v${VERSION}
-                    buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:latest
                     buildah manifest create k8si-ui-manifest
                     buildah manifest add --tls-verify=false k8si-ui-manifest docker.hoeve.nu/k8si-ui:${SHA}-arm64
                     buildah manifest add --tls-verify=false k8si-ui-manifest docker.hoeve.nu/k8si-ui:${SHA}-amd64
                     buildah manifest push --all --tls-verify=false k8si-ui-manifest docker://docker.hoeve.nu/k8si-ui:${SHA}
                     buildah manifest push --all --tls-verify=false k8si-ui-manifest docker://docker.hoeve.nu/k8si-ui:v${VERSION}
                     buildah manifest push --all --tls-verify=false k8si-ui-manifest docker://docker.hoeve.nu/k8si-ui:latest
-                    buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:${SHA}
-                    buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:v${VERSION}
-                    buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:latest
+                    if [ -n "${GHCR_TOKEN}" ] && buildah login ghcr.io -u jaccoh -p "${GHCR_TOKEN}"; then
+                      buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:${SHA} || true
+                      buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:v${VERSION} || true
+                      buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:latest || true
+                      buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:${SHA} || true
+                      buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:v${VERSION} || true
+                      buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:latest || true
+                    fi
           YAML
 
           for i in $(seq 1 18); do
