@@ -49,7 +49,7 @@ def _detect_environment() -> tuple[str, str, str]:
             vscs = []
 
         sc_name = "linstor-worker-replicated"
-        for candidate in ["linstor-worker-replicated", "openebs-lvm-worker-thin", "local-path"]:
+        for candidate in ["linstor-worker-replicated", "local-path"]:
             if candidate in scs:
                 sc_name = candidate
                 break
@@ -57,7 +57,7 @@ def _detect_environment() -> tuple[str, str, str]:
             sc_name = scs[0]
 
         vsc_name = "linstor-snapclass"
-        for candidate in ["linstor-snapclass", "openebs-lvm-snapclass"]:
+        for candidate in ["linstor-snapclass", "local-path-snapclass"]:
             if candidate in vscs:
                 vsc_name = candidate
                 break
@@ -107,25 +107,14 @@ def ns():
     log.info("Tearing down namespace %s", namespace)
     try:
         pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
+    try:
+        pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
         for pvc in pvcs.items:
             pv_name = pvc.spec.volume_name
             if pv_name:
-                subprocess.run(
-                    [
-                        "kubectl",
-                        "delete",
-                        "lvmsnapshot",
-                        "-n",
-                        "openebs",
-                        "-l",
-                        f"openebs.io/persistent-volume={pv_name}",
-                        "--ignore-not-found",
-                    ],
-                    check=False,
-                    timeout=60,
-                )
+                log.info("Cleaning up PV %s in %s", pv_name, namespace)
     except Exception:
-        log.exception("Failed to clean up LVMSnapshot CRs during teardown")
+        log.exception("Error listing PVCs during teardown")
 
     v1.delete_namespace(namespace)
     log.info("Deleted namespace %s", namespace)

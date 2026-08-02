@@ -158,21 +158,7 @@ def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
         raise
 
     if pv_name:
-        subprocess.run(
-            [
-                "kubectl",
-                "delete",
-                "lvmsnapshot",
-                "-n",
-                "openebs",
-                "-l",
-                f"openebs.io/persistent-volume={pv_name}",
-                "--ignore-not-found",
-            ],
-            check=True,
-            timeout=60,
-        )
-        log.info("Cleaned up LVMSnapshot CRs for PV %s", pv_name)
+        log.info("PVC %s (PV %s) deleted", pvc_name, pv_name)
 
     v1.delete_namespaced_persistent_volume_claim(pvc_name, ns)
     log.info("Deleted PVC %s/%s, waiting for removal", ns, pvc_name)

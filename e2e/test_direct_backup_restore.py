@@ -90,7 +90,7 @@ def test_direct_backup_and_restore(ns, repo_pvc, k8si_image):
     log.info("Writer pod running, KNOWN_VALUE=%s", KNOWN_VALUE)
 
     # Give the writer a moment to finish the INSERT and commit, then stop it.
-    # OpenEBS LVM is single-attach (RWO): the backup Job cannot mount the PVC
+    # LINSTOR / RWO volumes are single-attach: the backup Job cannot mount the PVC
     # while the writer pod holds it. Delete the writer to release the mount.
     time.sleep(5)
     v1.delete_namespaced_pod(writer_name, ns)
