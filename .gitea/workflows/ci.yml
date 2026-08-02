@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
   pull_request:
 
 jobs:
@@ -58,7 +60,7 @@ jobs:
 
   docker-build-arm64:
     needs: [test]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 30
     steps:
@@ -127,7 +129,7 @@ jobs:
 
   docker-build-amd64:
     needs: [test]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 45
     steps:
@@ -195,8 +197,8 @@ jobs:
           kubectl -n gitea delete job "buildah-amd64-${SHA::8}" --ignore-not-found
 
   docker-build-ui-arm64:
-    needs: [docker-build-arm64, docker-build-amd64]
-    if: github.ref == 'refs/heads/main'
+    needs: [test]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 30
     steps:
@@ -265,8 +267,8 @@ jobs:
           kubectl -n gitea delete job "buildah-ui-arm64-${SHA::8}" --ignore-not-found
 
   docker-build-ui-amd64:
-    needs: [docker-build-arm64, docker-build-amd64]
-    if: github.ref == 'refs/heads/main'
+    needs: [test]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 45
     steps:
@@ -336,7 +338,7 @@ jobs:
 
   docker-manifest:
     needs: [docker-build-arm64, docker-build-amd64, docker-build-ui-arm64, docker-build-ui-amd64]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v4
@@ -445,7 +447,7 @@ jobs:
 
   release:
     needs: [e2e]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v4
@@ -465,6 +467,11 @@ jobs:
             exit 0
           fi
 
+          PRERELEASE="false"
+          if echo "${TAG}" | grep -qE 'rc|alpha|beta|-'; then
+            PRERELEASE="true"
+          fi
+
           curl -s -X POST "${API}/releases" \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
@@ -472,6 +479,7 @@ jobs:
               \"tag_name\": \"${TAG}\",
               \"target_commitish\": \"${{ github.sha }}\",
               \"name\": \"${TAG}\",
+              \"prerelease\": ${PRERELEASE},
               \"body\": \"Docker images (multi-arch arm64+amd64):\n- \`ghcr.io/jaccoh/k8si:v${VERSION}\`\n- \`ghcr.io/jaccoh/k8si-ui:v${VERSION}\`\"
             }"
 
