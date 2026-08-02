@@ -8,7 +8,7 @@ import uuid
 
 import kubernetes.client
 
-from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS, _MARIADB_DATABASE, _MARIADB_ROOT_PASSWORD
+from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS
 from e2e.helpers import (
     delete_pvc_with_cleanup,
     wait_init_container_failed,

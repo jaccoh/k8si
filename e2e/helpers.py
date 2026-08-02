@@ -1,7 +1,6 @@
 """Shared wait/cleanup helpers for e2e tests."""
 
 import logging
-import subprocess
 import time
 
 import kubernetes.client

@@ -22,7 +22,7 @@ _POSTGRES_DB = "testdb"
 
 
 def _detect_environment() -> tuple[str, str, str]:
-    """Detect cluster nodes and return (node_name, storage_class_name, volume_snapshot_class_name)."""
+    """Detect cluster nodes and return (node_name, storage_class, snapshot_class)."""
     try:
         import kubernetes.client
         import kubernetes.config
@@ -105,8 +105,6 @@ def ns():
     yield namespace
 
     log.info("Tearing down namespace %s", namespace)
-    try:
-        pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
     try:
         pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
         for pvc in pvcs.items:
