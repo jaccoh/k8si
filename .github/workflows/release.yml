@@ -40,6 +40,20 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.minor }}
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.major }}
             ghcr.io/${{ github.repository }}:latest
+      - name: Build and push k8si-ui image
+        uses: docker/build-push-action@v6
+        with:
+          context: k8si/ui
+          file: k8si/ui/Dockerfile
+          platforms: linux/arm64,linux/amd64
+          push: true
+          build-args: |
+            K8SI_VERSION=${{ steps.version.outputs.tag }}
+          tags: |
+            ghcr.io/${{ github.repository }}-ui:${{ steps.version.outputs.tag }}
+            ghcr.io/${{ github.repository }}-ui:${{ steps.version.outputs.minor }}
+            ghcr.io/${{ github.repository }}-ui:${{ steps.version.outputs.major }}
+            ghcr.io/${{ github.repository }}-ui:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
