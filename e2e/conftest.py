@@ -35,9 +35,17 @@ def _detect_environment() -> tuple[str, str]:
         nodes = [n.metadata.name for n in v1.list_node().items]
         if "orbstack" in nodes:
             return "orbstack", "local-path"
+
+        storage_api = kubernetes.client.StorageV1Api()
+        scs = [sc.metadata.name for sc in storage_api.list_storage_class().items]
+        for candidate in ["linstor-worker-replicated", "openebs-lvm-worker-thin", "local-path"]:
+            if candidate in scs:
+                return "hoeve-worker01", candidate
+        if scs:
+            return "hoeve-worker01", scs[0]
     except Exception:
         pass
-    return "hoeve-worker01", "openebs-lvm-worker-thin"
+    return "hoeve-worker01", "linstor-worker-replicated"
 
 
 NODE_NAME, STORAGE_CLASS = _detect_environment()
