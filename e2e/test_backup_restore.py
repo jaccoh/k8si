@@ -4,6 +4,7 @@ import asyncio
 import base64
 import logging
 import subprocess
+import time
 import uuid
 
 import kubernetes.client
@@ -69,6 +70,7 @@ def test_sqlite_backup_and_restore(ns, repo_pvc, data_pvc, k8si_image):
         },
     )
     wait_pod_phase(ns, writer_name, "Running", timeout=180)
+    time.sleep(3)
     log.info("Writer pod running, KNOWN_VALUE=%s", KNOWN_VALUE)
 
     secret_name = "e2e-restic-secret"
