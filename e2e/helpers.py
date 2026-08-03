@@ -187,3 +187,22 @@ def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
                     break
                 raise
             time.sleep(2)
+
+        storage_v1 = kubernetes.client.StorageV1Api()
+        va_deadline = time.monotonic() + 60
+        while time.monotonic() < va_deadline:
+            try:
+                attachments = storage_v1.list_volume_attachment().items
+                matching = [
+                    va
+                    for va in attachments
+                    if va.spec
+                    and va.spec.source
+                    and va.spec.source.persistent_volume_name == pv_name
+                ]
+                if not matching:
+                    log.info("VolumeAttachments for PV %s gone", pv_name)
+                    break
+            except Exception:
+                break
+            time.sleep(2)
