@@ -48,8 +48,8 @@ def _detect_environment() -> tuple[str, str, str]:
         except Exception:
             vscs = []
 
-        sc_name = "linstor-worker-replicated"
-        for candidate in ["linstor-worker-replicated", "local-path"]:
+        sc_name = "linstor-worker-local"
+        for candidate in ["linstor-worker-local", "linstor-worker-replicated", "local-path"]:
             if candidate in scs:
                 sc_name = candidate
                 break
@@ -67,7 +67,7 @@ def _detect_environment() -> tuple[str, str, str]:
         return "hoeve-worker01", sc_name, vsc_name
     except Exception:
         pass
-    return "hoeve-worker01", "linstor-worker-replicated", "linstor-snapclass"
+    return "hoeve-worker01", "linstor-worker-local", "linstor-snapclass"
 
 
 NODE_NAME, STORAGE_CLASS, SNAPSHOT_CLASS = _detect_environment()
