@@ -148,6 +148,9 @@ def wait_init_container_failed(ns: str, pod_name: str, timeout: int = 120) -> in
 def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
     v1 = kubernetes.client.CoreV1Api()
 
+    # Give Kubelet time to complete unmounting volumes from deleted pods
+    time.sleep(10)
+
     try:
         pvc = v1.read_namespaced_persistent_volume_claim(pvc_name, ns)
         pv_name = pvc.spec.volume_name
