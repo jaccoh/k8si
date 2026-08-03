@@ -152,6 +152,8 @@ def test_direct_backup_and_restore(ns, repo_pvc, k8si_image):
     log.info("Created fresh empty PVC %s/%s for restore", ns, pvc_name)
 
     # 7. Start a verifier pod equipped with k8si-restore init container
+    # Wait 30s to allow Kubelet to complete NodeUnstageVolume for repo_pvc from the backup Job
+    time.sleep(30)
     verifier_name = "e2e-verifier-direct"
     v1.create_namespaced_pod(
         ns,
