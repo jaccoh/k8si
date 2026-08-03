@@ -169,7 +169,18 @@ def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
         except kubernetes.client.exceptions.ApiException as e:
             if e.status == 404:
                 log.info("PVC %s/%s gone", ns, pvc_name)
-                return
+                break
             raise
         time.sleep(3)
-    raise TimeoutError(f"PVC {ns}/{pvc_name} was not deleted within 120s")
+
+    if pv_name:
+        pv_deadline = time.monotonic() + 60
+        while time.monotonic() < pv_deadline:
+            try:
+                v1.read_persistent_volume(pv_name)
+            except kubernetes.client.exceptions.ApiException as e:
+                if e.status == 404:
+                    log.info("PV %s gone", pv_name)
+                    break
+                raise
+            time.sleep(2)

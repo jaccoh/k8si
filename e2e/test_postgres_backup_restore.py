@@ -89,6 +89,7 @@ def test_postgres_backup_and_restore(ns, repo_pvc, postgres_env, k8si_image):
         "database": {
             "type": "postgres",
             "secretRef": creds_secret,
+            "podSelector": {"app": "postgres"},
         },
         "restore": {"sentinels": [_SENTINEL]},
     }

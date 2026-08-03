@@ -95,6 +95,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
         "database": {
             "type": "mariadb",
             "secretRef": creds_secret,
+            "podSelector": {"app": "mariadb"},
         },
         "restore": {"sentinels": ["ibdata1"]},
     }
