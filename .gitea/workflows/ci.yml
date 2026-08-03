@@ -398,7 +398,7 @@ jobs:
                     fi
           YAML
 
-          for i in $(seq 1 18); do
+          for i in $(seq 1 60); do
             ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || true)
             echo "iter $i: ST=${ST:-<empty>}"
             if [ "$ST" = "Complete" ] || [ "$ST" = "SuccessCriteriaMet" ]; then exit 0; fi
