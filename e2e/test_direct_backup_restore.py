@@ -10,7 +10,7 @@ import uuid
 import kubernetes.client
 
 from e2e.conftest import NODE_NAME, STORAGE_CLASS
-from e2e.helpers import wait_pod_deleted, wait_pod_phase
+from e2e.helpers import delete_pvc_with_cleanup, wait_pod_deleted, wait_pod_phase
 from k8si.operator.workflow import run_backup
 
 log = logging.getLogger(__name__)
@@ -134,18 +134,7 @@ def test_direct_backup_and_restore(ns, repo_pvc, k8si_image):
     log.info("Direct backup succeeded: %s", result)
 
     # 6. Delete and recreate the PVC to simulate volume loss
-    v1.delete_namespaced_persistent_volume_claim(pvc_name, ns)
-    log.info("Waiting for PVC deletion")
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        try:
-            v1.read_namespaced_persistent_volume_claim(pvc_name, ns)
-            time.sleep(3)
-        except kubernetes.client.exceptions.ApiException as e:
-            if e.status == 404:
-                break
-    else:
-        raise TimeoutError("PVC deletion timed out")
+    delete_pvc_with_cleanup(ns, pvc_name)
 
     v1.create_namespaced_persistent_volume_claim(
         ns,
