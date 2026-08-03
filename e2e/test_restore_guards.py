@@ -25,7 +25,7 @@ def _make_pvc(v1, ns: str, name: str) -> None:
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "100Mi"}},
+                "resources": {"requests": {"storage": "128Mi"}},
             },
         },
     )

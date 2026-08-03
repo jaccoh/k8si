@@ -112,7 +112,7 @@ def test_postgres_backup_and_restore(ns, repo_pvc, postgres_env, k8si_image):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )

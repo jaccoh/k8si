@@ -36,7 +36,7 @@ def test_direct_backup_and_restore(ns, repo_pvc, k8si_image):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "100Mi"}},
+                "resources": {"requests": {"storage": "128Mi"}},
             },
         },
     )
@@ -145,7 +145,7 @@ def test_direct_backup_and_restore(ns, repo_pvc, k8si_image):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "100Mi"}},
+                "resources": {"requests": {"storage": "128Mi"}},
             },
         },
     )

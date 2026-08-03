@@ -132,7 +132,7 @@ def repo_pvc(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )
@@ -154,7 +154,7 @@ def data_pvc(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "100Mi"}},
+                "resources": {"requests": {"storage": "128Mi"}},
             },
         },
     )
@@ -182,7 +182,7 @@ def mariadb_env(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )
@@ -321,7 +321,7 @@ def postgres_env(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )

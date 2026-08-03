@@ -118,7 +118,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )
@@ -232,7 +232,7 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "100Mi"}},
+                "resources": {"requests": {"storage": "128Mi"}},
             },
         },
     )
