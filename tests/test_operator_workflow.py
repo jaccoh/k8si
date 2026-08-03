@@ -501,7 +501,10 @@ def test_wait_job_gone_sync_times_out_without_raising() -> None:
     with (
         patch("k8si.operator.workflow.kubernetes.client.BatchV1Api", return_value=mock_batch),
         patch("k8si.operator.workflow.time.sleep"),
-        patch("k8si.operator.workflow.time.monotonic", side_effect=[0.0, 0.0, 9999.0]),
+        patch(
+            "k8si.operator.workflow.time.monotonic",
+            side_effect=[0.0, 0.0, 9999.0, 9999.0, 9999.0],
+        ),
     ):
         _wait_job_gone_sync("test-job", "default")  # must not raise
 
