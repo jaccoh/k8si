@@ -189,6 +189,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
                                     "healthcheck.sh",
                                     "--connect",
                                     "--innodb_initialized",
+                                    "--su-mysql",
                                 ],
                             },
                             "initialDelaySeconds": 15,

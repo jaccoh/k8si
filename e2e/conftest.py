@@ -229,6 +229,7 @@ def mariadb_env(ns):
                                     "healthcheck.sh",
                                     "--connect",
                                     "--innodb_initialized",
+                                    "--su-mysql",
                                 ],
                             },
                             "initialDelaySeconds": 10,
