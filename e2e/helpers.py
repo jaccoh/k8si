@@ -1,4 +1,4 @@
-"""Shared wait/cleanup helpers for e2e tests."""
+"""Shared wait/cleanup helpers for e2e tests (resilience updated)."""
 
 import logging
 import time
