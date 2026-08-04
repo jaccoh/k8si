@@ -1,4 +1,4 @@
-"""Shared wait/cleanup helpers for e2e tests (resilience updated)."""
+"""Shared wait/cleanup helpers for e2e tests (XFS StorageClass enabled)."""
 
 import logging
 import time
