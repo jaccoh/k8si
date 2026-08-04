@@ -203,8 +203,13 @@ class TestGetPvcInfoSync:
         pvc.spec.storage_class_name = "standard"
         mock_v1 = MagicMock()
         mock_v1.read_namespaced_persistent_volume_claim.return_value = pvc
-        with patch("k8si.operator.snapshot.kubernetes.client.CoreV1Api", return_value=mock_v1):
-            access_mode, storage, sc = snap_mod._get_pvc_info_sync("my-pvc", "default")
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object.side_effect = Exception("not found")
+        with (
+            patch("k8si.operator.snapshot.kubernetes.client.CoreV1Api", return_value=mock_v1),
+            patch(_CUSTOM_API, return_value=mock_custom),
+        ):
+            access_mode, storage, sc = snap_mod._get_pvc_info_sync("my-pvc", "my-snap", "default")
         assert access_mode == "ReadWriteOnce"
         assert storage == "10Gi"
         assert sc == "standard"
@@ -216,10 +221,33 @@ class TestGetPvcInfoSync:
         pvc.spec.storage_class_name = None
         mock_v1 = MagicMock()
         mock_v1.read_namespaced_persistent_volume_claim.return_value = pvc
-        with patch("k8si.operator.snapshot.kubernetes.client.CoreV1Api", return_value=mock_v1):
-            access_mode, _, sc = snap_mod._get_pvc_info_sync("my-pvc", "default")
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object.side_effect = Exception("not found")
+        with (
+            patch("k8si.operator.snapshot.kubernetes.client.CoreV1Api", return_value=mock_v1),
+            patch(_CUSTOM_API, return_value=mock_custom),
+        ):
+            access_mode, _, sc = snap_mod._get_pvc_info_sync("my-pvc", "my-snap", "default")
         assert access_mode == "ReadWriteOnce"
         assert sc == ""
+
+    def test_respects_snapshot_restore_size(self):
+        pvc = MagicMock()
+        pvc.spec.access_modes = ["ReadWriteOnce"]
+        pvc.spec.resources.requests = {"storage": "10Gi"}
+        pvc.spec.storage_class_name = "standard"
+        mock_v1 = MagicMock()
+        mock_v1.read_namespaced_persistent_volume_claim.return_value = pvc
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object.return_value = {
+            "status": {"restoreSize": 314572800}
+        }
+        with (
+            patch("k8si.operator.snapshot.kubernetes.client.CoreV1Api", return_value=mock_v1),
+            patch(_CUSTOM_API, return_value=mock_custom),
+        ):
+            _, storage, _ = snap_mod._get_pvc_info_sync("my-pvc", "my-snap", "default")
+        assert storage == "314572800"
 
 
 class TestCreateVolumeSnapshotSync:
