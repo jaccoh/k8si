@@ -1,4 +1,4 @@
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 COPY pyproject.toml .
@@ -6,7 +6,7 @@ COPY k8si/ k8si/
 RUN pip install --no-cache-dir .
 
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # restic + openssh
 RUN apt-get update && apt-get install -y --no-install-recommends \
