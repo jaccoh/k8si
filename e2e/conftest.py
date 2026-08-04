@@ -234,6 +234,7 @@ def mariadb_env(ns):
                             },
                             "initialDelaySeconds": 10,
                             "periodSeconds": 5,
+                            "timeoutSeconds": 5,
                             "failureThreshold": 24,
                         },
                         "resources": {

@@ -194,6 +194,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
                             },
                             "initialDelaySeconds": 15,
                             "periodSeconds": 5,
+                            "timeoutSeconds": 5,
                             "failureThreshold": 24,
                         },
                         "resources": {
