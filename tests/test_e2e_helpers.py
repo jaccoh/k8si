@@ -40,9 +40,7 @@ def test_fmt_container_states_reports_restart_count():
 
 
 def test_fmt_container_states_reports_waiting_reason():
-    pod = _pod(
-        [_cs("mariadb", state=_state(waiting_reason="CrashLoopBackOff"), restart_count=2)]
-    )
+    pod = _pod([_cs("mariadb", state=_state(waiting_reason="CrashLoopBackOff"), restart_count=2)])
     assert _fmt_container_states(pod) == "mariadb=waiting(CrashLoopBackOff, restarts=2)"
 
 
