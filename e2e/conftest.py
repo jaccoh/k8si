@@ -21,6 +21,17 @@ _POSTGRES_PASSWORD = "e2etest"
 _POSTGRES_DB = "testdb"
 
 
+def _mariadb_healthcheck_command() -> list[str]:
+    """healthcheck.sh command for MariaDB readinessProbe.
+
+    --su-mysql re-execs the script as the mysql unix user and must come
+    FIRST -- per the script's own docs it "disregards previous options
+    set". If it isn't first, --connect runs as the wrong user and fails
+    before --su-mysql ever takes effect.
+    """
+    return ["healthcheck.sh", "--su-mysql", "--connect", "--innodb_initialized"]
+
+
 def _pick_storage_class(storage_classes: list) -> str | None:
     """Heuristically pick a storageclass for ephemeral test PVCs.
 
@@ -253,12 +264,7 @@ def mariadb_env(ns):
                         "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
                         "readinessProbe": {
                             "exec": {
-                                "command": [
-                                    "healthcheck.sh",
-                                    "--connect",
-                                    "--innodb_initialized",
-                                    "--su-mysql",
-                                ],
+                                "command": _mariadb_healthcheck_command(),
                             },
                             "initialDelaySeconds": 10,
                             "periodSeconds": 5,
