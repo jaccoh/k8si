@@ -34,6 +34,27 @@ def _fmt_init_states(pod: object) -> str:
     return ", ".join(parts)
 
 
+def _fmt_container_states(pod: object) -> str:
+    """One-line summary of each container's state/restarts, for stall diagnostics."""
+    parts = []
+    for cs in getattr(pod.status, "container_statuses", None) or []:  # type: ignore[union-attr]
+        if cs.state and cs.state.running:
+            detail = f"running(restarts={cs.restart_count})"
+        elif cs.state and cs.state.waiting:
+            detail = f"waiting({cs.state.waiting.reason}, restarts={cs.restart_count}"
+            last = cs.last_state.terminated if cs.last_state else None
+            if last:
+                detail += f", last={last.reason}/{last.exit_code}"
+            detail += ")"
+        elif cs.state and cs.state.terminated:
+            t = cs.state.terminated
+            detail = f"terminated({t.reason}/{t.exit_code}, restarts={cs.restart_count})"
+        else:
+            detail = f"unknown(restarts={cs.restart_count})"
+        parts.append(f"{cs.name}={detail}")
+    return ", ".join(parts)
+
+
 def wait_pod_phase(ns: str, pod_name: str, phase: str, timeout: int = 180) -> None:
     v1 = kubernetes.client.CoreV1Api()
     deadline = time.monotonic() + timeout
@@ -99,18 +120,34 @@ def wait_pod_condition(
 ) -> None:
     v1 = kubernetes.client.CoreV1Api()
     deadline = time.monotonic() + timeout
+    last_log = time.monotonic()
+    last_states = ""
     while time.monotonic() < deadline:
         try:
             pod = v1.read_namespaced_pod(pod_name, ns)
             for cond in pod.status.conditions or []:
                 if cond.type == condition_type and cond.status == "True":
                     return
+            last_states = _fmt_container_states(pod)
+            # Log every 30s so CI logs show what's happening during long waits
+            if time.monotonic() - last_log >= 30:
+                last_log = time.monotonic()
+                elapsed = int(timeout - (deadline - time.monotonic()))
+                log.info(
+                    "wait_pod_condition: %s/%s condition=%s not True yet, states=[%s] elapsed=%ds",
+                    ns,
+                    pod_name,
+                    condition_type,
+                    last_states,
+                    elapsed,
+                )
         except kubernetes.client.exceptions.ApiException as e:
             if e.status != 404:
                 raise
         time.sleep(3)
     raise TimeoutError(
         f"Pod {ns}/{pod_name} condition {condition_type!r} not True within {timeout}s"
+        + (f" (states=[{last_states}])" if last_states else "")
     )
 
 
