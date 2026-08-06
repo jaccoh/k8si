@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from e2e.helpers import _fmt_container_states
+from e2e.helpers import _fmt_container_states, _fmt_recent_events
 
 
 def _state(*, running=False, waiting_reason=None, terminated_reason=None, exit_code=None):
@@ -62,3 +62,27 @@ def test_fmt_container_states_reports_last_termination():
 
 def test_fmt_container_states_no_statuses_returns_empty_string():
     assert _fmt_container_states(_pod(None)) == ""
+
+
+def _event(*, reason, message, count=1):
+    return SimpleNamespace(reason=reason, message=message, count=count)
+
+
+def test_fmt_recent_events_formats_reason_and_message():
+    events = [_event(reason="Unhealthy", message="Readiness probe failed: timeout", count=3)]
+    assert _fmt_recent_events(events) == "Unhealthy(x3): Readiness probe failed: timeout"
+
+
+def test_fmt_recent_events_joins_multiple_with_semicolon():
+    events = [
+        _event(reason="Unhealthy", message="Readiness probe failed: timeout", count=3),
+        _event(reason="BackOff", message="Back-off restarting failed container", count=1),
+    ]
+    assert _fmt_recent_events(events) == (
+        "Unhealthy(x3): Readiness probe failed: timeout; "
+        "BackOff(x1): Back-off restarting failed container"
+    )
+
+
+def test_fmt_recent_events_empty_list_returns_empty_string():
+    assert _fmt_recent_events([]) == ""
