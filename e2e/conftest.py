@@ -32,6 +32,25 @@ def _mariadb_healthcheck_command() -> list[str]:
     return ["healthcheck.sh", "--su-mysql", "--connect", "--innodb_initialized"]
 
 
+def _mariadb_readiness_probe(*, initial_delay_seconds: int = 10) -> dict:
+    """readinessProbe dict for the MariaDB pod.
+
+    timeoutSeconds=10 was too tight under CI runner CPU limits: healthcheck.sh
+    consistently timed out (23/23 attempts in run 1385), so the probe never
+    once succeeded within the 300s wait. periodSeconds matches timeoutSeconds
+    so kubelet never queues up overlapping execs on an already-slow probe.
+    """
+    return {
+        "exec": {
+            "command": _mariadb_healthcheck_command(),
+        },
+        "initialDelaySeconds": initial_delay_seconds,
+        "periodSeconds": 30,
+        "timeoutSeconds": 30,
+        "failureThreshold": 24,
+    }
+
+
 def _pick_storage_class(storage_classes: list) -> str | None:
     """Heuristically pick a storageclass for ephemeral test PVCs.
 
@@ -262,15 +281,7 @@ def mariadb_env(ns):
                             {"name": "MYSQL_DATABASE", "value": _MARIADB_DATABASE},
                         ],
                         "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
-                        "readinessProbe": {
-                            "exec": {
-                                "command": _mariadb_healthcheck_command(),
-                            },
-                            "initialDelaySeconds": 10,
-                            "periodSeconds": 5,
-                            "timeoutSeconds": 10,
-                            "failureThreshold": 24,
-                        },
+                        "readinessProbe": _mariadb_readiness_probe(),
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
                             "limits": {"cpu": "500m", "memory": "768Mi"},

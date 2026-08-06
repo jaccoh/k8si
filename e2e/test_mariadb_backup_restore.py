@@ -8,7 +8,7 @@ import uuid
 
 import kubernetes.client
 
-from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS, _mariadb_healthcheck_command
+from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS, _mariadb_readiness_probe
 from e2e.helpers import (
     delete_pvc_with_cleanup,
     wait_init_container_failed,
@@ -183,15 +183,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
                             {"name": "MYSQL_ROOT_PASSWORD", "value": _MARIADB_ROOT_PASSWORD},
                         ],
                         "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
-                        "readinessProbe": {
-                            "exec": {
-                                "command": _mariadb_healthcheck_command(),
-                            },
-                            "initialDelaySeconds": 15,
-                            "periodSeconds": 5,
-                            "timeoutSeconds": 10,
-                            "failureThreshold": 24,
-                        },
+                        "readinessProbe": _mariadb_readiness_probe(initial_delay_seconds=15),
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
                             "limits": {"cpu": "500m", "memory": "768Mi"},
