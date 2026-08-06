@@ -67,9 +67,7 @@ def _get_pvc_info_sync(pvc_name: str, snapshot_name: str, namespace: str) -> tup
         )
         restore_size = snap.get("status", {}).get("restoreSize")
         if restore_size:
-            restore_str = str(restore_size)
-            if restore_str.isdigit():
-                storage = f"{restore_str}"
+            storage = str(restore_size)
     except Exception as e:
         log.warning("Could not fetch restoreSize for VolumeSnapshot %s: %s", snapshot_name, e)
 
