@@ -25,7 +25,7 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 dev-dependencies = [
-    "mypy>=1.0,<2.1",
+    "mypy>=2.3,<3",
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.9",

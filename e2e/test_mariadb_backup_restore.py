@@ -199,7 +199,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
                         },
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
-                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                            "limits": {"cpu": "500m", "memory": "768Mi"},
                         },
                     }
                 ],

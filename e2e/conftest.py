@@ -21,24 +21,70 @@ _POSTGRES_PASSWORD = "e2etest"
 _POSTGRES_DB = "testdb"
 
 
+def _pick_storage_class(storage_classes: list) -> str | None:
+    """Heuristically pick a storageclass for ephemeral test PVCs.
+
+    Prefers the cluster default; otherwise a non-replicated, non-SMB class
+    (cheapest/fastest for throwaway e2e data), falling back to whatever
+    exists. Returns None if the cluster has no storageclasses at all.
+    """
+    if not storage_classes:
+        return None
+    for sc in storage_classes:
+        annotations = sc.metadata.annotations or {}
+        if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
+            return sc.metadata.name
+    candidates = [sc.metadata.name for sc in storage_classes if "smb" not in sc.metadata.name]
+    for name in candidates:
+        if "replicated" not in name:
+            return name
+    if candidates:
+        return candidates[0]
+    return storage_classes[0].metadata.name
+
+
 def _detect_environment() -> tuple[str, str, str]:
-    """Detect cluster nodes and return (node_name, storage_class, snapshot_class)."""
+    """Detect cluster nodes and return (node_name, storage_class, snapshot_class).
+
+    Override via E2E_NODE_NAME / E2E_STORAGE_CLASS / E2E_SNAPSHOT_CLASS env
+    vars — set explicitly in CI. Storageclass names are cluster-specific and
+    change over time (e.g. an openebs -> linstor migration broke a prior
+    hardcoded name here); auto-detection is a local-dev convenience only,
+    never a substitute for pinning the CI environment.
+    """
+    env_node = os.environ.get("E2E_NODE_NAME")
+    env_sc = os.environ.get("E2E_STORAGE_CLASS")
+    env_vsc = os.environ.get("E2E_SNAPSHOT_CLASS")
+    if env_node and env_sc and env_vsc:
+        return env_node, env_sc, env_vsc
+
+    import kubernetes.client
+    import kubernetes.config
+
     try:
-        import kubernetes.client
-        import kubernetes.config
+        kubernetes.config.load_incluster_config()
+    except kubernetes.config.ConfigException:
+        kubernetes.config.load_kube_config()
+    v1 = kubernetes.client.CoreV1Api()
+    nodes = [n.metadata.name for n in v1.list_node().items]
+    if "orbstack" in nodes:
+        return (
+            env_node or "orbstack",
+            env_sc or "local-path",
+            env_vsc or "local-path-snapclass",
+        )
 
-        try:
-            kubernetes.config.load_incluster_config()
-        except kubernetes.config.ConfigException:
-            kubernetes.config.load_kube_config()
-        v1 = kubernetes.client.CoreV1Api()
-        nodes = [n.metadata.name for n in v1.list_node().items]
-        if "orbstack" in nodes:
-            return "orbstack", "local-path", "local-path-snapclass"
+    storage_classes = kubernetes.client.StorageV1Api().list_storage_class().items
+    detected_sc = _pick_storage_class(storage_classes)
+    if not nodes or not detected_sc:
+        raise RuntimeError(
+            "Could not auto-detect e2e node/storageclass "
+            "(no nodes or no storageclasses found) — "
+            "set E2E_NODE_NAME, E2E_STORAGE_CLASS and E2E_SNAPSHOT_CLASS explicitly."
+        )
 
-        storage_api = kubernetes.client.StorageV1Api()
-        scs = [sc.metadata.name for sc in storage_api.list_storage_class().items]
-
+    detected_vsc = env_vsc
+    if not detected_vsc:
         custom_api = kubernetes.client.CustomObjectsApi()
         try:
             snaps = custom_api.list_cluster_custom_object(
@@ -47,27 +93,9 @@ def _detect_environment() -> tuple[str, str, str]:
             vscs = [v["metadata"]["name"] for v in snaps.get("items", [])]
         except Exception:
             vscs = []
+        detected_vsc = vscs[0] if vscs else "linstor-snapclass"
 
-        sc_name = "linstor-worker-local"
-        for candidate in ["linstor-worker-local", "linstor-worker-replicated", "local-path"]:
-            if candidate in scs:
-                sc_name = candidate
-                break
-        if not sc_name and scs:
-            sc_name = scs[0]
-
-        vsc_name = "linstor-snapclass"
-        for candidate in ["linstor-snapclass", "local-path-snapclass"]:
-            if candidate in vscs:
-                vsc_name = candidate
-                break
-        if not vsc_name and vscs:
-            vsc_name = vscs[0]
-
-        return "hoeve-worker01", sc_name, vsc_name
-    except Exception:
-        pass
-    return "hoeve-worker01", "linstor-worker-local", "linstor-snapclass"
+    return env_node or nodes[0], env_sc or detected_sc, detected_vsc
 
 
 NODE_NAME, STORAGE_CLASS, SNAPSHOT_CLASS = _detect_environment()
@@ -239,7 +267,7 @@ def mariadb_env(ns):
                         },
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
-                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                            "limits": {"cpu": "500m", "memory": "768Mi"},
                         },
                     }
                 ],
@@ -383,7 +411,7 @@ def postgres_env(ns):
                         },
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
-                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                            "limits": {"cpu": "500m", "memory": "768Mi"},
                         },
                     }
                 ],
