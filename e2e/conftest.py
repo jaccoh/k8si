@@ -43,19 +43,20 @@ def _pick_storage_class(storage_classes: list) -> str | None:
     return storage_classes[0].metadata.name
 
 
-def _detect_environment() -> tuple[str, str]:
-    """Detect cluster nodes and return (node_name, storage_class_name).
+def _detect_environment() -> tuple[str, str, str]:
+    """Detect cluster nodes and return (node_name, storage_class, snapshot_class).
 
-    Override via E2E_NODE_NAME / E2E_STORAGE_CLASS env vars — always set
-    both explicitly in CI. Storageclass names are cluster-specific and
+    Override via E2E_NODE_NAME / E2E_STORAGE_CLASS / E2E_SNAPSHOT_CLASS env
+    vars — set explicitly in CI. Storageclass names are cluster-specific and
     change over time (e.g. an openebs -> linstor migration broke a prior
     hardcoded name here); auto-detection is a local-dev convenience only,
     never a substitute for pinning the CI environment.
     """
     env_node = os.environ.get("E2E_NODE_NAME")
     env_sc = os.environ.get("E2E_STORAGE_CLASS")
-    if env_node and env_sc:
-        return env_node, env_sc
+    env_vsc = os.environ.get("E2E_SNAPSHOT_CLASS")
+    if env_node and env_sc and env_vsc:
+        return env_node, env_sc, env_vsc
 
     import kubernetes.client
     import kubernetes.config
@@ -67,7 +68,11 @@ def _detect_environment() -> tuple[str, str]:
     v1 = kubernetes.client.CoreV1Api()
     nodes = [n.metadata.name for n in v1.list_node().items]
     if "orbstack" in nodes:
-        return env_node or "orbstack", env_sc or "local-path"
+        return (
+            env_node or "orbstack",
+            env_sc or "local-path",
+            env_vsc or "local-path-snapclass",
+        )
 
     storage_classes = kubernetes.client.StorageV1Api().list_storage_class().items
     detected_sc = _pick_storage_class(storage_classes)
@@ -75,12 +80,25 @@ def _detect_environment() -> tuple[str, str]:
         raise RuntimeError(
             "Could not auto-detect e2e node/storageclass "
             "(no nodes or no storageclasses found) — "
-            "set E2E_NODE_NAME and E2E_STORAGE_CLASS explicitly."
+            "set E2E_NODE_NAME, E2E_STORAGE_CLASS and E2E_SNAPSHOT_CLASS explicitly."
         )
-    return env_node or nodes[0], env_sc or detected_sc
+
+    detected_vsc = env_vsc
+    if not detected_vsc:
+        custom_api = kubernetes.client.CustomObjectsApi()
+        try:
+            snaps = custom_api.list_cluster_custom_object(
+                "snapshot.storage.k8s.io", "v1", "volumesnapshotclasses"
+            )
+            vscs = [v["metadata"]["name"] for v in snaps.get("items", [])]
+        except Exception:
+            vscs = []
+        detected_vsc = vscs[0] if vscs else "linstor-snapclass"
+
+    return env_node or nodes[0], env_sc or detected_sc, detected_vsc
 
 
-NODE_NAME, STORAGE_CLASS = _detect_environment()
+NODE_NAME, STORAGE_CLASS, SNAPSHOT_CLASS = _detect_environment()
 
 
 def _b64(s: str) -> str:
@@ -120,22 +138,9 @@ def ns():
         for pvc in pvcs.items:
             pv_name = pvc.spec.volume_name
             if pv_name:
-                subprocess.run(
-                    [
-                        "kubectl",
-                        "delete",
-                        "lvmsnapshot",
-                        "-n",
-                        "openebs",
-                        "-l",
-                        f"openebs.io/persistent-volume={pv_name}",
-                        "--ignore-not-found",
-                    ],
-                    check=False,
-                    timeout=60,
-                )
+                log.info("Cleaning up PV %s in %s", pv_name, namespace)
     except Exception:
-        log.exception("Failed to clean up LVMSnapshot CRs during teardown")
+        log.exception("Error listing PVCs during teardown")
 
     v1.delete_namespace(namespace)
     log.info("Deleted namespace %s", namespace)
@@ -155,7 +160,7 @@ def repo_pvc(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )
@@ -177,7 +182,7 @@ def data_pvc(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "100Mi"}},
+                "resources": {"requests": {"storage": "128Mi"}},
             },
         },
     )
@@ -205,7 +210,7 @@ def mariadb_env(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )
@@ -346,7 +351,7 @@ def postgres_env(ns):
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "storageClassName": STORAGE_CLASS,
-                "resources": {"requests": {"storage": "500Mi"}},
+                "resources": {"requests": {"storage": "512Mi"}},
             },
         },
     )

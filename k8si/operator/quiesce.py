@@ -39,6 +39,27 @@ def _find_pod_name_sync(namespace: str, selector: dict[str, str]) -> str:
     return running[0].metadata.name  # type: ignore[no-any-return]
 
 
+def _exec_sync_in_pod_sync(namespace: str, selector: dict[str, str]) -> None:
+    try:
+        pod_name = _find_pod_name_sync(namespace, selector)
+        from kubernetes.stream import stream
+
+        v1 = kubernetes.client.CoreV1Api()
+        stream(
+            v1.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            command=["sync"],
+            stderr=False,
+            stdin=False,
+            stdout=False,
+            tty=False,
+        )
+        log.info("Exec sync in pod %s/%s succeeded", namespace, pod_name)
+    except Exception as e:
+        log.debug("Exec sync in pod failed (continuing): %s", e)
+
+
 def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) -> None:
     from kubernetes.stream import stream
 
@@ -49,12 +70,12 @@ def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) 
                 "python3",
                 "-c",
                 (
-                    f"import sqlite3; c=sqlite3.connect({db_path!r}); "
+                    f"import sqlite3, os; c=sqlite3.connect({db_path!r}); "
                     f"c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close(); "
-                    f"print('checkpointed')"
+                    f"os.sync(); print('checkpointed')"
                 ),
             ],
-            ["sqlite3", db_path, "PRAGMA wal_checkpoint(TRUNCATE);"],
+            ["sh", "-c", f"sqlite3 {db_path} 'PRAGMA wal_checkpoint(TRUNCATE);' && sync"],
         ]
         checkpointed = False
         for cmd in candidates:
@@ -152,6 +173,8 @@ async def quiesce_context(
         log.warning(
             "MariaDB: write lock acquired (FTWRL) — held until snapshot completes, max ~300s"
         )
+        if "podSelector" in db_spec:
+            await asyncio.to_thread(_exec_sync_in_pod_sync, namespace, db_spec["podSelector"])
         _lock_start = time.monotonic()
         try:
             yield
@@ -164,6 +187,8 @@ async def quiesce_context(
         creds = await asyncio.to_thread(_read_secret_sync, namespace, db_spec["secretRef"])
         creds = _expand_db_host(creds, namespace)
         await asyncio.to_thread(_postgres_checkpoint_sync, creds)
+        if "podSelector" in db_spec:
+            await asyncio.to_thread(_exec_sync_in_pod_sync, namespace, db_spec["podSelector"])
         logger.info("Postgres checkpointed; taking snapshot")
         yield
 
@@ -173,6 +198,7 @@ async def quiesce_context(
         if selector and db_paths:
             pod_name = await asyncio.to_thread(_find_pod_name_sync, namespace, selector)
             await asyncio.to_thread(_sqlite_checkpoint_sync, namespace, pod_name, db_paths)
+            await asyncio.to_thread(_exec_sync_in_pod_sync, namespace, selector)
         else:
             logger.warning("database.type=sqlite: need podSelector + dbPaths; skipping checkpoint")
         yield

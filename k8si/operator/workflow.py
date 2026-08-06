@@ -529,6 +529,7 @@ def _collect_job_logs(v1: Any, job_name: str, namespace: str) -> str:
 
 def _wait_job_gone_sync(job_name: str, namespace: str) -> None:
     batch = kubernetes.client.BatchV1Api()
+    v1 = kubernetes.client.CoreV1Api()
     deadline = time.monotonic() + _JOB_GONE_TIMEOUT
     while time.monotonic() < deadline:
         try:
@@ -536,9 +537,19 @@ def _wait_job_gone_sync(job_name: str, namespace: str) -> None:
             time.sleep(3)
         except kubernetes.client.exceptions.ApiException as e:
             if e.status == 404:
-                return
+                break
             raise
-    log.warning("Job %s still present after %ss; proceeding", job_name, _JOB_GONE_TIMEOUT)
+
+    pod_deadline = time.monotonic() + 30
+    while time.monotonic() < pod_deadline:
+        try:
+            pods = v1.list_namespaced_pod(namespace, label_selector=f"job-name={job_name}").items
+            if not pods:
+                break
+        except Exception:
+            break
+        time.sleep(2)
+    time.sleep(5)
 
 
 async def _run_job(

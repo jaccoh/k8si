@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
   pull_request:
 
 jobs:
@@ -58,7 +60,7 @@ jobs:
 
   docker-build-arm64:
     needs: [test]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 30
     steps:
@@ -127,7 +129,7 @@ jobs:
 
   docker-build-amd64:
     needs: [test]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 45
     steps:
@@ -195,8 +197,8 @@ jobs:
           kubectl -n gitea delete job "buildah-amd64-${SHA::8}" --ignore-not-found
 
   docker-build-ui-arm64:
-    needs: [docker-build-arm64, docker-build-amd64]
-    if: github.ref == 'refs/heads/main'
+    needs: [test]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 30
     steps:
@@ -265,8 +267,8 @@ jobs:
           kubectl -n gitea delete job "buildah-ui-arm64-${SHA::8}" --ignore-not-found
 
   docker-build-ui-amd64:
-    needs: [docker-build-arm64, docker-build-amd64]
-    if: github.ref == 'refs/heads/main'
+    needs: [test]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     timeout-minutes: 45
     steps:
@@ -336,7 +338,7 @@ jobs:
 
   docker-manifest:
     needs: [docker-build-arm64, docker-build-amd64, docker-build-ui-arm64, docker-build-ui-amd64]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v7
@@ -374,28 +376,29 @@ jobs:
                   args:
                   - |
                     set -ex
-                    buildah login ghcr.io -u jaccoh -p ${GHCR_TOKEN}
                     buildah manifest create k8si-manifest
                     buildah manifest add --tls-verify=false k8si-manifest docker.hoeve.nu/k8si:${SHA}-arm64
                     buildah manifest add --tls-verify=false k8si-manifest docker.hoeve.nu/k8si:${SHA}-amd64
                     buildah manifest push --all --tls-verify=false k8si-manifest docker://docker.hoeve.nu/k8si:${SHA}
                     buildah manifest push --all --tls-verify=false k8si-manifest docker://docker.hoeve.nu/k8si:v${VERSION}
                     buildah manifest push --all --tls-verify=false k8si-manifest docker://docker.hoeve.nu/k8si:latest
-                    buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:${SHA}
-                    buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:v${VERSION}
-                    buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:latest
                     buildah manifest create k8si-ui-manifest
                     buildah manifest add --tls-verify=false k8si-ui-manifest docker.hoeve.nu/k8si-ui:${SHA}-arm64
                     buildah manifest add --tls-verify=false k8si-ui-manifest docker.hoeve.nu/k8si-ui:${SHA}-amd64
                     buildah manifest push --all --tls-verify=false k8si-ui-manifest docker://docker.hoeve.nu/k8si-ui:${SHA}
                     buildah manifest push --all --tls-verify=false k8si-ui-manifest docker://docker.hoeve.nu/k8si-ui:v${VERSION}
                     buildah manifest push --all --tls-verify=false k8si-ui-manifest docker://docker.hoeve.nu/k8si-ui:latest
-                    buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:${SHA}
-                    buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:v${VERSION}
-                    buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:latest
+                    if [ -n "${GHCR_TOKEN}" ] && buildah login ghcr.io -u jaccoh -p "${GHCR_TOKEN}"; then
+                      buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:${SHA} || true
+                      buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:v${VERSION} || true
+                      buildah manifest push --all k8si-manifest docker://ghcr.io/jaccoh/k8si:latest || true
+                      buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:${SHA} || true
+                      buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:v${VERSION} || true
+                      buildah manifest push --all k8si-ui-manifest docker://ghcr.io/jaccoh/k8si-ui:latest || true
+                    fi
           YAML
 
-          for i in $(seq 1 18); do
+          for i in $(seq 1 60); do
             ST=$(kubectl get job "${JOB}" -n gitea -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || true)
             echo "iter $i: ST=${ST:-<empty>}"
             if [ "$ST" = "Complete" ] || [ "$ST" = "SuccessCriteriaMet" ]; then exit 0; fi
@@ -425,6 +428,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
       E2E_NODE_NAME: hoeve-worker01
       E2E_STORAGE_CLASS: linstor-worker-local
+      E2E_SNAPSHOT_CLASS: linstor-snapclass
     steps:
       - uses: actions/checkout@v7
 
@@ -447,7 +451,7 @@ jobs:
 
   release:
     needs: [e2e]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v7
@@ -467,6 +471,11 @@ jobs:
             exit 0
           fi
 
+          PRERELEASE="false"
+          if echo "${TAG}" | grep -qE 'rc|alpha|beta|-'; then
+            PRERELEASE="true"
+          fi
+
           curl -s -X POST "${API}/releases" \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
@@ -474,6 +483,7 @@ jobs:
               \"tag_name\": \"${TAG}\",
               \"target_commitish\": \"${{ github.sha }}\",
               \"name\": \"${TAG}\",
+              \"prerelease\": ${PRERELEASE},
               \"body\": \"Docker images (multi-arch arm64+amd64):\n- \`ghcr.io/jaccoh/k8si:v${VERSION}\`\n- \`ghcr.io/jaccoh/k8si-ui:v${VERSION}\`\"
             }"
 

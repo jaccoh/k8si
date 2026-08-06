@@ -1,7 +1,6 @@
-"""Shared wait/cleanup helpers for e2e tests."""
+"""Shared wait/cleanup helpers for e2e tests (XFS StorageClass enabled)."""
 
 import logging
-import subprocess
 import time
 
 import kubernetes.client
@@ -149,6 +148,9 @@ def wait_init_container_failed(ns: str, pod_name: str, timeout: int = 120) -> in
 def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
     v1 = kubernetes.client.CoreV1Api()
 
+    # Give Kubelet time to complete unmounting volumes from deleted pods
+    time.sleep(10)
+
     try:
         pvc = v1.read_namespaced_persistent_volume_claim(pvc_name, ns)
         pv_name = pvc.spec.volume_name
@@ -158,21 +160,7 @@ def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
         raise
 
     if pv_name:
-        subprocess.run(
-            [
-                "kubectl",
-                "delete",
-                "lvmsnapshot",
-                "-n",
-                "openebs",
-                "-l",
-                f"openebs.io/persistent-volume={pv_name}",
-                "--ignore-not-found",
-            ],
-            check=True,
-            timeout=60,
-        )
-        log.info("Cleaned up LVMSnapshot CRs for PV %s", pv_name)
+        log.info("PVC %s (PV %s) deleted", pvc_name, pv_name)
 
     v1.delete_namespaced_persistent_volume_claim(pvc_name, ns)
     log.info("Deleted PVC %s/%s, waiting for removal", ns, pvc_name)
@@ -184,7 +172,37 @@ def delete_pvc_with_cleanup(ns: str, pvc_name: str) -> None:
         except kubernetes.client.exceptions.ApiException as e:
             if e.status == 404:
                 log.info("PVC %s/%s gone", ns, pvc_name)
-                return
+                break
             raise
         time.sleep(3)
-    raise TimeoutError(f"PVC {ns}/{pvc_name} was not deleted within 120s")
+
+    if pv_name:
+        pv_deadline = time.monotonic() + 60
+        while time.monotonic() < pv_deadline:
+            try:
+                v1.read_persistent_volume(pv_name)
+            except kubernetes.client.exceptions.ApiException as e:
+                if e.status == 404:
+                    log.info("PV %s gone", pv_name)
+                    break
+                raise
+            time.sleep(2)
+
+        storage_v1 = kubernetes.client.StorageV1Api()
+        va_deadline = time.monotonic() + 60
+        while time.monotonic() < va_deadline:
+            try:
+                attachments = storage_v1.list_volume_attachment().items
+                matching = [
+                    va
+                    for va in attachments
+                    if va.spec
+                    and va.spec.source
+                    and va.spec.source.persistent_volume_name == pv_name
+                ]
+                if not matching:
+                    log.info("VolumeAttachments for PV %s gone", pv_name)
+                    break
+            except Exception:
+                break
+            time.sleep(2)

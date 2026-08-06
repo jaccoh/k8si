@@ -52,13 +52,27 @@ def _wait_no_snapshot_in_progress_sync(pvc_name: str, namespace: str) -> None:
         time.sleep(60)
 
 
-def _get_pvc_info_sync(pvc_name: str, namespace: str) -> tuple[str, str, str]:
-    """Returns (accessMode, storage, storageClassName) from source PVC."""
+def _get_pvc_info_sync(pvc_name: str, snapshot_name: str, namespace: str) -> tuple[str, str, str]:
+    """Return (accessMode, storage, storageClass), respecting snapshot restoreSize."""
     v1 = kubernetes.client.CoreV1Api()
+    custom = kubernetes.client.CustomObjectsApi()
     pvc = v1.read_namespaced_persistent_volume_claim(pvc_name, namespace)
     access_mode = (pvc.spec.access_modes or ["ReadWriteOnce"])[0]
     storage = pvc.spec.resources.requests["storage"]
     storage_class = pvc.spec.storage_class_name or ""
+
+    try:
+        snap = custom.get_namespaced_custom_object(
+            _SNAPSHOT_GROUP, _SNAPSHOT_VERSION, namespace, _SNAPSHOT_PLURAL, snapshot_name
+        )
+        restore_size = snap.get("status", {}).get("restoreSize")
+        if restore_size:
+            restore_str = str(restore_size)
+            if restore_str.isdigit():
+                storage = f"{restore_str}"
+    except Exception as e:
+        log.warning("Could not fetch restoreSize for VolumeSnapshot %s: %s", snapshot_name, e)
+
     return access_mode, storage, storage_class
 
 
@@ -176,7 +190,7 @@ async def create_pvc_from_snapshot(
     pvc_name: str, namespace: str, snapshot_name: str, source_pvc: str
 ) -> None:
     access_mode, storage, storage_class = await asyncio.to_thread(
-        _get_pvc_info_sync, source_pvc, namespace
+        _get_pvc_info_sync, source_pvc, snapshot_name, namespace
     )
     log.info(
         "Creating ephemeral PVC %s from snapshot %s (sc=%s %s %s)",

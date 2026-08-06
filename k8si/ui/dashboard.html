@@ -528,6 +528,77 @@
     flex-direction: column;
     z-index: 100;
   }
+  /* Log tabs */
+  .log-tabs-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 12px;
+    background: #090d13;
+    border-bottom: 1px solid #30363d;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    flex-shrink: 0;
+    height: 34px;
+  }
+  .log-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #8b949e;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    max-width: 220px;
+    white-space: nowrap;
+    margin-top: 4px;
+    height: 29px;
+    box-sizing: border-box;
+  }
+  .log-tab:hover {
+    background: #21262d;
+    color: #c9d1d9;
+  }
+  .log-tab.active {
+    background: #0d1117;
+    color: #e6edf3;
+    border-color: #58a6ff #30363d #0d1117 #30363d;
+    font-weight: 600;
+  }
+  .log-tab-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .log-tab-close {
+    font-size: 14px;
+    line-height: 1;
+    color: #6e7681;
+    border-radius: 3px;
+    padding: 0 2px;
+    cursor: pointer;
+    margin-left: 2px;
+  }
+  .log-tab-close:hover {
+    background: #30363d;
+    color: #f85149;
+  }
+  .log-tab-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #6e7681;
+    flex-shrink: 0;
+  }
+  .log-tab-dot.live { background: #58a6ff; animation: pulse 1.2s infinite; }
+  .log-tab-dot.done { background: #3fb950; }
+  .log-tab-dot.failed { background: #f85149; }
   .log-drawer-header {
     display: flex;
     align-items: center;
@@ -743,14 +814,16 @@
 
 <!-- Log drawer -->
 <div class="log-drawer" id="log-drawer">
+  <div class="log-tabs-bar" id="log-tabs-bar"></div>
   <div class="log-drawer-header">
     <span class="drawer-status-dot" id="drawer-status-dot"></span>
     <span class="log-drawer-title" id="log-drawer-title">Logs</span>
     <select id="log-run-picker" style="display:none" onchange="onRunPickerChange(this)"></select>
     <span class="log-drawer-status" id="log-drawer-status">connecting…</span>
-    <button class="log-drawer-close" onclick="closeLogs()">Close</button>
+    <button class="log-drawer-close" onclick="closeLogs()" title="Close active tab">Close tab</button>
+    <button class="log-drawer-close" onclick="closeAllLogs()" title="Close all tabs" style="margin-left:4px">Close all</button>
   </div>
-  <div class="log-content" id="log-content"></div>
+  <div id="log-content-container" style="flex:1; display:flex; flex-direction:column; overflow:hidden;"></div>
 </div>
 
 <!-- Footer -->
@@ -1282,14 +1355,16 @@
       });
   }
 
-  // ── Log drawer ──────────────────────────────────────────────────────────────
+  // ── Log drawer & Tab management ─────────────────────────────────────────────
 
-  let logsEventSource = null;
+  let logTabs = [];
+  let activeTabId = null;
 
   function setDrawerStatus(dotClass, label) {
     var dot = document.getElementById('drawer-status-dot');
-    dot.className = 'drawer-status-dot' + (dotClass ? ' ' + dotClass : '');
-    document.getElementById('log-drawer-status').textContent = label;
+    if (dot) dot.className = 'drawer-status-dot' + (dotClass ? ' ' + dotClass : '');
+    var statusEl = document.getElementById('log-drawer-status');
+    if (statusEl) statusEl.textContent = label;
   }
 
   function formatDrawerTime(isoString) {
@@ -1345,59 +1420,156 @@
     var ns = sel.dataset.namespace;
     var nm = sel.dataset.backupName;
     var historicalRuns = getHistoricalRuns(ns, nm);
+    if (activeTabId) {
+      closeTab(activeTabId);
+    }
     openRunLogs(ns, runName, historicalRuns, null);
   }
 
-  function openRunLogs(namespace, runName, recentRuns, phaseCallback) {
-    if (logsEventSource) logsEventSource.close();
-    var drawer = document.getElementById('log-drawer');
-    drawer.style.display = 'flex';
-    document.getElementById('log-drawer-title').textContent = namespace + '/' + runName;
-    document.getElementById('log-content').innerHTML = '';
-    setDrawerStatus('', 'connecting…');
+  function renderTabs() {
+    var tabsBar = document.getElementById('log-tabs-bar');
+    if (!tabsBar) return;
+    tabsBar.innerHTML = '';
 
-    // Populate run-picker if we have history
+    logTabs.forEach(function(tab) {
+      var tabEl = document.createElement('div');
+      tabEl.className = 'log-tab' + (tab.id === activeTabId ? ' active' : '');
+      tabEl.onclick = function(e) {
+        if (e.target.classList.contains('log-tab-close')) return;
+        activateTab(tab.id);
+      };
+
+      var dotEl = document.createElement('span');
+      dotEl.className = 'log-tab-dot' + (tab.statusDot ? ' ' + tab.statusDot : '');
+
+      var titleEl = document.createElement('span');
+      titleEl.className = 'log-tab-title';
+      titleEl.textContent = tab.title;
+      titleEl.title = tab.title;
+
+      var closeEl = document.createElement('span');
+      closeEl.className = 'log-tab-close';
+      closeEl.textContent = '×';
+      closeEl.title = 'Close tab';
+      closeEl.onclick = function(e) {
+        e.stopPropagation();
+        closeTab(tab.id);
+      };
+
+      tabEl.appendChild(dotEl);
+      tabEl.appendChild(titleEl);
+      tabEl.appendChild(closeEl);
+      tabsBar.appendChild(tabEl);
+    });
+  }
+
+  function updateTabHeaderAndDot(tab) {
+    if (!tab || tab.id !== activeTabId) return;
+
+    setDrawerStatus(tab.statusDot, tab.statusText);
+
+    var title = document.getElementById('log-drawer-title');
+    if (title) title.textContent = tab.title;
+
     var picker = document.getElementById('log-run-picker');
-    if (recentRuns && recentRuns.length > 1) {
+    if (!picker) return;
+
+    if (tab.recentRuns && tab.recentRuns.length > 1) {
       picker.style.display = '';
-      picker.dataset.namespace = namespace;
-      // Resolve the backup name via allBackups so onRunPickerChange can look it up
+      picker.dataset.namespace = tab.namespace;
       var _bk = allBackups.find(function(b) {
-        return b.namespace === namespace && (b.recentRuns || []).some(function(r) { return r.name === runName; });
+        return b.namespace === tab.namespace && (b.recentRuns || []).some(function(r) { return r.name === tab.targetName; });
       });
       picker.dataset.backupName = _bk ? _bk.name : '';
       picker.innerHTML = '';
-      recentRuns.forEach(function(run) {
+      tab.recentRuns.forEach(function(run) {
         var opt = document.createElement('option');
         opt.value = run.name;
         var label = run.result + ' · ' + formatDateTime(run.time);
         if (run.sizeBytes != null) label += ' · ' + formatSize(run.sizeBytes);
         opt.textContent = label;
-        opt.selected = (run.name === runName);
+        opt.selected = (run.name === tab.targetName);
         picker.appendChild(opt);
       });
     } else {
       picker.style.display = 'none';
       picker.innerHTML = '';
     }
+  }
+
+  function activateTab(tabId) {
+    activeTabId = tabId;
+    var activeTab = logTabs.find(function(t) { return t.id === tabId; });
+    if (!activeTab) return;
+
+    logTabs.forEach(function(t) {
+      if (t.contentEl) t.contentEl.style.display = (t.id === tabId) ? 'block' : 'none';
+    });
+
+    renderTabs();
+    updateTabHeaderAndDot(activeTab);
+
+    document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
+    var activeBtn = document.querySelector('.btn-logs[data-ns="' + activeTab.namespace + '"][data-nm="' + activeTab.targetName + '"]');
+    if (activeBtn) activeBtn.classList.add('active');
+  }
+
+  function openRunLogs(namespace, runName, recentRuns, phaseCallback) {
+    var tabId = namespace + '/' + runName;
+    var existingTab = logTabs.find(function(t) { return t.id === tabId; });
+
+    if (existingTab) {
+      if (phaseCallback) existingTab.phaseCallback = phaseCallback;
+      if (recentRuns) existingTab.recentRuns = recentRuns;
+      activateTab(tabId);
+      return;
+    }
+
+    var drawer = document.getElementById('log-drawer');
+    drawer.style.display = 'flex';
+
+    var container = document.getElementById('log-content-container');
+    var contentEl = document.createElement('div');
+    contentEl.className = 'log-content';
+    contentEl.id = 'log-content-' + tabId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    contentEl.style.display = 'none';
+    container.appendChild(contentEl);
+
+    var tab = {
+      id: tabId,
+      namespace: namespace,
+      targetName: runName,
+      isRunLog: true,
+      title: namespace + '/' + runName,
+      eventSource: null,
+      statusDot: '',
+      statusText: 'connecting…',
+      recentRuns: recentRuns,
+      phaseCallback: phaseCallback,
+      contentEl: contentEl
+    };
+    logTabs.push(tab);
+
+    activateTab(tabId);
 
     var url = '/api/runs/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(runName) + '/logs';
-    logsEventSource = new EventSource(url);
+    var es = new EventSource(url);
+    tab.eventSource = es;
 
-    logsEventSource.onopen = function() {
-      setDrawerStatus('live', 'live');
+    es.onopen = function() {
+      tab.statusDot = 'live';
+      tab.statusText = 'live';
+      updateTabHeaderAndDot(tab);
+      renderTabs();
     };
 
-    logsEventSource.onmessage = function(e) {
+    es.onmessage = function(e) {
       var data = JSON.parse(e.data);
-      var content = document.getElementById('log-content');
 
       if (data.type === 'phase') {
-        // Mark previous active phase as completed
-        var prev = content.querySelector('.log-phase.active');
+        var prev = contentEl.querySelector('.log-phase.active');
         if (prev) prev.className = 'log-phase';
-        // Remove old shimmer bar
-        var oldBar = content.querySelector('.log-activity-bar');
+        var oldBar = contentEl.querySelector('.log-activity-bar');
         if (oldBar) oldBar.remove();
 
         var t = data.time
@@ -1408,46 +1580,53 @@
         line.innerHTML = '<span class="phase-time">' + escapeHtml(t) + '</span>'
           + '<span class="phase-name">' + escapeHtml(data.phase || '') + '</span>'
           + '<span>' + escapeHtml(data.message || '') + '</span>';
-        content.appendChild(line);
+        contentEl.appendChild(line);
 
-        // Add shimmer bar below
         var bar = document.createElement('div');
         bar.className = 'log-activity-bar';
-        content.appendChild(bar);
+        contentEl.appendChild(bar);
 
-        if (phaseCallback) phaseCallback('running');
+        if (tab.phaseCallback) tab.phaseCallback('running');
 
       } else if (data.type === 'error') {
-        setDrawerStatus('failed', 'error');
+        tab.statusDot = 'failed';
+        tab.statusText = 'error';
+        updateTabHeaderAndDot(tab);
+        renderTabs();
         var errEl = document.createElement('div');
         errEl.className = 'log-line';
         errEl.style.color = '#f85149';
         errEl.textContent = data.message || 'stream error';
-        content.appendChild(errEl);
-        logsEventSource.close();
+        contentEl.appendChild(errEl);
+        es.close();
+        tab.eventSource = null;
 
       } else if (data.type === 'done') {
-        // Remove shimmer + deactivate last phase
-        var lastBar = content.querySelector('.log-activity-bar');
+        var lastBar = contentEl.querySelector('.log-activity-bar');
         if (lastBar) lastBar.remove();
-        var lastActive = content.querySelector('.log-phase.active');
+        var lastActive = contentEl.querySelector('.log-phase.active');
         if (lastActive) lastActive.className = 'log-phase';
 
         var summary = document.createElement('div');
         if (data.result === 'timeout') {
-          // Stream expired but backup is still running — don't show "Backup failed"
-          setDrawerStatus('', 'stream closed');
+          tab.statusDot = '';
+          tab.statusText = 'stream closed';
+          updateTabHeaderAndDot(tab);
+          renderTabs();
           summary.className = 'log-summary';
           summary.innerHTML = '<div class="log-summary-title">Log stream closed</div>'
             + '<div class="log-summary-grid">'
             + '<span class="summary-key">Status</span><span class="summary-val">Backup still running</span>'
             + '</div>';
-          content.appendChild(summary);
-          logsEventSource.close();
-          // Do not call phaseCallback — active-run state stays until polling detects completion
+          contentEl.appendChild(summary);
+          es.close();
+          tab.eventSource = null;
         } else {
           var isSuccess = data.result === 'success';
-          setDrawerStatus(isSuccess ? 'done' : 'failed', isSuccess ? 'completed' : 'failed');
+          tab.statusDot = isSuccess ? 'done' : 'failed';
+          tab.statusText = isSuccess ? 'completed' : 'failed';
+          updateTabHeaderAndDot(tab);
+          renderTabs();
           summary.className = 'log-summary' + (isSuccess ? '' : ' failed');
           var dur = durationStr(data.startTime, data.completionTime);
           var snapShort = data.snapshotId ? data.snapshotId.substring(0, 8) : null;
@@ -1468,65 +1647,146 @@
             + (destination ? '<span class="summary-key">Destination</span><span class="summary-val">' + escapeHtml(destination) + '</span>' : '')
             + (data.message ? '<span class="summary-key">Message</span><span class="summary-val">' + escapeHtml(data.message) + '</span>' : '')
             + '</div>';
-          content.appendChild(summary);
-          logsEventSource.close();
-          if (phaseCallback) phaseCallback('done');
+          contentEl.appendChild(summary);
+          es.close();
+          tab.eventSource = null;
+          if (tab.phaseCallback) tab.phaseCallback('done');
         }
       }
 
-      content.scrollTop = content.scrollHeight;
+      contentEl.scrollTop = contentEl.scrollHeight;
     };
 
-    logsEventSource.onerror = function() {
-      setDrawerStatus('', 'disconnected');
-      logsEventSource.close();
+    es.onerror = function() {
+      tab.statusDot = '';
+      tab.statusText = 'disconnected';
+      updateTabHeaderAndDot(tab);
+      renderTabs();
+      es.close();
+      tab.eventSource = null;
     };
   }
 
   function openLogs(namespace, name, since) {
-    if (logsEventSource) logsEventSource.close();
-    const drawer = document.getElementById('log-drawer');
-    drawer.style.display = 'flex';
-    document.getElementById('log-drawer-title').textContent = namespace + '/' + name;
-    document.getElementById('log-drawer-status').textContent = 'connecting…';
-    document.getElementById('log-content').innerHTML = '';
+    var tabId = 'legacy:' + namespace + '/' + name;
+    var existingTab = logTabs.find(function(t) { return t.id === tabId; });
 
-    document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
-    const activeBtn = document.querySelector('.btn-logs[data-ns="' + namespace + '"][data-nm="' + name + '"]');
-    if (activeBtn) activeBtn.classList.add('active');
+    if (existingTab) {
+      activateTab(tabId);
+      return;
+    }
+
+    var drawer = document.getElementById('log-drawer');
+    drawer.style.display = 'flex';
+
+    var container = document.getElementById('log-content-container');
+    var contentEl = document.createElement('div');
+    contentEl.className = 'log-content';
+    contentEl.id = 'log-content-' + tabId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    contentEl.style.display = 'none';
+    container.appendChild(contentEl);
+
+    var tab = {
+      id: tabId,
+      namespace: namespace,
+      targetName: name,
+      isRunLog: false,
+      title: namespace + '/' + name,
+      eventSource: null,
+      statusDot: '',
+      statusText: 'connecting…',
+      recentRuns: null,
+      phaseCallback: null,
+      contentEl: contentEl
+    };
+    logTabs.push(tab);
+
+    activateTab(tabId);
 
     var url = '/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/logs';
     if (since) url += '?since=' + encodeURIComponent(since);
-    logsEventSource = new EventSource(url);
-    logsEventSource.onopen = function() {
-      document.getElementById('log-drawer-status').textContent = 'live';
+    var es = new EventSource(url);
+    tab.eventSource = es;
+
+    es.onopen = function() {
+      tab.statusDot = 'live';
+      tab.statusText = 'live';
+      updateTabHeaderAndDot(tab);
+      renderTabs();
     };
-    logsEventSource.onmessage = function(e) {
+
+    es.onmessage = function(e) {
       var data = JSON.parse(e.data);
-      var content = document.getElementById('log-content');
       if (data.type === 'phase') {
         var t = data.time ? new Date(data.time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false}) : '';
-        content.innerHTML += '<div class="log-phase"><span class="phase-time">' + escapeHtml(t) + '</span>'
+        contentEl.innerHTML += '<div class="log-phase"><span class="phase-time">' + escapeHtml(t) + '</span>'
           + '<span class="phase-name">' + escapeHtml(data.phase) + '</span>'
           + '<span>' + escapeHtml(data.message) + '</span></div>';
       } else if (data.type === 'log') {
-        content.innerHTML += '<div class="log-line">' + escapeHtml(data.line) + '</div>';
+        contentEl.innerHTML += '<div class="log-line">' + escapeHtml(data.line) + '</div>';
       } else if (data.type === 'done') {
         var cls = data.result === 'failed' ? 'log-done failed' : 'log-done';
-        content.innerHTML += '<div class="' + cls + '">— ' + escapeHtml(data.result || 'done') + ' —</div>';
-        document.getElementById('log-drawer-status').textContent = data.result || 'done';
-        logsEventSource.close();
+        contentEl.innerHTML += '<div class="' + cls + '">— ' + escapeHtml(data.result || 'done') + ' —</div>';
+        tab.statusDot = data.result === 'failed' ? 'failed' : 'done';
+        tab.statusText = data.result || 'done';
+        updateTabHeaderAndDot(tab);
+        renderTabs();
+        es.close();
+        tab.eventSource = null;
       }
-      content.scrollTop = content.scrollHeight;
+      contentEl.scrollTop = contentEl.scrollHeight;
     };
-    logsEventSource.onerror = function() {
-      document.getElementById('log-drawer-status').textContent = 'disconnected';
-      logsEventSource.close();
+
+    es.onerror = function() {
+      tab.statusDot = '';
+      tab.statusText = 'disconnected';
+      updateTabHeaderAndDot(tab);
+      renderTabs();
+      es.close();
+      tab.eventSource = null;
     };
   }
 
+  function closeTab(tabId) {
+    var index = logTabs.findIndex(function(t) { return t.id === tabId; });
+    if (index === -1) return;
+
+    var tab = logTabs[index];
+    if (tab.eventSource) {
+      tab.eventSource.close();
+      tab.eventSource = null;
+    }
+    if (tab.contentEl) {
+      tab.contentEl.remove();
+    }
+
+    logTabs.splice(index, 1);
+
+    if (logTabs.length === 0) {
+      activeTabId = null;
+      document.getElementById('log-drawer').style.display = 'none';
+      document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
+    } else {
+      var nextTab = logTabs[Math.min(index, logTabs.length - 1)];
+      activateTab(nextTab.id);
+    }
+  }
+
   function closeLogs() {
-    if (logsEventSource) { logsEventSource.close(); logsEventSource = null; }
+    if (activeTabId) {
+      closeTab(activeTabId);
+    } else {
+      closeAllLogs();
+    }
+  }
+
+  function closeAllLogs() {
+    logTabs.forEach(function(tab) {
+      if (tab.eventSource) tab.eventSource.close();
+      if (tab.contentEl) tab.contentEl.remove();
+    });
+    logTabs = [];
+    activeTabId = null;
     document.getElementById('log-drawer').style.display = 'none';
     document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
   }
