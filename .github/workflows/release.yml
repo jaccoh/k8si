@@ -30,7 +30,7 @@ jobs:
           echo "minor=${TAG%.*}" >> "$GITHUB_OUTPUT"   # v1.2
           echo "major=${TAG%%.*}" >> "$GITHUB_OUTPUT"  # v1
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/arm64,linux/amd64
