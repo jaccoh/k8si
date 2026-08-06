@@ -249,6 +249,29 @@ class TestGetPvcInfoSync:
             _, storage, _ = snap_mod._get_pvc_info_sync("my-pvc", "my-snap", "default")
         assert storage == "314572800"
 
+    def test_respects_snapshot_restore_size_as_quantity_string(self):
+        """LINSTOR CSI reports restoreSize as a k8s quantity string (e.g. '300Mi'),
+        not a plain byte count -- the previous isdigit() gate silently dropped
+        these and fell back to the source PVC's original request, causing the
+        ephemeral restore PVC to be undersized and rejected by the provisioner.
+        """
+        pvc = MagicMock()
+        pvc.spec.access_modes = ["ReadWriteOnce"]
+        pvc.spec.resources.requests = {"storage": "128Mi"}
+        pvc.spec.storage_class_name = "linstor-worker-local"
+        mock_v1 = MagicMock()
+        mock_v1.read_namespaced_persistent_volume_claim.return_value = pvc
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object.return_value = {
+            "status": {"restoreSize": "300Mi"}
+        }
+        with (
+            patch("k8si.operator.snapshot.kubernetes.client.CoreV1Api", return_value=mock_v1),
+            patch(_CUSTOM_API, return_value=mock_custom),
+        ):
+            _, storage, _ = snap_mod._get_pvc_info_sync("my-pvc", "my-snap", "default")
+        assert storage == "300Mi"
+
 
 class TestCreateVolumeSnapshotSync:
     def test_calls_custom_api_with_body(self):
