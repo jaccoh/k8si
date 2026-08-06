@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from e2e.conftest import _pick_storage_class
+from e2e.conftest import _mariadb_healthcheck_command, _pick_storage_class
 
 
 def _sc(name, annotations=None):
@@ -36,3 +36,14 @@ def test_pick_storage_class_falls_back_to_replicated_if_no_other_option():
 
 def test_pick_storage_class_empty_returns_none():
     assert _pick_storage_class([]) is None
+
+
+def test_mariadb_healthcheck_command_puts_su_mysql_first():
+    # healthcheck.sh docs: --su-mysql re-execs the script as the mysql unix
+    # user and "disregards previous options set, so should usually be the
+    # first option" -- if it isn't first, --connect runs as the wrong user
+    # and fails before --su-mysql ever takes effect.
+    command = _mariadb_healthcheck_command()
+    assert command[0] == "healthcheck.sh"
+    assert command[1] == "--su-mysql"
+    assert set(command[2:]) == {"--connect", "--innodb_initialized"}
