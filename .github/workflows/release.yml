@@ -41,7 +41,7 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.major }}
             ghcr.io/${{ github.repository }}:latest
       - name: Build and push k8si-ui image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: k8si/ui
           file: k8si/ui/Dockerfile
