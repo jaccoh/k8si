@@ -21,23 +21,63 @@ _POSTGRES_PASSWORD = "e2etest"
 _POSTGRES_DB = "testdb"
 
 
-def _detect_environment() -> tuple[str, str]:
-    """Detect cluster nodes and return (node_name, storage_class_name)."""
-    try:
-        import kubernetes.client
-        import kubernetes.config
+def _pick_storage_class(storage_classes: list) -> str | None:
+    """Heuristically pick a storageclass for ephemeral test PVCs.
 
-        try:
-            kubernetes.config.load_incluster_config()
-        except kubernetes.config.ConfigException:
-            kubernetes.config.load_kube_config()
-        v1 = kubernetes.client.CoreV1Api()
-        nodes = [n.metadata.name for n in v1.list_node().items]
-        if "orbstack" in nodes:
-            return "orbstack", "local-path"
-    except Exception:
-        pass
-    return "hoeve-worker01", "openebs-lvm-worker-thin"
+    Prefers the cluster default; otherwise a non-replicated, non-SMB class
+    (cheapest/fastest for throwaway e2e data), falling back to whatever
+    exists. Returns None if the cluster has no storageclasses at all.
+    """
+    if not storage_classes:
+        return None
+    for sc in storage_classes:
+        annotations = sc.metadata.annotations or {}
+        if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
+            return sc.metadata.name
+    candidates = [sc.metadata.name for sc in storage_classes if "smb" not in sc.metadata.name]
+    for name in candidates:
+        if "replicated" not in name:
+            return name
+    if candidates:
+        return candidates[0]
+    return storage_classes[0].metadata.name
+
+
+def _detect_environment() -> tuple[str, str]:
+    """Detect cluster nodes and return (node_name, storage_class_name).
+
+    Override via E2E_NODE_NAME / E2E_STORAGE_CLASS env vars — always set
+    both explicitly in CI. Storageclass names are cluster-specific and
+    change over time (e.g. an openebs -> linstor migration broke a prior
+    hardcoded name here); auto-detection is a local-dev convenience only,
+    never a substitute for pinning the CI environment.
+    """
+    env_node = os.environ.get("E2E_NODE_NAME")
+    env_sc = os.environ.get("E2E_STORAGE_CLASS")
+    if env_node and env_sc:
+        return env_node, env_sc
+
+    import kubernetes.client
+    import kubernetes.config
+
+    try:
+        kubernetes.config.load_incluster_config()
+    except kubernetes.config.ConfigException:
+        kubernetes.config.load_kube_config()
+    v1 = kubernetes.client.CoreV1Api()
+    nodes = [n.metadata.name for n in v1.list_node().items]
+    if "orbstack" in nodes:
+        return env_node or "orbstack", env_sc or "local-path"
+
+    storage_classes = kubernetes.client.StorageV1Api().list_storage_class().items
+    detected_sc = _pick_storage_class(storage_classes)
+    if not nodes or not detected_sc:
+        raise RuntimeError(
+            "Could not auto-detect e2e node/storageclass "
+            "(no nodes or no storageclasses found) — "
+            "set E2E_NODE_NAME and E2E_STORAGE_CLASS explicitly."
+        )
+    return env_node or nodes[0], env_sc or detected_sc
 
 
 NODE_NAME, STORAGE_CLASS = _detect_environment()
