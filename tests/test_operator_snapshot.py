@@ -262,9 +262,7 @@ class TestGetPvcInfoSync:
         mock_v1 = MagicMock()
         mock_v1.read_namespaced_persistent_volume_claim.return_value = pvc
         mock_custom = MagicMock()
-        mock_custom.get_namespaced_custom_object.return_value = {
-            "status": {"restoreSize": "300Mi"}
-        }
+        mock_custom.get_namespaced_custom_object.return_value = {"status": {"restoreSize": "300Mi"}}
         with (
             patch("k8si.operator.snapshot.kubernetes.client.CoreV1Api", return_value=mock_v1),
             patch(_CUSTOM_API, return_value=mock_custom),
