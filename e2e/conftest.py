@@ -212,15 +212,17 @@ def mariadb_env(ns):
                                     "healthcheck.sh",
                                     "--connect",
                                     "--innodb_initialized",
+                                    "--su-mysql",
                                 ],
                             },
                             "initialDelaySeconds": 10,
                             "periodSeconds": 5,
+                            "timeoutSeconds": 10,
                             "failureThreshold": 24,
                         },
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
-                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                            "limits": {"cpu": "500m", "memory": "768Mi"},
                         },
                     }
                 ],
@@ -364,7 +366,7 @@ def postgres_env(ns):
                         },
                         "resources": {
                             "requests": {"cpu": "100m", "memory": "256Mi"},
-                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                            "limits": {"cpu": "500m", "memory": "768Mi"},
                         },
                     }
                 ],
