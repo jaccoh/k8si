@@ -1408,11 +1408,16 @@
   function openBackupLogs(ns, nm) {
     var historicalRuns = getHistoricalRuns(ns, nm);
     var latestRun = historicalRuns[0];
-    if (!latestRun) {
-      openLogs(ns, nm);
+    if (latestRun) {
+      openRunLogs(ns, latestRun.name, historicalRuns, null);
       return;
     }
-    openRunLogs(ns, latestRun.name, historicalRuns, null);
+    var backup = allBackups.find(function(b) { return b.namespace === ns && b.name === nm; });
+    if (backup && backup.lastRunRef) {
+      openRunLogs(ns, backup.lastRunRef, historicalRuns, null);
+      return;
+    }
+    openLogs(ns, nm);
   }
 
   function onRunPickerChange(sel) {
