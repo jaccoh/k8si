@@ -21,32 +21,21 @@ _POSTGRES_PASSWORD = "e2etest"
 _POSTGRES_DB = "testdb"
 
 
-def _mariadb_healthcheck_command() -> list[str]:
-    """healthcheck.sh command for MariaDB readinessProbe.
-
-    --su-mysql re-execs the script as the mysql unix user and must come
-    FIRST -- per the script's own docs it "disregards previous options
-    set". If it isn't first, --connect runs as the wrong user and fails
-    before --su-mysql ever takes effect.
-    """
-    return ["healthcheck.sh", "--su-mysql", "--connect", "--innodb_initialized"]
-
-
 def _mariadb_readiness_probe(*, initial_delay_seconds: int = 10) -> dict:
     """readinessProbe dict for the MariaDB pod.
 
-    timeoutSeconds=10 was too tight under CI runner CPU limits: healthcheck.sh
-    consistently timed out (23/23 attempts in run 1385), so the probe never
-    once succeeded within the 300s wait. periodSeconds matches timeoutSeconds
-    so kubelet never queues up overlapping execs on an already-slow probe.
+    Was an exec healthcheck.sh probe, but kubelet's exec-probe timeoutSeconds
+    doesn't actually kill the in-container process on timeout -- every timed
+    out attempt left an orphaned healthcheck.sh spinning, and orphans piled
+    up run over run until they saturated the container's cpu limit and the
+    probe never succeeded (run 1444: 3+ zombies at ~33% cpu each, mariadbd
+    itself idle at 0.1%). A plain TCP check has no exec, so no zombies.
     """
     return {
-        "exec": {
-            "command": _mariadb_healthcheck_command(),
-        },
+        "tcpSocket": {"port": 3306},
         "initialDelaySeconds": initial_delay_seconds,
-        "periodSeconds": 30,
-        "timeoutSeconds": 30,
+        "periodSeconds": 5,
+        "timeoutSeconds": 5,
         "failureThreshold": 24,
     }
 
