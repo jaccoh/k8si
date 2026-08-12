@@ -23,14 +23,35 @@ def test_style_block_braces_are_balanced():
     )
 
 
-def test_open_backup_logs_falls_back_to_last_run_ref():
+def _extract_function(name: str) -> str:
     html = DASHBOARD_HTML.read_text()
-    match = re.search(r"function openBackupLogs\(ns, nm\) \{(.*?)\n  \}", html, re.DOTALL)
-    assert match, "openBackupLogs function not found"
-    body = match.group(1)
-    assert "lastRunRef" in body, (
+    match = re.search(r"function " + re.escape(name) + r"\([^)]*\) \{(.*?)\n  \}", html, re.DOTALL)
+    assert match, f"{name} function not found"
+    return match.group(1)
+
+
+def test_open_backup_logs_falls_back_to_last_run_ref():
+    body = _extract_function("openBackupLogs")
+
+    last_run_ref_pos = body.find("backup.lastRunRef")
+    open_logs_pos = body.find("openLogs(ns, nm)")
+    assert last_run_ref_pos != -1, (
         "openBackupLogs must fall back to backup.lastRunRef when recentRuns is empty, same "
         "as buildStatusBadge does -- otherwise the Logs button silently degrades to the legacy "
         "per-backup log stream on any backup whose recentRuns array isn't populated, while the "
         "status-icon click (which uses lastRunRef directly) keeps working. Inconsistent per-row."
+    )
+    assert open_logs_pos != -1, (
+        "openBackupLogs must still fall back to the legacy openLogs() when neither recentRuns "
+        "nor lastRunRef are available"
+    )
+    assert last_run_ref_pos < open_logs_pos, (
+        "the lastRunRef fallback must be checked BEFORE giving up and calling openLogs() -- "
+        "otherwise every backup without a populated recentRuns array falls straight to the "
+        "legacy per-backup stream even when lastRunRef is available"
+    )
+    assert "openRunLogs(ns, backup.lastRunRef" in body, (
+        "the lastRunRef fallback must route through openRunLogs (the run-specific tab), not "
+        "the legacy openLogs(), so it lands in the same tab id scheme as the status-icon click "
+        "and correctly shows as a run tab rather than a legacy per-backup tab"
     )
