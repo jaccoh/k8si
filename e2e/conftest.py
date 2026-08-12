@@ -198,7 +198,10 @@ def _dump_pod_diagnostics(namespace: str) -> None:
         log.info("--- pod diagnostics: %s/%s ---", namespace, name)
         describe = subprocess.run(
             ["kubectl", "describe", "pod", name, "-n", namespace],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
         log.info("describe %s:\n%s", name, describe.stdout or describe.stderr)
 
@@ -207,7 +210,10 @@ def _dump_pod_diagnostics(namespace: str) -> None:
         for container in containers:
             logs = subprocess.run(
                 ["kubectl", "logs", name, "-n", namespace, "-c", container, "--tail=100"],
-                capture_output=True, text=True, timeout=30, check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
             )
             log.info("logs %s/%s:\n%s", name, container, logs.stdout or logs.stderr)
 
