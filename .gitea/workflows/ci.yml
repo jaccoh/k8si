@@ -84,7 +84,7 @@ jobs:
             template:
               spec:
                 nodeSelector:
-                  kubernetes.io/hostname: hoeve-worker01
+                  kubernetes.io/hostname: hoeve-stor01
                 restartPolicy: Never
                 containers:
                 - name: buildah
@@ -153,7 +153,7 @@ jobs:
             template:
               spec:
                 nodeSelector:
-                  kubernetes.io/hostname: hoeve-worker01
+                  kubernetes.io/hostname: hoeve-stor01
                 restartPolicy: Never
                 containers:
                 - name: buildah
@@ -223,7 +223,7 @@ jobs:
             template:
               spec:
                 nodeSelector:
-                  kubernetes.io/hostname: hoeve-worker01
+                  kubernetes.io/hostname: hoeve-stor01
                 restartPolicy: Never
                 containers:
                 - name: buildah
@@ -293,7 +293,7 @@ jobs:
             template:
               spec:
                 nodeSelector:
-                  kubernetes.io/hostname: hoeve-worker01
+                  kubernetes.io/hostname: hoeve-stor01
                 restartPolicy: Never
                 containers:
                 - name: buildah
@@ -364,7 +364,7 @@ jobs:
             template:
               spec:
                 nodeSelector:
-                  kubernetes.io/hostname: hoeve-worker01
+                  kubernetes.io/hostname: hoeve-stor01
                 restartPolicy: Never
                 containers:
                 - name: buildah
