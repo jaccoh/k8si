@@ -70,7 +70,7 @@ jobs:
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
-          JOB="buildah-arm64-${SHORT}"
+          JOB="buildah-arm64-${SHORT}-${{ gitea.run_id }}"
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -125,7 +125,7 @@ jobs:
         if: always()
         run: |
           SHA="${{ github.sha }}"
-          kubectl -n gitea delete job "buildah-arm64-${SHA::8}" --ignore-not-found
+          kubectl -n gitea delete job "buildah-arm64-${SHA::8}-${{ gitea.run_id }}" --ignore-not-found
 
   docker-build-amd64:
     needs: [test]
@@ -139,7 +139,7 @@ jobs:
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
-          JOB="buildah-amd64-${SHORT}"
+          JOB="buildah-amd64-${SHORT}-${{ gitea.run_id }}"
 
           kubectl -n gitea apply -f - <<YAML
           apiVersion: batch/v1
@@ -194,7 +194,7 @@ jobs:
         if: always()
         run: |
           SHA="${{ github.sha }}"
-          kubectl -n gitea delete job "buildah-amd64-${SHA::8}" --ignore-not-found
+          kubectl -n gitea delete job "buildah-amd64-${SHA::8}-${{ gitea.run_id }}" --ignore-not-found
 
   docker-build-ui-arm64:
     needs: [test]
@@ -208,7 +208,7 @@ jobs:
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
-          JOB="buildah-ui-arm64-${SHORT}"
+          JOB="buildah-ui-arm64-${SHORT}-${{ gitea.run_id }}"
           VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
 
           kubectl -n gitea apply -f - <<YAML
@@ -264,7 +264,7 @@ jobs:
         if: always()
         run: |
           SHA="${{ github.sha }}"
-          kubectl -n gitea delete job "buildah-ui-arm64-${SHA::8}" --ignore-not-found
+          kubectl -n gitea delete job "buildah-ui-arm64-${SHA::8}-${{ gitea.run_id }}" --ignore-not-found
 
   docker-build-ui-amd64:
     needs: [test]
@@ -278,7 +278,7 @@ jobs:
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
-          JOB="buildah-ui-amd64-${SHORT}"
+          JOB="buildah-ui-amd64-${SHORT}-${{ gitea.run_id }}"
           VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
 
           kubectl -n gitea apply -f - <<YAML
@@ -334,7 +334,7 @@ jobs:
         if: always()
         run: |
           SHA="${{ github.sha }}"
-          kubectl -n gitea delete job "buildah-ui-amd64-${SHA::8}" --ignore-not-found
+          kubectl -n gitea delete job "buildah-ui-amd64-${SHA::8}-${{ gitea.run_id }}" --ignore-not-found
 
   docker-manifest:
     needs: [docker-build-arm64, docker-build-amd64, docker-build-ui-arm64, docker-build-ui-amd64]
@@ -349,7 +349,7 @@ jobs:
         run: |
           SHA="${{ github.sha }}"
           SHORT="${SHA::8}"
-          JOB="buildah-manifest-${SHORT}"
+          JOB="buildah-manifest-${SHORT}-${{ gitea.run_id }}"
           VERSION=$(grep '^version' pyproject.toml | sed 's/version = "//;s/"//')
 
           kubectl -n gitea apply -f - <<YAML
@@ -416,7 +416,7 @@ jobs:
         if: always()
         run: |
           SHA="${{ github.sha }}"
-          kubectl -n gitea delete job "buildah-manifest-${SHA::8}" --ignore-not-found
+          kubectl -n gitea delete job "buildah-manifest-${SHA::8}-${{ gitea.run_id }}" --ignore-not-found
 
   e2e:
     needs: [docker-manifest]
