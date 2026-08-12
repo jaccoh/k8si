@@ -9,7 +9,7 @@ import uuid
 
 import kubernetes.client
 
-from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS
+from e2e.conftest import NODE_NAME, SNAPSHOT_CLASS, STORAGE_CLASS
 from e2e.helpers import delete_pvc_with_cleanup, wait_pod_deleted, wait_pod_phase
 from k8si.operator.workflow import run_backup
 
@@ -37,7 +37,7 @@ def test_sqlite_backup_and_restore(ns, repo_pvc, data_pvc, k8si_image):
                 "labels": {"app": "e2e-writer"},
             },
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": data_pvc}},
@@ -133,7 +133,7 @@ def test_sqlite_backup_and_restore(ns, repo_pvc, data_pvc, k8si_image):
             "kind": "Pod",
             "metadata": {"name": verifier_name, "namespace": ns},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": data_pvc}},

@@ -8,7 +8,7 @@ import uuid
 
 import kubernetes.client
 
-from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS, _mariadb_readiness_probe
+from e2e.conftest import NODE_NAME, SNAPSHOT_CLASS, STORAGE_CLASS, _mariadb_readiness_probe
 from e2e.helpers import (
     delete_pvc_with_cleanup,
     wait_init_container_failed,
@@ -132,7 +132,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
             "kind": "Pod",
             "metadata": {"name": verifier_name, "namespace": ns},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
@@ -248,7 +248,7 @@ def test_mariadb_restore_required_fails_without_backup(ns, k8si_image):
             "kind": "Pod",
             "metadata": {"name": pod_name, "namespace": ns},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},

@@ -426,7 +426,7 @@ jobs:
       IMAGE_TAG: ${{ github.sha }}
       K8SI_IMAGE: docker.hoeve.nu/k8si:${{ github.sha }}
       PYTHONUNBUFFERED: "1"
-      E2E_NODE_NAME: hoeve-worker01
+      E2E_NODE_NAME: hoeve-stor01
       E2E_STORAGE_CLASS: linstor-worker-local
       E2E_SNAPSHOT_CLASS: linstor-snapclass
     steps:
