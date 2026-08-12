@@ -5,7 +5,7 @@ import logging
 
 import kubernetes.client
 
-from e2e.conftest import STORAGE_CLASS
+from e2e.conftest import NODE_NAME, STORAGE_CLASS
 from e2e.helpers import wait_init_container_failed, wait_pod_phase
 
 log = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def _make_restore_pod(
         "kind": "Pod",
         "metadata": {"name": pod_name, "namespace": ns},
         "spec": {
-            "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+            "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
             "restartPolicy": "Never",
             "volumes": [
                 {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
@@ -150,7 +150,7 @@ def test_restore_skips_when_sentinel_present(ns, k8si_image):
             "kind": "Pod",
             "metadata": {"name": setup_name, "namespace": ns},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
                 "containers": [
@@ -208,7 +208,7 @@ def test_restore_skips_with_no_restore_marker(ns, k8si_image):
             "kind": "Pod",
             "metadata": {"name": setup_name, "namespace": ns},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}],
                 "containers": [

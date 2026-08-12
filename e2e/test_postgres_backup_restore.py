@@ -8,7 +8,7 @@ import uuid
 
 import kubernetes.client
 
-from e2e.conftest import SNAPSHOT_CLASS, STORAGE_CLASS
+from e2e.conftest import NODE_NAME, SNAPSHOT_CLASS, STORAGE_CLASS
 from e2e.helpers import (
     delete_pvc_with_cleanup,
     wait_pod_condition,
@@ -126,7 +126,7 @@ def test_postgres_backup_and_restore(ns, repo_pvc, postgres_env, k8si_image):
             "kind": "Pod",
             "metadata": {"name": verifier_name, "namespace": ns},
             "spec": {
-                "nodeSelector": {"kubernetes.io/hostname": "hoeve-worker01"},
+                "nodeSelector": {"kubernetes.io/hostname": NODE_NAME},
                 "restartPolicy": "Never",
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
