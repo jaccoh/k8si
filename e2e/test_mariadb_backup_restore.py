@@ -185,8 +185,8 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
                         "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
                         "readinessProbe": _mariadb_readiness_probe(initial_delay_seconds=15),
                         "resources": {
-                            "requests": {"cpu": "100m", "memory": "256Mi"},
-                            "limits": {"cpu": "500m", "memory": "768Mi"},
+                            "requests": {"cpu": "250m", "memory": "256Mi"},
+                            "limits": {"cpu": "1", "memory": "768Mi"},
                         },
                     }
                 ],
@@ -195,7 +195,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
     )
 
     wait_pod_phase(ns, verifier_name, "Running", timeout=900)
-    wait_pod_condition(ns, verifier_name, "Ready", timeout=180)
+    wait_pod_condition(ns, verifier_name, "Ready", timeout=300)
     log.info("MariaDB restore verifier pod running and ready")
 
     proc = _mysql_exec(

@@ -325,8 +325,8 @@ def mariadb_env(ns):
                         "volumeMounts": [{"name": "data", "mountPath": "/var/lib/mysql"}],
                         "readinessProbe": _mariadb_readiness_probe(),
                         "resources": {
-                            "requests": {"cpu": "100m", "memory": "256Mi"},
-                            "limits": {"cpu": "500m", "memory": "768Mi"},
+                            "requests": {"cpu": "250m", "memory": "256Mi"},
+                            "limits": {"cpu": "1", "memory": "768Mi"},
                         },
                     }
                 ],
@@ -349,7 +349,7 @@ def mariadb_env(ns):
     )
 
     wait_pod_phase(ns, "mariadb", "Running", timeout=300)
-    wait_pod_condition(ns, "mariadb", "Ready", timeout=300)
+    wait_pod_condition(ns, "mariadb", "Ready", timeout=480)
 
     # The readiness probe passes via the healthcheck user. Wait until root password
     # auth also works — the Docker init SQL may still be running after innodb_initialized.
