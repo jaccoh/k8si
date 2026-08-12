@@ -162,6 +162,8 @@ def ns():
 
     yield namespace
 
+    _dump_pod_diagnostics(namespace)
+
     log.info("Tearing down namespace %s", namespace)
     try:
         pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
@@ -174,6 +176,40 @@ def ns():
 
     v1.delete_namespace(namespace)
     log.info("Deleted namespace %s", namespace)
+
+
+def _dump_pod_diagnostics(namespace: str) -> None:
+    """Dump pod status/events/logs to CI log before namespace teardown.
+
+    Pods live only a few minutes past test failure before the module-scoped
+    ns fixture deletes the namespace, too short a window to inspect live
+    (see e2e-mariadb-readiness-timeout debugging, 2026-08-12). Dumping here
+    keeps the evidence in the durable CI job log instead.
+    """
+    try:
+        v1 = kubernetes.client.CoreV1Api()
+        pods = v1.list_namespaced_pod(namespace).items
+    except Exception:
+        log.exception("Error listing pods for diagnostics dump in %s", namespace)
+        return
+
+    for pod in pods:
+        name = pod.metadata.name
+        log.info("--- pod diagnostics: %s/%s ---", namespace, name)
+        describe = subprocess.run(
+            ["kubectl", "describe", "pod", name, "-n", namespace],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        log.info("describe %s:\n%s", name, describe.stdout or describe.stderr)
+
+        containers = [c.name for c in (pod.spec.init_containers or [])]
+        containers += [c.name for c in (pod.spec.containers or [])]
+        for container in containers:
+            logs = subprocess.run(
+                ["kubectl", "logs", name, "-n", namespace, "-c", container, "--tail=100"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            log.info("logs %s/%s:\n%s", name, container, logs.stdout or logs.stderr)
 
 
 @pytest.fixture(scope="module")
