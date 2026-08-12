@@ -123,7 +123,7 @@ def _detect_environment() -> tuple[str, str, str]:
             vscs = [v["metadata"]["name"] for v in snaps.get("items", [])]
         except Exception:
             vscs = []
-        detected_vsc = vscs[0] if vscs else "linstor-snapclass"
+        detected_vsc = vscs[0] if vscs else "topolvm-snapclass"
 
     return env_node or nodes[0], env_sc or detected_sc, detected_vsc
 
