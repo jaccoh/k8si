@@ -876,3 +876,42 @@ def test_run_backup_logs_backup_job_started_phase() -> None:
 
     assert "BackupJobStarted" in logged_phases, f"Expected BackupJobStarted, got {logged_phases}"
     assert "BackupJobCompleted" in logged_phases
+
+
+def test_log_phase_offloads_status_patch_via_to_thread() -> None:
+    """_log_phase (and the initial log-clear) must call _write_run_log/_patch_run_status
+    via asyncio.to_thread, never directly on the event loop — a direct call blocks Kopf's
+    asyncio loop (and every other backup's timers/reconciliation) for the full k8s API
+    round-trip, and _log_phase runs ~6x per backup run."""
+    from k8si.operator import workflow
+
+    real_to_thread = asyncio.to_thread
+    to_thread_funcs: list[object] = []
+
+    async def spy_to_thread(func, *args, **kwargs):  # noqa: ANN001,ANN002,ANN003
+        to_thread_funcs.append(func)
+        return await real_to_thread(func, *args, **kwargs)
+
+    spec = {"pvc": "pvc", "resticSecret": "sec", "schedule": "0 2 * * *"}
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
+        patch("k8si.operator.workflow.kopf.event"),
+        patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi"),
+        patch("k8si.operator.workflow.asyncio.to_thread", side_effect=spy_to_thread),
+    ):
+        mock_ctx.return_value = MagicMock()
+        asyncio.run(run_backup("myapp", "default", spec, MagicMock()))
+
+    # Initial log-clear + SnapshotStarted/Created + BackupJobStarted/Completed = 5 patches,
+    # every single one must be routed through asyncio.to_thread.
+    assert workflow._write_run_log in to_thread_funcs, (
+        "_write_run_log must be invoked via asyncio.to_thread, not directly on the event loop"
+    )
+    assert to_thread_funcs.count(workflow._write_run_log) >= 5
