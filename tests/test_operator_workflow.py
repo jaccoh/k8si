@@ -238,6 +238,34 @@ def test_cleanup_orphan_delete_failure_is_logged_not_raised() -> None:
         asyncio.run(_cleanup_orphan_snap_pvcs("x", "default"))  # must not raise
 
 
+def test_cleanup_orphan_snap_pvcs_does_not_match_prefix_collision() -> None:
+    """k8si-snap-app-<ts> must not match a cleanup for backup 'app-db' (and vice versa).
+
+    A plain string prefix check (`name.startswith(f"k8si-snap-{name}-")`) is
+    ambiguous: cleaning up orphans for backup "app" would also match
+    "k8si-snap-app-db-<ts>", which belongs to a different backup named "app-db"
+    and may be actively in use by a concurrently running backup Job.
+    """
+    from k8si.operator.workflow import _cleanup_orphan_snap_pvcs
+
+    own_orphan = MagicMock()
+    own_orphan.metadata.name = "k8si-snap-app-20260601000000"
+    other_backup_pvc = MagicMock()
+    other_backup_pvc.metadata.name = "k8si-snap-app-db-20260601000000"
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_persistent_volume_claim.return_value.items = [
+        own_orphan,
+        other_backup_pvc,
+    ]
+
+    with patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        asyncio.run(_cleanup_orphan_snap_pvcs("app", "default"))
+
+    mock_v1.delete_namespaced_persistent_volume_claim.assert_called_once_with(
+        "k8si-snap-app-20260601000000", "default"
+    )
+
+
 # ── _find_pvc_node_sync ───────────────────────────────────────────────────────
 
 

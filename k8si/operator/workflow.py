@@ -149,14 +149,21 @@ def _emit_event(body: dict[str, Any] | None, type_str: str, reason: str, message
 
 
 async def _cleanup_orphan_snap_pvcs(name: str, namespace: str) -> None:
-    """Delete any leftover k8si-snap-{name}-* PVCs from previous crashed runs."""
-    prefix = f"k8si-snap-{name}-"
+    """Delete any leftover k8si-snap-{name}-<timestamp> PVCs from previous crashed runs.
+
+    Matches the exact naming scheme used when the PVC is created
+    (f"k8si-snap-{name}-{ts}" where ts is a %Y%m%d%H%M%S timestamp), anchored
+    so that e.g. backup "app" never matches PVCs belonging to backup "app-db"
+    (a plain prefix check on "k8si-snap-app-" would incorrectly match
+    "k8si-snap-app-db-<ts>" too).
+    """
+    pattern = re.compile(rf"^k8si-snap-{re.escape(name)}-\d+$")
     v1 = kubernetes.client.CoreV1Api()
 
     def _delete_orphans() -> None:
         pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
         for pvc in pvcs.items:
-            if pvc.metadata.name.startswith(prefix):
+            if pattern.match(pvc.metadata.name):
                 log.warning("Deleting orphaned snapshot PVC %s/%s", namespace, pvc.metadata.name)
                 try:
                     v1.delete_namespaced_persistent_volume_claim(pvc.metadata.name, namespace)
