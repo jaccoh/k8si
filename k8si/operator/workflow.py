@@ -184,18 +184,20 @@ async def run_backup(
     _effective_run_ns = run_ns or namespace
 
     if run_name:
-        _patch_run_status(_effective_run_ns, run_name, {"log": []})
+        await asyncio.to_thread(_patch_run_status, _effective_run_ns, run_name, {"log": []})
     else:
-        _write_run_log(name, namespace, run_log)
+        await asyncio.to_thread(_write_run_log, name, namespace, run_log)
 
-    def _log_phase(phase: str, message: str) -> None:
+    async def _log_phase(phase: str, message: str) -> None:
         run_log.append(
             {"time": datetime.now(tz=UTC).isoformat(), "phase": phase, "message": message}
         )
         if run_name:
-            _patch_run_status(_effective_run_ns, run_name, {"log": run_log})
+            await asyncio.to_thread(
+                _patch_run_status, _effective_run_ns, run_name, {"log": run_log}
+            )
         else:
-            _write_run_log(name, namespace, run_log)
+            await asyncio.to_thread(_write_run_log, name, namespace, run_log)
 
     await _cleanup_orphan_snap_pvcs(name, namespace)
     pvc_name = spec["pvc"]
@@ -218,12 +220,12 @@ async def run_backup(
     if backup_mode == "direct":
         if db_spec:
             _emit_event(body, "Normal", "QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
-            _log_phase("QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
+            await _log_phase("QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
         try:
             async with quiesce.quiesce_context(db_spec, namespace, logger):
                 if hook:
                     _emit_event(body, "Normal", "HookStarted", f"Running pre-snapshot hook: {hook}")
-                    _log_phase("HookStarted", f"Running pre-snapshot hook: {hook}")
+                    await _log_phase("HookStarted", f"Running pre-snapshot hook: {hook}")
                     await _run_hook_job(hook, hook_required, namespace, pvc_name, logger)
 
                 node = await asyncio.to_thread(_find_pvc_node_sync, pvc_name, namespace)
@@ -243,33 +245,33 @@ async def run_backup(
                     job_timeout,
                 )
                 _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
-                _log_phase("BackupJobStarted", f"Starting Job {job_name}")
+                await _log_phase("BackupJobStarted", f"Starting Job {job_name}")
                 raw_logs = await _run_job(job_body, namespace, timeout=job_timeout, logger=logger)
                 _emit_event(body, "Normal", "BackupJobCompleted", f"Job {job_name} completed")
-                _log_phase("BackupJobCompleted", f"Job {job_name} completed")
+                await _log_phase("BackupJobCompleted", f"Job {job_name} completed")
         except Exception as e:
             _emit_event(body, "Warning", "BackupFailed", f"Direct backup failed: {e}")
-            _log_phase("BackupFailed", f"Direct backup failed: {e}")
+            await _log_phase("BackupFailed", f"Direct backup failed: {e}")
             raise
     else:
         if db_spec:
             _emit_event(body, "Normal", "QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
-            _log_phase("QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
+            await _log_phase("QuiesceStarted", f"Quiescing DB type: {db_spec['type']}")
         # Phase 1: quiesce DB, run optional pre-snapshot hook, take snapshot, unquiesce
         try:
             async with quiesce.quiesce_context(db_spec, namespace, logger):
                 if hook:
                     _emit_event(body, "Normal", "HookStarted", f"Running pre-snapshot hook: {hook}")
-                    _log_phase("HookStarted", f"Running pre-snapshot hook: {hook}")
+                    await _log_phase("HookStarted", f"Running pre-snapshot hook: {hook}")
                     await _run_hook_job(hook, hook_required, namespace, pvc_name, logger)
                 _emit_event(body, "Normal", "SnapshotStarted", f"Creating snapshot {snap_name}")
-                _log_phase("SnapshotStarted", f"Creating snapshot {snap_name}")
+                await _log_phase("SnapshotStarted", f"Creating snapshot {snap_name}")
                 await snapshot.create_snapshot(snap_name, namespace, pvc_name, snapshot_class)
                 _emit_event(body, "Normal", "SnapshotCreated", f"Snapshot {snap_name} ready")
-                _log_phase("SnapshotCreated", f"Snapshot {snap_name} ready")
+                await _log_phase("SnapshotCreated", f"Snapshot {snap_name} ready")
         except Exception as e:
             _emit_event(body, "Warning", "SnapshotFailed", f"Snapshot phase failed: {e}")
-            _log_phase("SnapshotFailed", f"Snapshot phase failed: {e}")
+            await _log_phase("SnapshotFailed", f"Snapshot phase failed: {e}")
             raise
 
         # Phase 2: create ephemeral PVC from snapshot, run backup job, clean up
@@ -293,13 +295,13 @@ async def run_backup(
                 job_timeout,
             )
             _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
-            _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
+            await _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
             raw_logs = await _run_job(job_body, namespace, timeout=job_timeout, logger=logger)
             _emit_event(body, "Normal", "BackupJobCompleted", f"Backup Job {job_name} completed")
-            _log_phase("BackupJobCompleted", f"Backup Job {job_name} completed")
+            await _log_phase("BackupJobCompleted", f"Backup Job {job_name} completed")
         except Exception as e:
             _emit_event(body, "Warning", "BackupFailed", f"Backup phase failed: {e}")
-            _log_phase("BackupFailed", f"Backup phase failed: {e}")
+            await _log_phase("BackupFailed", f"Backup phase failed: {e}")
             raise
         finally:
             await snapshot.delete_snapshot_and_pvc(
