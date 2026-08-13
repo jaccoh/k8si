@@ -77,7 +77,7 @@ def test_escape_html_escapes_single_quotes():
     body = _extract_function("escapeHtml")
     assert re.search(r"\.replace\(/'/g,\s*['\"]&#39;['\"]\)", body), (
         "escapeHtml must escape single quotes (e.g. to &#39;) -- without this, "
-        "a CRD-sourced run/backup name containing \"'\" breaks out of the "
+        'a CRD-sourced run/backup name containing "\'" breaks out of the '
         "single-quoted JS string literal inside onclick=\"...('...')\" handlers "
         "built by buildStatusBadge/buildSparkline/buildRow, enabling script "
         "injection (e.g. name = x');alert(document.cookie);// )"

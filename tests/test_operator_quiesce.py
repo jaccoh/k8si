@@ -391,9 +391,9 @@ def test_sqlite_checkpoint_fallback_avoids_shell_interpolation():
 
     # The (malicious) db_path must still reach sqlite3, but only as its own
     # argv element -- never concatenated into a larger shell string.
-    assert any(
-        isinstance(cmd, list) and malicious_path in cmd for cmd in captured_commands
-    ), f"expected db_path to appear as a standalone argv element, got: {captured_commands!r}"
+    assert any(isinstance(cmd, list) and malicious_path in cmd for cmd in captured_commands), (
+        f"expected db_path to appear as a standalone argv element, got: {captured_commands!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
