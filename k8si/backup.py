@@ -60,7 +60,7 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
                 backend.backup(source=config.data_path, tags=config.backup_tags)
             except BackupError as init_err:
                 log.error("Backup failed after init: %s", init_err.stderr)
-                return
+                raise
         elif "lock" in e.stderr.lower() or "locked" in e.stderr.lower():
             log.warning("Repository is locked, attempting automated unlock and retry")
             try:
@@ -68,10 +68,10 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
                 backend.backup(source=config.data_path, tags=config.backup_tags)
             except BackupError as retry_err:
                 log.error("Backup failed after unlock retry: %s", retry_err.stderr)
-                return
+                raise
         else:
-            log.error("Backup failed (will retry next cycle): %s", e.stderr)
-            return
+            log.error("Backup failed: %s", e.stderr)
+            raise
 
     try:
         backend.forget(
@@ -93,10 +93,10 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
                 )
             except BackupError as retry_err:
                 log.error("Forget failed after unlock retry: %s", retry_err.stderr)
-                return
+                raise
         else:
             log.error("Forget/prune failed: %s", e.stderr)
-            return
+            raise
 
     if config.run_check:
         try:

@@ -33,11 +33,18 @@ def test_successful_cycle_writes_timestamp(tmp_path: Path) -> None:
     backend.forget.assert_called_once_with(daily=7, weekly=4, monthly=3, prune=True)
 
 
-def test_backup_error_does_not_raise(tmp_path: Path) -> None:
+def test_unrecoverable_backup_error_propagates(tmp_path: Path) -> None:
+    """An unrecoverable backend failure must propagate out of _run_cycle so the
+    container exits non-zero instead of silently reporting success (the Job's
+    exit status is what the operator uses to set lastBackupResult)."""
+    import pytest
+
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.backup.side_effect = BackupError("failed", 1, "connection refused")
-    _run_cycle(config, backend)  # must not raise — sidecar keeps running
+    with pytest.raises(BackupError):
+        _run_cycle(config, backend)
+    assert not (tmp_path / LAST_BACKUP_FILE).exists()
 
 
 def test_run_once_runs_single_cycle(tmp_path: Path) -> None:
@@ -85,12 +92,20 @@ def test_auto_init_on_missing_repo(tmp_path: Path) -> None:
     assert (tmp_path / LAST_BACKUP_FILE).exists()
 
 
-def test_forget_error_does_not_raise(tmp_path: Path) -> None:
-    """Forget/prune failure is logged but doesn't crash the sidecar."""
+def test_forget_error_propagates(tmp_path: Path) -> None:
+    """Forget/prune failure is a terminal failure: it must propagate so the
+    container exits non-zero rather than reporting a false success.
+
+    (Previously this test asserted the buggy swallow-and-return behavior —
+    updated to match the fix in _run_cycle.)
+    """
+    import pytest
+
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.forget.side_effect = BackupError("prune failed", 1, "other error")
-    _run_cycle(config, backend)  # must not raise
+    with pytest.raises(BackupError):
+        _run_cycle(config, backend)
     assert not (tmp_path / LAST_BACKUP_FILE).exists()
 
 
@@ -184,40 +199,60 @@ def test_check_error_does_not_crash_sidecar(tmp_path: Path) -> None:
 # ── additional _run_cycle edge cases ──────────────────────────────────────────
 
 
-def test_backup_fails_after_init_is_logged_and_returns(tmp_path: Path) -> None:
-    """When backup still fails after init, _run_cycle logs error and returns without crash."""
+def test_backup_fails_after_init_is_logged_and_raises(tmp_path: Path) -> None:
+    """When backup still fails after init, _run_cycle logs the error and re-raises
+    (it must not report a successful cycle when the backup never succeeded).
+
+    Previously this asserted a silent `return` — that was the bug: the container
+    would exit 0 and the operator would record lastBackupResult=success.
+    """
+    import pytest
+
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.backup.side_effect = [
         BackupError("failed", 1, "repository does not exist"),
         BackupError("failed", 1, "connection refused"),
     ]
-    _run_cycle(config, backend)
+    with pytest.raises(BackupError):
+        _run_cycle(config, backend)
     backend.init.assert_called_once()
     assert not (tmp_path / LAST_BACKUP_FILE).exists()
 
 
-def test_backup_fails_after_unlock_retry_is_logged_and_returns(tmp_path: Path) -> None:
-    """When backup fails after unlock retry, _run_cycle logs error and returns."""
+def test_backup_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) -> None:
+    """When backup fails after unlock retry, _run_cycle logs the error and re-raises.
+
+    Previously this asserted a silent `return` — updated to match the fix.
+    """
+    import pytest
+
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.backup.side_effect = [
         BackupError("failed", 1, "repository is locked"),
         BackupError("failed", 1, "still locked"),
     ]
-    _run_cycle(config, backend)
+    with pytest.raises(BackupError):
+        _run_cycle(config, backend)
     assert not (tmp_path / LAST_BACKUP_FILE).exists()
 
 
-def test_forget_fails_after_unlock_retry_is_logged_and_returns(tmp_path: Path) -> None:
-    """When forget fails after unlock retry, _run_cycle logs error and returns."""
+def test_forget_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) -> None:
+    """When forget fails after unlock retry, _run_cycle logs the error and re-raises.
+
+    Previously this asserted a silent `return` — updated to match the fix.
+    """
+    import pytest
+
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.forget.side_effect = [
         BackupError("prune failed", 1, "repository is locked"),
         BackupError("prune failed", 1, "still locked"),
     ]
-    _run_cycle(config, backend)
+    with pytest.raises(BackupError):
+        _run_cycle(config, backend)
     assert not (tmp_path / LAST_BACKUP_FILE).exists()
 
 
