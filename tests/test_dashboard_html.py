@@ -55,3 +55,30 @@ def test_open_backup_logs_falls_back_to_last_run_ref():
         "the legacy openLogs(), so it lands in the same tab id scheme as the status-icon click "
         "and correctly shows as a run tab rather than a legacy per-backup tab"
     )
+
+
+def test_escape_html_escapes_single_quotes():
+    """escapeHtml()'s output is spliced directly into single-quoted JS string
+    literals inside onclick="..." attributes, e.g.:
+
+        onclick="openRunLogsWithPicker('${ns}', '${escapeHtml(nm)}', ...)"
+
+    in buildStatusBadge, buildSparkline, and buildRow. The interpolated values
+    (status.lastRunRef, recentRuns[].name, namespace/name) come from the
+    K8siBackup CRD, which places no restriction on these strings (see
+    deploy/crd.yaml) -- so they are effectively attacker/user controlled.
+
+    If escapeHtml does not neutralize `'`, a name such as
+    `x');alert(document.cookie);//` breaks out of the JS string literal and
+    injects arbitrary script that runs on click. Escaping `<`, `>`, `&`, `"`
+    alone (HTML-attribute escaping) does not protect a JS-string-literal
+    context -- `'` must also be escaped.
+    """
+    body = _extract_function("escapeHtml")
+    assert re.search(r"\.replace\(/'/g,\s*['\"]&#39;['\"]\)", body), (
+        "escapeHtml must escape single quotes (e.g. to &#39;) -- without this, "
+        "a CRD-sourced run/backup name containing \"'\" breaks out of the "
+        "single-quoted JS string literal inside onclick=\"...('...')\" handlers "
+        "built by buildStatusBadge/buildSparkline/buildRow, enabling script "
+        "injection (e.g. name = x');alert(document.cookie);// )"
+    )
