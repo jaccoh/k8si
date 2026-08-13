@@ -65,43 +65,54 @@ def _sqlite_checkpoint_sync(namespace: str, pod_name: str, db_paths: list[str]) 
 
     v1 = kubernetes.client.CoreV1Api()
     for db_path in db_paths:
-        candidates = [
+        # Each candidate is a sequence of argv-form exec commands (no shell involved
+        # anywhere) to try, in order, for checkpointing + syncing this db_path.
+        # db_path comes straight from the CRD's spec.database.dbPaths, which is
+        # free-form user input -- it must never be interpolated into a shell string.
+        candidates: list[list[list[str]]] = [
             [
-                "python3",
-                "-c",
-                (
-                    f"import sqlite3, os; c=sqlite3.connect({db_path!r}); "
-                    f"c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close(); "
-                    f"os.sync(); print('checkpointed')"
-                ),
+                [
+                    "python3",
+                    "-c",
+                    (
+                        f"import sqlite3, os; c=sqlite3.connect({db_path!r}); "
+                        f"c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close(); "
+                        f"os.sync(); print('checkpointed')"
+                    ),
+                ],
             ],
-            ["sh", "-c", f"sqlite3 {db_path} 'PRAGMA wal_checkpoint(TRUNCATE);' && sync"],
+            [
+                ["sqlite3", db_path, "PRAGMA wal_checkpoint(TRUNCATE);"],
+                ["sync"],
+            ],
         ]
         checkpointed = False
-        for cmd in candidates:
+        for cmds in candidates:
             try:
-                resp = stream(
-                    v1.connect_get_namespaced_pod_exec,
-                    pod_name,
-                    namespace,
-                    command=cmd,
-                    stderr=True,
-                    stdin=False,
-                    stdout=True,
-                    tty=False,
-                )
+                resp = ""
+                for cmd in cmds:
+                    resp = stream(
+                        v1.connect_get_namespaced_pod_exec,
+                        pod_name,
+                        namespace,
+                        command=cmd,
+                        stderr=True,
+                        stdin=False,
+                        stdout=True,
+                        tty=False,
+                    )
                 log.info(
                     "SQLite checkpoint %s in %s/%s via %s: %s",
                     db_path,
                     namespace,
                     pod_name,
-                    cmd[0],
+                    cmds[0][0],
                     (resp or "").strip(),
                 )
                 checkpointed = True
                 break
             except Exception as e:
-                log.debug("SQLite checkpoint via %s failed: %s", cmd[0], e)
+                log.debug("SQLite checkpoint via %s failed: %s", cmds[0][0], e)
         if not checkpointed:
             log.warning(
                 "SQLite checkpoint skipped for %s in %s/%s: no python3 or sqlite3 in container",

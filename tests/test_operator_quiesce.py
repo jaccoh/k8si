@@ -354,6 +354,48 @@ def test_sqlite_checkpoint_sync_calls_stream():
         _sqlite_checkpoint_sync("myns", "app-pod", ["/data/db.sqlite3"])
 
 
+def test_sqlite_checkpoint_fallback_avoids_shell_interpolation():
+    """The sqlite3 fallback (used when python3 isn't in the container) must never
+    hand db_path to a shell — dbPaths is free-form, user-supplied CRD data, and
+    embedding it unquoted into `sh -c "..."` is a straightforward shell injection.
+    """
+    from k8si.operator.quiesce import _sqlite_checkpoint_sync
+
+    captured_commands: list[list[str]] = []
+
+    def fake_stream(func, pod_name, namespace, command, **kwargs):
+        captured_commands.append(command)
+        if command[0] == "python3":
+            # Simulate python3 not being present in the target container, forcing
+            # the code down the sqlite3 fallback path.
+            raise RuntimeError("exec: python3: not found")
+        return "ok"
+
+    mock_v1 = MagicMock()
+    malicious_path = "/data/app.db; touch /tmp/pwned"
+
+    with (
+        patch("k8si.operator.quiesce.kubernetes.client.CoreV1Api", return_value=mock_v1),
+        patch("kubernetes.stream.stream", side_effect=fake_stream),
+    ):
+        _sqlite_checkpoint_sync("myns", "app-pod", [malicious_path])
+
+    assert captured_commands, "expected at least one pod-exec attempt"
+
+    # No exec call may invoke a shell at all -- that's the only way unquoted,
+    # attacker-controlled interpolation could turn into command injection.
+    for cmd in captured_commands:
+        assert cmd[0] not in ("sh", "bash"), (
+            f"sqlite3 fallback must not exec a shell, got command: {cmd!r}"
+        )
+
+    # The (malicious) db_path must still reach sqlite3, but only as its own
+    # argv element -- never concatenated into a larger shell string.
+    assert any(
+        isinstance(cmd, list) and malicious_path in cmd for cmd in captured_commands
+    ), f"expected db_path to appear as a standalone argv element, got: {captured_commands!r}"
+
+
 # ---------------------------------------------------------------------------
 # quiesce_context: postgres, sqlite, and unknown-type branches
 # ---------------------------------------------------------------------------
