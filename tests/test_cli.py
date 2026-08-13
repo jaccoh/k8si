@@ -155,6 +155,33 @@ def test_main_backup_mode_calls_backup_run(monkeypatch: pytest.MonkeyPatch) -> N
     mock_run.assert_called_once()
 
 
+def test_main_backup_mode_crash_logs_critical_and_exits_1(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """main() with mode='backup': if backup.run() raises, main() logs one clear
+    CRITICAL line naming the mode before exiting 1 — instead of letting the
+    exception escape uncaught as a raw traceback with no top-level context."""
+    monkeypatch.setattr("sys.argv", ["k8si"])
+    cfg = _make_config(mode="backup", backend_type="restic")
+
+    with (
+        patch("k8si.cli.Config.from_env", return_value=cfg),
+        patch("k8si.cli.ResticBackend"),
+        patch("k8si.backup.run", side_effect=RuntimeError("repo unreachable")),
+        caplog.at_level("CRITICAL"),
+    ):
+        from k8si import cli
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 1
+    critical_records = [r for r in caplog.records if r.levelname == "CRITICAL"]
+    assert len(critical_records) == 1
+    assert "backup" in critical_records[0].message
+    assert critical_records[0].exc_info is not None
+
+
 def test_main_kopia_backend_instantiates_kopia(monkeypatch: pytest.MonkeyPatch) -> None:
     """main() with backend_type='kopia' creates a KopiaBackend."""
     monkeypatch.setattr("sys.argv", ["k8si"])

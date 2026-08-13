@@ -43,18 +43,22 @@ def main() -> None:
     else:
         backend = ResticBackend(env=_build_backend_env(config))
 
-    if config.mode == "restore":
-        from . import restore
+    try:
+        if config.mode == "restore":
+            from . import restore
 
-        restore.run(config, backend)
-    elif config.mode == "job":
-        from . import backup
+            restore.run(config, backend)
+        elif config.mode == "job":
+            from . import backup
 
-        backup.run_once(config, backend)
-    else:
-        from . import backup
+            backup.run_once(config, backend)
+        else:
+            from . import backup
 
-        backup.run(config, backend)
+            backup.run(config, backend)
+    except Exception:
+        log.critical("Fatal error in mode=%s, exiting", config.mode, exc_info=True)
+        sys.exit(1)
 
 
 def _build_backend_env(config: Config) -> dict[str, str]:
