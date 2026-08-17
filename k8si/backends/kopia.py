@@ -34,6 +34,10 @@ class KopiaBackend:
             self._config_file,
             _env=self._env,
             _encoding="utf-8",
+            # kopia writes command results to stdout but progress and the
+            # 'Created snapshot ... and ID ...' artifact line to stderr — merge
+            # the streams so pod logs carry what _parse_artifact needs.
+            _err_to_out=True,
         )
         self._connected = False
         self._last_source: str | None = None
@@ -123,7 +127,7 @@ class KopiaBackend:
     def snapshots(self, tags: list[str] | None = None) -> list[dict]:
         self._ensure_connected()
         raw = self._invoke("snapshot", "list", "--json")
-        data = json.loads(raw.strip() or "[]")
+        data = self._loads_list(raw)
 
         if tags:
             data = [s for s in data if self._has_tags(s, tags)]
@@ -220,12 +224,12 @@ class KopiaBackend:
         # `snapshot list --json` as rootEntry.summ.size per manifest.
         raw = self._invoke("snapshot", "list", "--json")
         try:
-            data = json.loads(raw)
+            data = self._loads_list(raw)
             for snap in data:
                 if snap.get("id") == snapshot_id:
                     return int(snap.get("rootEntry", {}).get("summ", {}).get("size", 0))
             return 0
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return 0
 
     def restore(self, snapshot_id: str = "latest") -> None:
@@ -275,7 +279,7 @@ class KopiaBackend:
     def verify_snapshot(self, run_tag: str) -> SnapshotInfo:
         self._ensure_connected()
         raw = self._invoke("snapshot", "list", "--json")
-        data = json.loads(raw.strip() or "[]")
+        data = self._loads_list(raw)
         matches = [s for s in data if self._has_tags(s, [run_tag])]
         if len(matches) == 0:
             raise BackupError(f"no snapshot found with tag {run_tag!r}")
@@ -298,9 +302,24 @@ class KopiaBackend:
                     log.info("kopia: %s", line)
             return output
         except sh.ErrorReturnCode as e:
-            raw_stderr = e.stderr
-            stderr = (
-                raw_stderr if isinstance(raw_stderr, str) else raw_stderr.decode(errors="replace")
-            ).strip()
+            # _err_to_out merges kopia's error output into stdout; read both
+            raw_out = e.stdout
+            raw_err = e.stderr
+            parts = [
+                raw if isinstance(raw, str) else raw.decode(errors="replace")
+                for raw in (raw_out, raw_err)
+            ]
+            stderr = "\n".join(p for p in parts if p).strip()
             log.error("kopia error: %s", stderr)
             raise BackupError(f"kopia exited {e.exit_code}", e.exit_code, stderr) from e
+
+    @staticmethod
+    def _loads_list(raw: str) -> list:
+        """Parse a JSON array from kopia output that may interleave log lines
+        with the JSON (stderr is merged into stdout via _err_to_out)."""
+        start = raw.find("[")
+        end = raw.rfind("]")
+        if start == -1 or end == -1 or end < start:
+            raise ValueError(f"no JSON array in kopia output: {raw[:200]!r}")
+        data: list = json.loads(raw[start : end + 1])
+        return data

@@ -368,6 +368,23 @@ def test_ensure_connected_raises_on_not_initialized() -> None:
             backend.snapshots()
 
 
+def test_ensure_connected_not_initialized_phrase_in_stdout() -> None:
+    """With _err_to_out=True, sh merges kopia's error output into STDOUT and
+    e.stderr stays empty — the not-initialized detection must read both."""
+    from k8si.backend import RepositoryNotInitializedError
+
+    backend, mock_cmd = _make_backend()
+    # same construction as _sh_error, but the kopia text rides in STDOUT
+    cls = type("ErrorReturnCode_1", (_sh.ErrorReturnCode,), {"exit_code": 1})
+    mock_cmd.side_effect = cls(
+        "kopia", b"repository not initialized in the provided storage", b"", False
+    )
+
+    with patch("os.path.exists", return_value=False):
+        with pytest.raises(RepositoryNotInitializedError):
+            backend.snapshots()
+
+
 # ── _parse_sftp_repo: malformed URL (line 71) ─────────────────────────────────
 
 
@@ -510,6 +527,44 @@ def test_restore_reraises_non_not_found_error() -> None:
 
 
 # ── _invoke: sh.ErrorReturnCode (lines 246-252) ───────────────────────────────
+
+
+def test_invoke_returns_and_logs_merged_output(caplog) -> None:  # type: ignore[no-untyped-def]
+    """kopia writes 'snapshot create' output (including the 'Created snapshot
+    ... and ID ...' artifact line and progress) to STDERR — the backend bakes
+    _err_to_out=True so the merged stream is returned AND re-logged into the
+    pod log that _parse_artifact parses."""
+    import logging as _logging
+
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = (
+        "Snapshotting root@host:/data ...\n"
+        "Created snapshot with root k1 and ID snap-full-id in 0s\n"
+    )
+
+    with caplog.at_level(_logging.INFO, logger="k8si.backends.kopia"):
+        returned = backend._invoke("snapshot", "create", "/data")
+
+    assert "Created snapshot with root k1 and ID snap-full-id" in returned
+    joined = "\n".join(r.message for r in caplog.records)
+    assert "Created snapshot with root k1 and ID snap-full-id in 0s" in joined
+
+
+def test_snapshots_parses_json_among_interleaved_log_lines() -> None:
+    """With stderr merged into stdout, kopia log noise may surround the JSON —
+    snapshots() must still parse the array."""
+    raw = (
+        "kopia: some progress line\n"
+        '[{"id": "snap-1", "startTime": "2026-05-07T19:00:00Z"}]\n'
+        "kopia: trailing log\n"
+    )
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = raw
+
+    result = backend.snapshots()
+    assert result == [{"id": "snap-1", "short_id": "snap-1", "time": "2026-05-07T19:00:00Z"}]
 
 
 def test_invoke_converts_error_return_code_to_backup_error() -> None:
