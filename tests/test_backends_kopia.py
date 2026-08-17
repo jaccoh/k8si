@@ -105,8 +105,23 @@ def test_snapshots_returns_mapped_list() -> None:
     mock_cmd.return_value = json.dumps(kopia_data)
 
     result = backend.snapshots()
-    assert result == [{"id": "snap-12345", "short_id": "snap-123", "time": "2026-05-07T19:00:00Z"}]
+    assert result == [
+        {"id": "snap-12345", "short_id": "snap-12345", "time": "2026-05-07T19:00:00Z"}
+    ]
     mock_cmd.assert_called_once_with("snapshot", "list", "--json")
+
+
+def test_snapshots_short_id_is_full_id() -> None:
+    """short_id must be the FULL manifest ID for kopia: restore.py restores via
+    snapshots()[-1]['short_id'], and kopia (unlike restic) does not resolve
+    restic-style 8-character ID prefixes."""
+    kopia_data = [{"id": "abcdef1234567890abcdef1234567890", "startTime": "2026-05-07T19:00:00Z"}]
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = json.dumps(kopia_data)
+
+    result = backend.snapshots()
+    assert result[0]["short_id"] == "abcdef1234567890abcdef1234567890"
 
 
 # ── ls & sentinel check ────────────────────────────────────────────────────────
@@ -262,18 +277,18 @@ def test_ensure_connected_skips_when_config_file_exists() -> None:
 
 
 def test_ensure_connected_raises_on_not_initialized() -> None:
-    """_ensure_connected() re-raises as 'repository does not exist' when not initialized."""
-    from k8si.backend import BackupError
+    """_ensure_connected() raises the typed RepositoryNotInitializedError so the
+    backup cycle can auto-init without string-matching kopia's stderr phrasing
+    ("repository does not exist" never appears in kopia's own stderr)."""
+    from k8si.backend import RepositoryNotInitializedError
 
     backend, mock_cmd = _make_backend()
     msg = "repository not initialized — run 'kopia repository create'"
     mock_cmd.side_effect = _sh_error(1, msg)
 
-    try:
-        backend.snapshots()
-        raise AssertionError("Expected BackupError")
-    except BackupError as e:
-        assert "does not exist" in str(e)
+    with patch("os.path.exists", return_value=False):
+        with pytest.raises(RepositoryNotInitializedError, match="does not exist"):
+            backend.snapshots()
 
 
 # ── _parse_sftp_repo: malformed URL (line 71) ─────────────────────────────────
@@ -456,6 +471,7 @@ def test_verify_snapshot_returns_snapshot_info() -> None:
     info = backend.verify_snapshot("k8si-run=myrun-20260614")
     assert isinstance(info, SnapshotInfo)
     assert info.id == "snap-abc12345"
+    assert info.short_id == "snap-abc12345"
     assert info.size_bytes == 2048
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import sh
 
-from ..backend import BackupError, NoSnapshotsError, SnapshotInfo
+from ..backend import BackupError, NoSnapshotsError, RepositoryNotInitializedError, SnapshotInfo
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +61,11 @@ class KopiaBackend:
                 "repository not initialized" in e.stderr.lower()
                 or "cannot open" in e.stderr.lower()
             ):
-                raise BackupError("repository does not exist", e.returncode, e.stderr) from e
+                # Typed so the backup cycle auto-inits without string-matching
+                # kopia's stderr (kopia never says "repository does not exist").
+                raise RepositoryNotInitializedError(
+                    "repository does not exist", e.returncode, e.stderr
+                ) from e
             raise
 
     def _local_path(self) -> str:
@@ -124,7 +128,9 @@ class KopiaBackend:
             results.append(
                 {
                     "id": snap["id"],
-                    "short_id": snap["id"][:8],
+                    # Kopia does not resolve restic-style 8-char ID prefixes, and
+                    # restore.py restores via short_id — so it must be the full ID.
+                    "short_id": snap["id"],
                     "time": snap["startTime"],
                 }
             )
@@ -256,7 +262,7 @@ class KopiaBackend:
         snap = matches[0]
         snap_id = snap["id"]
         size = self.snapshot_size(snap_id)
-        return SnapshotInfo(id=snap_id, short_id=snap_id[:8], size_bytes=size)
+        return SnapshotInfo(id=snap_id, short_id=snap_id, size_bytes=size)
 
     # ── internal ───────────────────────────────────────────────────────────────
 

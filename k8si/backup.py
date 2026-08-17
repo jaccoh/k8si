@@ -8,7 +8,7 @@ from pathlib import Path
 
 from croniter import croniter
 
-from .backend import BackupBackend, BackupError
+from .backend import BackupBackend, BackupError, RepositoryNotInitializedError
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
     try:
         backend.backup(source=config.data_path, tags=config.backup_tags)
     except BackupError as e:
-        if "repository does not exist" in e.stderr:
+        if isinstance(e, RepositoryNotInitializedError) or "repository does not exist" in e.stderr:
             log.info("Repository not initialised, running init")
             try:
                 backend.init()

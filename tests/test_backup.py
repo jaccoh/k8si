@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from k8si.backend import BackupError
+from k8si.backend import BackupError, RepositoryNotInitializedError
 from k8si.backup import LAST_BACKUP_FILE, _run_cycle, run_once
 from k8si.config import Config
 
@@ -84,6 +84,27 @@ def test_auto_init_on_missing_repo(tmp_path: Path) -> None:
     backend = MagicMock()
     backend.backup.side_effect = [
         BackupError("failed", 1, "repository does not exist"),
+        None,  # succeeds after init
+    ]
+    _run_cycle(config, backend)
+    backend.init.assert_called_once()
+    assert backend.backup.call_count == 2
+    assert (tmp_path / LAST_BACKUP_FILE).exists()
+
+
+def test_auto_init_on_kopia_not_initialized_repo(tmp_path: Path) -> None:
+    """Kopia reports a missing repository as a typed RepositoryNotInitializedError
+    whose stderr holds kopia's own phrasing ("repository not initialized"), not the
+    phrase "repository does not exist" — which only appears in the exception
+    message. _run_cycle must detect the missing repo via the type, init, and retry."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.backup.side_effect = [
+        RepositoryNotInitializedError(
+            "repository does not exist",
+            1,
+            "ERROR can't connect to storage: repository not initialized",
+        ),
         None,  # succeeds after init
     ]
     _run_cycle(config, backend)

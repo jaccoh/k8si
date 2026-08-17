@@ -16,6 +16,10 @@ class NoSnapshotsError(BackupError):
     pass
 
 
+class RepositoryNotInitializedError(BackupError):
+    """The repository does not exist yet — recoverable by backend.init()."""
+
+
 @dataclass
 class SnapshotInfo:
     id: str
