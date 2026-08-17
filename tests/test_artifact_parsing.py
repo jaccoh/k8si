@@ -144,3 +144,24 @@ def test_parse_kopia_error_returns_none():
     snap_id, size = _parse_artifact(KOPIA_ERROR_LOGS, "kopia")
     assert snap_id is None
     assert size is None
+
+
+# Real kopia 0.15.0 first-run output (captured from the k8si image): everything
+# is hashed, nothing is cached, so the last "cached (N B)" line says 0 B — the
+# size must come from the max of hashed/cached, not the last cached match.
+KOPIA_FIRST_RUN_LOGS = (
+    "Snapshotting root@51bd9fa6def5:/data ...\n"
+    " * 0 hashing, 0 hashed (0 B), 0 cached (0 B), uploaded 0 B, estimating...\n"
+    " * 0 hashing, 2 hashed (14 B), 0 cached (0 B), uploaded 195 B, estimating...\n"
+    # assembled to one logical line: "Created snapshot with root <id> and ID <id> in 0s"
+    "Created snapshot with root ked2772c42cdaf458bedc3aa8ef5b5e6d"
+    " and ID 5fc52d496b7a5c7866fd6ca1f9d8d2c2 in 0s\n"
+)
+
+
+def test_parse_kopia_first_run_size_from_hashed():
+    """First-run kopia reports data under 'hashed (N B)' with 'cached (0 B)' —
+    size must be the max across hashed/cached, not the last cached value (0)."""
+    snap_id, size = _parse_artifact(KOPIA_FIRST_RUN_LOGS, "kopia")
+    assert snap_id == "5fc52d496b7a5c7866fd6ca1f9d8d2c2"
+    assert size == 14

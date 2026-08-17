@@ -82,14 +82,17 @@ def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | Non
                 snap_id = m.group(1)
 
         size_bytes = None
-        # Progress lines: "* N hashing, N cached (SIZE), N uploading"
-        # Take the last match (final summary line has the largest/complete total).
-        for m2 in re.finditer(r"cached \(([\d.]+)\s*([A-Za-z]+)\)", logs):
+        # Progress lines: "* N hashing, N hashed (SIZE), N cached (SIZE), N uploading".
+        # A first run reports data under "hashed" with "cached (0 B)" last, so take
+        # the max across both rather than the last "cached" match.
+        for m2 in re.finditer(r"(?:hash|cach)ed \(([\d.]+)\s*([A-Za-z]+)\)", logs):
             amount = float(m2.group(1))
             unit = m2.group(2).lower()
             multiplier = _SIZE_UNITS.get(unit)
             if multiplier is not None:
-                size_bytes = int(amount * multiplier)
+                candidate = int(amount * multiplier)
+                if size_bytes is None or candidate > size_bytes:
+                    size_bytes = candidate
 
         return snap_id, size_bytes
 

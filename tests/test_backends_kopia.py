@@ -124,6 +124,21 @@ def test_snapshots_short_id_is_full_id() -> None:
     assert result[0]["short_id"] == "abcdef1234567890abcdef1234567890"
 
 
+def test_snapshots_filters_tags_with_kopia_prefix() -> None:
+    """kopia returns user tags under a 'tag:' prefix ({"tag:app": "kopia-e2e"});
+    the restic-style filter ["app=kopia-e2e"] must still select those snapshots."""
+    kopia_data = [
+        {"id": "snap-1", "startTime": "2026-05-07T19:00:00Z", "tags": {"tag:app": "kopia-e2e"}},
+        {"id": "snap-2", "startTime": "2026-05-07T20:00:00Z", "tags": {"tag:app": "other"}},
+    ]
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = json.dumps(kopia_data)
+
+    result = backend.snapshots(tags=["app=kopia-e2e"])
+    assert [s["id"] for s in result] == ["snap-1"]
+
+
 # ── ls & sentinel check ────────────────────────────────────────────────────────
 
 
@@ -152,17 +167,47 @@ def test_check_sentinels_finds_file() -> None:
         assert backend.check_sentinels("snap-123", ["config.xml"]) is True
 
 
+def test_check_sentinels_matches_real_kopia_ls_format() -> None:
+    """Real `kopia ls -r <id>` (0.15.0) prefixes every path with the snapshot ID:
+    'b877df1fcfbf22801f741bef43d11bd0/sentinel.txt' — must still match sentinel
+    'sentinel.txt'."""
+    backend, _ = _make_backend()
+    backend._connected = True
+    lines = [
+        "b877df1fcfbf22801f741bef43d11bd0/payload.txt\n",
+        "b877df1fcfbf22801f741bef43d11bd0/sentinel.txt\n",
+    ]
+
+    with patch("subprocess.Popen", return_value=_popen_ctx(lines)):
+        assert backend.check_sentinels("b877df1fcfbf22801f741bef43d11bd0", ["sentinel.txt"]) is True
+
+
 # ── size ───────────────────────────────────────────────────────────────────────
 
 
 def test_snapshot_size_returns_size() -> None:
     backend, mock_cmd = _make_backend()
     backend._connected = True
-    mock_cmd.return_value = json.dumps({"rootEntry": {"summ": {"size": 4242}}})
+    # kopia 0.15.0 has no `snapshot show`; `snapshot list --json` carries
+    # rootEntry.summ.size per manifest.
+    mock_cmd.return_value = json.dumps(
+        [
+            {"id": "snap-other", "rootEntry": {"summ": {"size": 1}}},
+            {"id": "snap-123", "rootEntry": {"summ": {"size": 4242}}},
+        ]
+    )
 
     size = backend.snapshot_size("snap-123")
     assert size == 4242
-    mock_cmd.assert_called_once_with("snapshot", "show", "--json", "snap-123")
+    mock_cmd.assert_called_once_with("snapshot", "list", "--json")
+
+
+def test_snapshot_size_unknown_id_returns_zero() -> None:
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = json.dumps([{"id": "snap-other", "rootEntry": {"summ": {"size": 1}}}])
+
+    assert backend.snapshot_size("snap-123") == 0
 
 
 # ── restore & backup ───────────────────────────────────────────────────────────
@@ -174,7 +219,25 @@ def test_restore_calls_restore() -> None:
     mock_cmd.return_value = "restored"
 
     backend.restore("snap-123")
-    mock_cmd.assert_called_once_with("snapshot", "restore", "snap-123", "/")
+    # kopia restores the snapshot CONTENTS into the target dir (unlike restic,
+    # which recreates the absolute source path under --target), so the target
+    # must be DATA_PATH — restoring to "/" would scatter files across the rootfs.
+    mock_cmd.assert_called_once_with("snapshot", "restore", "snap-123", "/data")
+
+
+def test_restore_targets_data_path_from_env() -> None:
+    backend, mock_cmd = _make_backend(
+        env={
+            "RESTIC_REPOSITORY": "local:/tmp/kopia-repo",
+            "RESTIC_PASSWORD": "secret",
+            "DATA_PATH": "/custom/data",
+        }
+    )
+    backend._connected = True
+    mock_cmd.return_value = "restored"
+
+    backend.restore("snap-123")
+    mock_cmd.assert_called_once_with("snapshot", "restore", "snap-123", "/custom/data")
 
 
 def test_backup_calls_snapshot_create() -> None:
@@ -183,7 +246,20 @@ def test_backup_calls_snapshot_create() -> None:
     mock_cmd.return_value = "created"
 
     backend.backup(Path("/data"), tags=["app=test"])
-    mock_cmd.assert_called_once_with("snapshot", "create", "/data", "--tags", "app=test")
+    mock_cmd.assert_called_once_with("snapshot", "create", "/data", "--tags", "app:test")
+
+
+def test_backup_translates_restic_style_tags() -> None:
+    """Callers speak restic-style 'key=value' tags (CRD spec.tags, BACKUP_TAGS);
+    kopia requires 'key:value' — the backend must translate, not pass through."""
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = "created"
+
+    backend.backup(Path("/data"), tags=["app=sonarr", "env=prod"])
+    mock_cmd.assert_called_once_with(
+        "snapshot", "create", "/data", "--tags", "app:sonarr", "--tags", "env:prod"
+    )
 
 
 # ── forget & unlock ────────────────────────────────────────────────────────────
@@ -227,13 +303,14 @@ def test_unlock_runs_maintenance_force() -> None:
 # ── check ─────────────────────────────────────────────────────────────────────
 
 
-def test_check_calls_snapshot_verify_all() -> None:
+def test_check_calls_snapshot_verify_all_sources() -> None:
     backend, mock_cmd = _make_backend()
     backend._connected = True
     mock_cmd.return_value = ""
 
     backend.check()
-    mock_cmd.assert_called_once_with("snapshot", "verify", "--all")
+    # kopia 0.15.0 has no --all flag; all sources are selected via --sources=all
+    mock_cmd.assert_called_once_with("snapshot", "verify", "--sources=all")
 
 
 # ── _ensure_connected: non-initialization error is re-raised (line 65) ───────
@@ -466,13 +543,36 @@ def test_verify_snapshot_returns_snapshot_info() -> None:
     backend._connected = True
     mock_cmd.side_effect = [
         json.dumps(kopia_data),
-        json.dumps({"rootEntry": {"summ": {"size": 2048}}}),
+        json.dumps([{"id": "snap-abc12345", "rootEntry": {"summ": {"size": 2048}}}]),
     ]
     info = backend.verify_snapshot("k8si-run=myrun-20260614")
     assert isinstance(info, SnapshotInfo)
     assert info.id == "snap-abc12345"
     assert info.short_id == "snap-abc12345"
     assert info.size_bytes == 2048
+
+
+def test_verify_snapshot_matches_kopia_prefixed_tags() -> None:
+    """kopia prefixes user tags with 'tag:' in snapshot list JSON — verify_snapshot
+    must find 'k8si-run=myrun' in {"tag:k8si-run": "myrun"}."""
+    from k8si.backend import SnapshotInfo
+
+    kopia_data = [
+        {
+            "id": "snap-abc12345",
+            "startTime": "2026-06-14T10:00:00Z",
+            "tags": {"tag:k8si-run": "myrun-20260614"},
+        }
+    ]
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.side_effect = [
+        json.dumps(kopia_data),
+        json.dumps([{"id": "snap-abc12345", "rootEntry": {"summ": {"size": 2048}}}]),
+    ]
+    info = backend.verify_snapshot("k8si-run=myrun-20260614")
+    assert isinstance(info, SnapshotInfo)
+    assert info.id == "snap-abc12345"
 
 
 def test_verify_snapshot_raises_when_no_snapshot_found() -> None:

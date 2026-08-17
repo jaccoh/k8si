@@ -23,6 +23,9 @@ class KopiaBackend:
     def __init__(self, env: dict[str, str]) -> None:
         self._config_file = env.get("KOPIA_CONFIG_PATH", "/tmp/kopia.config")
         self._repo = env.get("RESTIC_REPOSITORY", "")
+        # kopia restores snapshot CONTENTS into the target dir (restic recreates
+        # the absolute source path under --target /), so restore must aim at DATA_PATH
+        self._data_path = env.get("DATA_PATH", "/data")
         # Pass password via env var (not CLI arg) to avoid leaking it in /proc/*/cmdline
         self._env = dict(env)
         self._env["KOPIA_PASSWORD"] = env.get("RESTIC_PASSWORD") or env.get("KOPIA_PASSWORD", "")
@@ -122,6 +125,9 @@ class KopiaBackend:
         raw = self._invoke("snapshot", "list", "--json")
         data = json.loads(raw.strip() or "[]")
 
+        if tags:
+            data = [s for s in data if self._has_tags(s, tags)]
+
         # Map Kopia format to match restic return format: [ {id, short_id, time} ]
         results = []
         for snap in data:
@@ -135,6 +141,19 @@ class KopiaBackend:
                 }
             )
         return results
+
+    @staticmethod
+    def _has_tags(snap: dict, wanted: list[str]) -> bool:
+        """Match restic-style 'key=value' tags against kopia's tag dict.
+
+        kopia stores user tags under a 'tag:' prefix ({"tag:app": "x"}).
+        """
+        snap_tags = snap.get("tags", {})
+        for tag in wanted:
+            key, _, val = tag.partition("=")
+            if snap_tags.get(key) != val and snap_tags.get(f"tag:{key}") != val:
+                return False
+        return True
 
     def ls(self, snapshot_id: str) -> list[str]:
         self._ensure_connected()
@@ -156,13 +175,13 @@ class KopiaBackend:
         """Return True iff all sentinels exist in *snapshot_id*.
 
         Sentinel "data/foo" is matched against "/data/data/foo" (subPath layout),
-        "/data/foo" (flat layout), and "data/foo" (bare).
+        "/data/foo" (flat layout), "data/foo" (bare), and "<snapshot-id>/foo"
+        (real kopia `ls -r` prefixes paths with the snapshot ID).
         """
         self._ensure_connected()
         if not sentinels:
             return True
 
-        candidates: dict[str, set[str]] = {s: {f"/data/{s}", f"/{s}", s} for s in sentinels}
         unfound = set(sentinels)
 
         # Stream kopia ls recursively (KOPIA_PASSWORD is in self._env)
@@ -186,7 +205,7 @@ class KopiaBackend:
                 parts = raw.split()
                 path = parts[-1]
                 for sentinel in list(unfound):
-                    if path in candidates[sentinel]:
+                    if path == sentinel or path.endswith(f"/{sentinel}"):
                         unfound.discard(sentinel)
             _, stderr = proc.communicate()
             rc = proc.returncode
@@ -197,18 +216,22 @@ class KopiaBackend:
 
     def snapshot_size(self, snapshot_id: str) -> int:
         self._ensure_connected()
-        raw = self._invoke("snapshot", "show", "--json", snapshot_id)
+        # kopia 0.15.0 has no `snapshot show`; the size rides on
+        # `snapshot list --json` as rootEntry.summ.size per manifest.
+        raw = self._invoke("snapshot", "list", "--json")
         try:
             data = json.loads(raw)
-            # Root entry stats size
-            return int(data.get("rootEntry", {}).get("summ", {}).get("size", 0))
+            for snap in data:
+                if snap.get("id") == snapshot_id:
+                    return int(snap.get("rootEntry", {}).get("summ", {}).get("size", 0))
+            return 0
         except (json.JSONDecodeError, KeyError, TypeError):
             return 0
 
     def restore(self, snapshot_id: str = "latest") -> None:
         self._ensure_connected()
         try:
-            self._invoke("snapshot", "restore", snapshot_id, "/")
+            self._invoke("snapshot", "restore", snapshot_id, self._data_path)
         except BackupError as e:
             if "not found" in e.stderr.lower():
                 raise NoSnapshotsError("no snapshots in repository", e.returncode, e.stderr) from e
@@ -217,11 +240,11 @@ class KopiaBackend:
     def backup(self, source: Path, tags: list[str] | None = None) -> None:
         self._ensure_connected()
         self._last_source = str(source)  # store for forget()
-        # Set tags if specified (Kopia tags are set per source policy or on snapshot)
+        # Set tags if specified; kopia wants 'key:value', callers speak 'key=value'
         args = ["snapshot", "create", str(source)]
         if tags:
             for tag in tags:
-                args.extend(["--tags", tag])
+                args.extend(["--tags", tag.replace("=", ":", 1)])
         self._invoke(*args)
 
     def forget(self, daily: int, weekly: int, monthly: int, prune: bool = True) -> None:
@@ -247,14 +270,13 @@ class KopiaBackend:
 
     def check(self) -> None:
         self._ensure_connected()
-        self._invoke("snapshot", "verify", "--all")
+        self._invoke("snapshot", "verify", "--sources=all")
 
     def verify_snapshot(self, run_tag: str) -> SnapshotInfo:
         self._ensure_connected()
         raw = self._invoke("snapshot", "list", "--json")
         data = json.loads(raw.strip() or "[]")
-        key, val = run_tag.split("=", 1) if "=" in run_tag else ("tag", run_tag)
-        matches = [s for s in data if s.get("tags", {}).get(key) == val]
+        matches = [s for s in data if self._has_tags(s, [run_tag])]
         if len(matches) == 0:
             raise BackupError(f"no snapshot found with tag {run_tag!r}")
         if len(matches) > 1:
