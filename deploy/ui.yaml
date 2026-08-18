@@ -56,7 +56,7 @@ spec:
       serviceAccountName: k8si-ui
       containers:
         - name: ui
-          image: ghcr.io/jaccoh/k8si-ui:v0.9.0rc4
+          image: ghcr.io/jaccoh/k8si-ui:v0.9.0
           ports:
             - containerPort: 8080
           env:
