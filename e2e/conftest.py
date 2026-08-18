@@ -83,7 +83,14 @@ def _detect_environment() -> tuple[str, str, str]:
     try:
         kubernetes.config.load_incluster_config()
     except kubernetes.config.ConfigException:
-        kubernetes.config.load_kube_config()
+        try:
+            kubernetes.config.load_kube_config()
+        except kubernetes.config.ConfigException:
+            # No cluster reachable (e.g. GitHub-hosted CI running the unit
+            # suite) — this module is imported at collection time, so degrade
+            # to placeholders instead of failing every `pytest tests/` run.
+            log.warning("No kubeconfig available — e2e env defaults to 'unknown'")
+            return "unknown", "unknown", "unknown"
     v1 = kubernetes.client.CoreV1Api()
     nodes = [n.metadata.name for n in v1.list_node().items]
     if "orbstack" in nodes:
