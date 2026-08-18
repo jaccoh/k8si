@@ -1,6 +1,5 @@
 # k8si
 
-[![CI](https://github.com/jaccoh/k8si/actions/workflows/ci.yml/badge.svg)](https://github.com/jaccoh/k8si/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jaccoh/k8si)](https://github.com/jaccoh/k8si/releases)
 [![Arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -223,6 +222,6 @@ uv run pytest tests/ -v
 docker build -t k8si:dev .
 ```
 
-CI on every push to `main`: ruff + mypy → unit tests → multi-arch image build → `ghcr.io/jaccoh/k8si`. Releases are cut from `v*` tags.
+CI (lint, unit tests, multi-arch builds, e2e against a real cluster) runs in the maintainer's Gitea instance on every push to `main`, and publishes the public multi-arch images to `ghcr.io/jaccoh/k8si`. GitHub is the open-source home: releases appear there when a `v*` tag is pushed.
 
 Detailed reference — full CRD spec/status, environment variables, secret format, backend plugin protocol, known quirks — lives in [docs/reference.md](docs/reference.md).
