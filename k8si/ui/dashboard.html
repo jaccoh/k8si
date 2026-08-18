@@ -847,6 +847,10 @@
   // Client-side run state: key = "ns/name" → {runName, phase: 'queued'|'running'}
   let activeRunState = {};
 
+  // EventSource connections are capped (~6 per origin on HTTP/1.1) and the
+  // dashboard itself polls /api/backups — bound the number of live log tabs.
+  let MAX_LOG_TABS = 4;
+
   // ── Utility: relative time ──────────────────────────────────────────────────
 
   function relativeTime(isoString) {
@@ -1301,7 +1305,7 @@
         activeRunState[runKey] = {runName: data.runName, phase: 'queued'};
         render();
         loadBackups(); // refresh counter tiles immediately — backend just set lastBackupResult=running
-        openRunLogs(namespace, data.runName, [], function(phase) {
+        openRunLogs(namespace, data.runName, name, [], function(phase) {
           // SSE phase callback: update button and badge as run progresses
           if (phase === 'running') {
             btn.textContent = 'Running…';
@@ -1404,33 +1408,49 @@
 
   function openRunLogsWithPicker(ns, nm, runName) {
     var historicalRuns = getHistoricalRuns(ns, nm);
-    openRunLogs(ns, runName, historicalRuns, null);
+    openRunLogs(ns, runName, nm, historicalRuns, null);
   }
 
   function openBackupLogs(ns, nm) {
     var historicalRuns = getHistoricalRuns(ns, nm);
+    var backup = allBackups.find(function(b) { return b.namespace === ns && b.name === nm; });
+
+    // A live run always wins over stale completed history.
+    var live = activeRunState[ns + '/' + nm];
+    if (live && live.runName) {
+      openRunLogs(ns, live.runName, nm, historicalRuns, null);
+      return;
+    }
+    if (backup && backup.lastBackupResult === 'running' && backup.lastRunRef) {
+      openRunLogs(ns, backup.lastRunRef, nm, historicalRuns, null);
+      return;
+    }
     var latestRun = historicalRuns[0];
     if (latestRun) {
-      openRunLogs(ns, latestRun.name, historicalRuns, null);
+      openRunLogs(ns, latestRun.name, nm, historicalRuns, null);
       return;
     }
-    var backup = allBackups.find(function(b) { return b.namespace === ns && b.name === nm; });
     if (backup && backup.lastRunRef) {
-      openRunLogs(ns, backup.lastRunRef, historicalRuns, null);
+      openRunLogs(ns, backup.lastRunRef, nm, historicalRuns, null);
       return;
     }
-    openLogs(ns, nm);
+    var btn = document.querySelector('.btn-logs[data-ns="' + ns + '"][data-nm="' + nm + '"]');
+    if (btn) {
+      btn.textContent = 'No runs yet';
+      setTimeout(function() { btn.textContent = 'Logs'; }, 3000);
+    }
   }
 
   function onRunPickerChange(sel) {
     var runName = sel.value;
     var ns = sel.dataset.namespace;
     var nm = sel.dataset.backupName;
+    if (!ns || !nm) return;
     var historicalRuns = getHistoricalRuns(ns, nm);
     if (activeTabId) {
       closeTab(activeTabId);
     }
-    openRunLogs(ns, runName, historicalRuns, null);
+    openRunLogs(ns, runName, nm, historicalRuns, null);
   }
 
   function renderTabs() {
@@ -1484,10 +1504,7 @@
     if (tab.recentRuns && tab.recentRuns.length > 1) {
       picker.style.display = '';
       picker.dataset.namespace = tab.namespace;
-      var _bk = allBackups.find(function(b) {
-        return b.namespace === tab.namespace && (b.recentRuns || []).some(function(r) { return r.name === tab.targetName; });
-      });
-      picker.dataset.backupName = _bk ? _bk.name : '';
+      picker.dataset.backupName = tab.backupName;
       picker.innerHTML = '';
       tab.recentRuns.forEach(function(run) {
         var opt = document.createElement('option');
@@ -1517,19 +1534,39 @@
     updateTabHeaderAndDot(activeTab);
 
     document.querySelectorAll('.btn-logs').forEach(function(b) { b.classList.remove('active'); });
-    var activeBtn = document.querySelector('.btn-logs[data-ns="' + activeTab.namespace + '"][data-nm="' + activeTab.targetName + '"]');
+    var activeBtn = document.querySelector('.btn-logs[data-ns="' + activeTab.namespace + '"][data-nm="' + activeTab.backupName + '"]');
     if (activeBtn) activeBtn.classList.add('active');
   }
 
-  function openRunLogs(namespace, runName, recentRuns, phaseCallback) {
+  function releaseActiveRunForTab(tab) {
+    // The only other cleanup for an activeRunState entry is the 'done' SSE
+    // message — delivered over the stream this tab owns. When the tab (or its
+    // stream) dies, release the entry here or it strands forever: buildRow
+    // prefers it over polled data (frozen row) and scheduleFastPoll re-arms
+    // the 3s poll while it exists.
+    if (!tab || !tab.isRunLog) return false;
+    var st = activeRunState[tab.namespace + '/' + tab.backupName];
+    if (st && st.runName === tab.targetName) {
+      delete activeRunState[tab.namespace + '/' + tab.backupName];
+      return true;
+    }
+    return false;
+  }
+
+  function openRunLogs(namespace, runName, backupName, recentRuns, phaseCallback) {
     var tabId = namespace + '/' + runName;
     var existingTab = logTabs.find(function(t) { return t.id === tabId; });
 
     if (existingTab) {
       if (phaseCallback) existingTab.phaseCallback = phaseCallback;
       if (recentRuns) existingTab.recentRuns = recentRuns;
+      if (backupName) existingTab.backupName = backupName;
       activateTab(tabId);
       return;
+    }
+
+    while (logTabs.length >= MAX_LOG_TABS) {
+      closeTab(logTabs[0].id);
     }
 
     var drawer = document.getElementById('log-drawer');
@@ -1546,6 +1583,7 @@
       id: tabId,
       namespace: namespace,
       targetName: runName,
+      backupName: backupName || runName,
       isRunLog: true,
       title: namespace + '/' + runName,
       eventSource: null,
@@ -1639,7 +1677,7 @@
           var snapShort = data.snapshotId ? data.snapshotId.substring(0, 8) : null;
           var sizeStr = data.sizeBytes != null ? formatSize(data.sizeBytes) : null;
           var bk = allBackups.find(function(b) {
-            return b.namespace === namespace && (b.recentRuns || []).some(function(r) { return r.name === runName; });
+            return b.namespace === namespace && b.name === tab.backupName;
           });
           var destination = bk ? (bk.backupSecret || bk.resticSecret || null) : null;
           summary.innerHTML = '<div class="log-summary-title">'
@@ -1669,90 +1707,14 @@
       tab.statusText = 'disconnected';
       updateTabHeaderAndDot(tab);
       renderTabs();
+      // The stream died without a 'done' — release the run state so the row
+      // follows polled truth instead of freezing on the last phase.
+      if (releaseActiveRunForTab(tab)) render();
       es.close();
       tab.eventSource = null;
     };
   }
 
-  function openLogs(namespace, name, since) {
-    var tabId = 'legacy:' + namespace + '/' + name;
-    var existingTab = logTabs.find(function(t) { return t.id === tabId; });
-
-    if (existingTab) {
-      activateTab(tabId);
-      return;
-    }
-
-    var drawer = document.getElementById('log-drawer');
-    drawer.style.display = 'flex';
-
-    var container = document.getElementById('log-content-container');
-    var contentEl = document.createElement('div');
-    contentEl.className = 'log-content';
-    contentEl.id = 'log-content-' + tabId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    contentEl.style.display = 'none';
-    container.appendChild(contentEl);
-
-    var tab = {
-      id: tabId,
-      namespace: namespace,
-      targetName: name,
-      isRunLog: false,
-      title: namespace + '/' + name,
-      eventSource: null,
-      statusDot: '',
-      statusText: 'connecting…',
-      recentRuns: null,
-      phaseCallback: null,
-      contentEl: contentEl
-    };
-    logTabs.push(tab);
-
-    activateTab(tabId);
-
-    var url = '/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/logs';
-    if (since) url += '?since=' + encodeURIComponent(since);
-    var es = new EventSource(url);
-    tab.eventSource = es;
-
-    es.onopen = function() {
-      tab.statusDot = 'live';
-      tab.statusText = 'live';
-      updateTabHeaderAndDot(tab);
-      renderTabs();
-    };
-
-    es.onmessage = function(e) {
-      var data = JSON.parse(e.data);
-      if (data.type === 'phase') {
-        var t = data.time ? new Date(data.time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false}) : '';
-        contentEl.innerHTML += '<div class="log-phase"><span class="phase-time">' + escapeHtml(t) + '</span>'
-          + '<span class="phase-name">' + escapeHtml(data.phase) + '</span>'
-          + '<span>' + escapeHtml(data.message) + '</span></div>';
-      } else if (data.type === 'log') {
-        contentEl.innerHTML += '<div class="log-line">' + escapeHtml(data.line) + '</div>';
-      } else if (data.type === 'done') {
-        var cls = data.result === 'failed' ? 'log-done failed' : 'log-done';
-        contentEl.innerHTML += '<div class="' + cls + '">— ' + escapeHtml(data.result || 'done') + ' —</div>';
-        tab.statusDot = data.result === 'failed' ? 'failed' : 'done';
-        tab.statusText = data.result || 'done';
-        updateTabHeaderAndDot(tab);
-        renderTabs();
-        es.close();
-        tab.eventSource = null;
-      }
-      contentEl.scrollTop = contentEl.scrollHeight;
-    };
-
-    es.onerror = function() {
-      tab.statusDot = '';
-      tab.statusText = 'disconnected';
-      updateTabHeaderAndDot(tab);
-      renderTabs();
-      es.close();
-      tab.eventSource = null;
-    };
-  }
 
   function closeTab(tabId) {
     var index = logTabs.findIndex(function(t) { return t.id === tabId; });
@@ -1768,6 +1730,11 @@
     }
 
     logTabs.splice(index, 1);
+
+    // The tab owned the stream that would have delivered the 'done' cleanup —
+    // closing it must also release the optimistic run state, or the row badge
+    // freezes on the stale phase and the 3s fast-poll never stops (#14).
+    if (releaseActiveRunForTab(tab)) render();
 
     if (logTabs.length === 0) {
       activeTabId = null;
