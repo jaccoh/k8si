@@ -13,8 +13,11 @@ import kubernetes
 import kubernetes.client
 import kubernetes.client.exceptions
 
-from . import quiesce, snapshot
+from . import pool, quiesce, snapshot
 from .cronjob import K8SI_IMAGE, _restic_env_vars
+
+# Cap re-exported for tests / observability.
+_MAX_CONCURRENT_BACKUPS = pool.MAX_CONCURRENT_BACKUPS
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +164,7 @@ async def _cleanup_orphan_snap_pvcs(name: str, namespace: str) -> None:
     "k8si-snap-app-db-<ts>" too).
     """
     pattern = re.compile(rf"^k8si-snap-{re.escape(name)}-\d+$")
+    snap_pattern = re.compile(rf"^k8si-{re.escape(name)}-\d+$")
     v1 = kubernetes.client.CoreV1Api()
 
     def _delete_orphans() -> None:
@@ -173,10 +177,50 @@ async def _cleanup_orphan_snap_pvcs(name: str, namespace: str) -> None:
                 except Exception as exc:
                     log.error("Failed to delete orphan PVC %s: %s", pvc.metadata.name, exc)
 
+        # Leftover VolumeSnapshots wedge every later run in the 30-minute
+        # conflict wait just like the PVCs do (#4). Best-effort: a cluster
+        # without the snapshot CRDs (or a failing list) must not break the run.
+        try:
+            custom = kubernetes.client.CustomObjectsApi()
+            snaps = custom.list_namespaced_custom_object(
+                "snapshot.storage.k8s.io", "v1", namespace, "volumesnapshots"
+            )
+        except Exception as exc:
+            log.debug("Could not list VolumeSnapshots in %s: %s", namespace, exc)
+            snaps = {"items": []}
+        for snap in snaps.get("items", []):
+            snap_name = snap.get("metadata", {}).get("name", "")
+            if snap_pattern.match(snap_name):
+                log.warning("Deleting orphaned VolumeSnapshot %s/%s", namespace, snap_name)
+                try:
+                    custom.delete_namespaced_custom_object(
+                        "snapshot.storage.k8s.io", "v1", namespace, "volumesnapshots", snap_name
+                    )
+                except Exception as exc:
+                    log.error("Failed to delete orphan snapshot %s: %s", snap_name, exc)
+
     await asyncio.to_thread(_delete_orphans)
 
 
 async def run_backup(
+    name: str,
+    namespace: str,
+    spec: dict[str, Any],
+    logger: logging.Logger,
+    body: dict[str, Any] | None = None,
+    run_name: str | None = None,
+    run_ns: str | None = None,
+) -> dict[str, Any]:
+    """Run the full snapshot-first backup. Returns status fields on success.
+
+    Concurrency-capped: each execution parks an executor worker for the whole
+    job duration — unbounded parallel backups froze the operator (#6).
+    """
+    async with pool.SEMAPHORE:
+        return await _run_backup(name, namespace, spec, logger, body, run_name, run_ns)
+
+
+async def _run_backup(
     name: str,
     namespace: str,
     spec: dict[str, Any],
@@ -282,6 +326,12 @@ async def run_backup(
         except Exception as e:
             _emit_event(body, "Warning", "SnapshotFailed", f"Snapshot phase failed: {e}")
             await _log_phase("SnapshotFailed", f"Snapshot phase failed: {e}")
+            # A VolumeSnapshot stuck not-Ready wedges every later run for 30
+            # minutes inside the snapshot-conflict wait — delete it (#4).
+            try:
+                await snapshot.delete_snapshot_and_pvc(namespace, snap_name, None)
+            except Exception as cleanup_exc:
+                logger.warning("Failed to clean up snapshot %s: %s", snap_name, cleanup_exc)
             raise
 
         # Phase 2: create ephemeral PVC from snapshot, run backup job, clean up
@@ -332,6 +382,10 @@ async def run_backup(
         "snapshotId": snapshot_id,
         "sizeBytes": size_bytes,
         "backendType": BACKEND_TYPE,
+        # The actual Job name (k8si-{backup}-{ts}) — recorded on the run so
+        # the reconciler can find/delete the Job (#5); it never equals the
+        # run name, which is what the reconciler used to look up.
+        "jobName": job_name,
     }
 
 
@@ -575,7 +629,7 @@ async def _run_job(
     logger.info("Created Job %s/%s", namespace, job_name)
     raw_logs = ""
     try:
-        await asyncio.to_thread(_wait_job_complete_sync, job_name, namespace, timeout)
+        await pool.to_pool(_wait_job_complete_sync, job_name, namespace, timeout)
         logger.info("Job %s/%s completed", namespace, job_name)
         # Collect logs before pod deletion — pods are gone after Foreground delete.
         raw_logs = await asyncio.to_thread(_collect_job_logs, v1, job_name, namespace)
@@ -584,7 +638,7 @@ async def _run_job(
             await asyncio.to_thread(
                 batch.delete_namespaced_job, job_name, namespace, propagation_policy="Foreground"
             )
-            await asyncio.to_thread(_wait_job_gone_sync, job_name, namespace)
+            await pool.to_pool(_wait_job_gone_sync, job_name, namespace)
         except Exception:
             pass
     return raw_logs

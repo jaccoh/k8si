@@ -170,7 +170,12 @@ def _delete_volume_snapshot_sync(name: str, namespace: str) -> None:
 
 
 async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: str | None) -> None:
-    await asyncio.to_thread(_wait_no_snapshot_in_progress_sync, pvc, namespace)
+    # The conflict (up to 30 min) and readiness (5 min) waits park a thread for
+    # a long time — they run on the dedicated bounded executor, not asyncio's
+    # shared default pool (goal #6, the scheduler-hang bug).
+    from .pool import to_pool
+
+    await to_pool(_wait_no_snapshot_in_progress_sync, pvc, namespace)
     log.info(
         "Creating VolumeSnapshot %s from PVC %s/%s (class=%s)",
         name,
@@ -180,7 +185,7 @@ async def create_snapshot(name: str, namespace: str, pvc: str, snapshot_class: s
     )
     await asyncio.to_thread(_create_volume_snapshot_sync, name, namespace, pvc, snapshot_class)
     log.info("Waiting for VolumeSnapshot %s to be ready", name)
-    await asyncio.to_thread(_wait_snapshot_ready_sync, name, namespace)
+    await to_pool(_wait_snapshot_ready_sync, name, namespace)
     log.info("VolumeSnapshot %s is ready", name)
 
 

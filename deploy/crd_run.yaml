@@ -56,6 +56,9 @@ spec:
                 phase:
                   type: string
                   enum: [Pending, Running, Succeeded, Failed]
+                jobName:
+                  type: string
+                  description: Name of the K8s Job that executed this run (k8si-{backup}-{ts}); the reconciler reads/deletes the Job by this name
                 startTime:
                   type: string
                 completionTime:

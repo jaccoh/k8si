@@ -519,3 +519,48 @@ def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
         assert "Running" in phases, "Must still set Running when backup starts"
 
     run_coro(_run())
+
+
+# ── goal #5: record jobName on the run ──────────────────────────────────────
+
+
+def test_on_run_create_records_job_name_on_success():
+    """run_backup returns the actual Job name (k8si-{backup}-{ts}); it must be
+    persisted on the run status so run_reconcile_timer can find the Job."""
+    from k8si.operator.main import on_run_create
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status") as mock_patch,
+            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record"),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = _BACKUP_OBJ
+            mock_k8s_cls.return_value = mock_k8s
+            mock_run.return_value = {
+                "jobName": "k8si-test-backup-20260818120000",
+                "snapshotId": "abc123",
+                "sizeBytes": 42,
+                "backendType": "restic",
+            }
+
+            await on_run_create(
+                body={},
+                spec=_run_spec(),
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+            success_patch = [
+                c.args[2]
+                for c in mock_patch.call_args_list
+                if c.args[2] and c.args[2].get("phase") == "Succeeded"
+            ]
+            assert success_patch, "success patch missing"
+            assert success_patch[0]["jobName"] == "k8si-test-backup-20260818120000"
+
+    run_coro(_run())

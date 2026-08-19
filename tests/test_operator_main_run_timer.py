@@ -490,3 +490,76 @@ def test_run_timer_deletes_orphaned_job_when_killing_pending():
     assert delete_calls, "Timer must call delete_namespaced_job for orphaned Job"
     assert delete_calls[0][0][1] == "stuck-run"
     assert delete_calls[0][0][2] == "ns"
+
+
+# ── goal #5: reconciler must use the recorded Job name ─────────────────────
+
+
+def test_run_timer_uses_recorded_job_name_not_run_name():
+    """#5: the reconciler read/deleted the K8s Job using the RUN name, but Jobs
+    are named k8si-{backup}-{ts} — never the run name. With status.jobName
+    recorded, lookups and deletes must use it."""
+    from k8si.operator.main import run_reconcile_timer
+
+    body, status = _body_with_labels("Running", "my-backup", start_ago_min=10)
+    status["jobName"] = "k8si-my-backup-20260818120000"
+
+    with (
+        patch("k8si.operator.main.kubernetes.client.BatchV1Api") as mock_batch_cls,
+        patch("k8si.operator.main.kubernetes.client.CustomObjectsApi") as mock_custom_cls,
+        patch("k8si.operator.main._patch_run_status"),
+        patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+    ):
+        batch = MagicMock()
+        batch.read_namespaced_job.return_value = _mock_job(complete=True)
+        mock_batch_cls.return_value = batch
+        custom = MagicMock()
+        custom.get_namespaced_custom_object.return_value = {
+            "spec": {},
+            "metadata": {"name": "my-backup"},
+        }
+        mock_custom_cls.return_value = custom
+
+        run_coro(
+            run_reconcile_timer(
+                body=body,
+                name="my-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
+            )
+        )
+
+    batch.read_namespaced_job.assert_called_once_with("k8si-my-backup-20260818120000", "ns")
+
+
+def test_run_timer_stuck_threshold_honors_job_deadline():
+    """#5: a run with jobTimeout > 3600 was always failed at the hardcoded
+    60-minute stuck threshold while its Job (running under a longer
+    activeDeadlineSeconds) was still legitimately executing."""
+    from k8si.operator.main import run_reconcile_timer
+
+    body, status = _body_with_labels("Running", "my-backup", start_ago_min=70)
+    status["jobName"] = "k8si-my-backup-20260818120000"
+
+    with (
+        patch("k8si.operator.main.kubernetes.client.BatchV1Api") as mock_batch_cls,
+        patch("k8si.operator.main._patch_run_status") as mock_patch,
+    ):
+        batch = MagicMock()
+        job = _mock_job()  # neither Complete nor Failed
+        job.spec.active_deadline_seconds = 7200  # 2h budget — only 70 min elapsed
+        batch.read_namespaced_job.return_value = job
+        mock_batch_cls.return_value = batch
+
+        run_coro(
+            run_reconcile_timer(
+                body=body,
+                name="my-run",
+                namespace="ns",
+                status=status,
+                logger=logging.getLogger(),
+            )
+        )
+
+    mock_patch.assert_not_called()

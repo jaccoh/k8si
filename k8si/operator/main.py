@@ -319,6 +319,19 @@ async def backup_timer(
 # ── K8siBackupRun reconciler ──────────────────────────────────────────────────
 
 
+def _stuck_run_threshold_min(job: object) -> float:
+    """Minutes a Running run may age before the reconciler fails it.
+
+    Default 60; when the Job is visible, its own activeDeadlineSeconds (+5 min
+    grace) is the budget — a backup with jobTimeout > 1h used to be failed at
+    the hardcoded hour mark while its Job was still legitimately running (#5).
+    """
+    deadline = getattr(getattr(job, "spec", None), "active_deadline_seconds", None)
+    if isinstance(deadline, (int, float)):
+        return max(60.0, deadline / 60 + 5)
+    return 60.0
+
+
 @kopf.timer("k8si.io", "v1", "k8sibackupruns", interval=60.0)  # type: ignore[arg-type]
 async def run_reconcile_timer(
     body: dict,
@@ -393,23 +406,28 @@ async def run_reconcile_timer(
             start = datetime.fromisoformat(start_str)
             age_min = (now - start).total_seconds() / 60
 
+        # Jobs are named k8si-{backup}-{ts}, never the run name — use the
+        # jobName recorded on the run status (#5).
+        job_name = str(status.get("jobName") or name)
+
         # Check the K8s Job — it may have finished while run status wasn't updated.
         batch = kubernetes.client.BatchV1Api()
         job_complete = False
         job_failed = False
+        job = None
         try:
-            job = await asyncio.to_thread(batch.read_namespaced_job, name, namespace)
+            job = await asyncio.to_thread(batch.read_namespaced_job, job_name, namespace)
             conditions = getattr(getattr(job, "status", None), "conditions", None) or []
             job_complete = any(c.type == "Complete" and c.status == "True" for c in conditions)
             job_failed = any(c.type == "Failed" and c.status == "True" for c in conditions)
         except kubernetes.client.exceptions.ApiException as exc:
             if exc.status != 404:
                 logger.warning(
-                    "run_reconcile_timer: could not read job %s/%s: %s", namespace, name, exc
+                    "run_reconcile_timer: could not read job %s/%s: %s", namespace, job_name, exc
                 )
         except Exception as exc:
             logger.warning(
-                "run_reconcile_timer: could not read job %s/%s: %s", namespace, name, exc
+                "run_reconcile_timer: could not read job %s/%s: %s", namespace, job_name, exc
             )
 
         if job_complete:
@@ -467,7 +485,7 @@ async def run_reconcile_timer(
 
         if job_failed:
             message = "job failed — reconciled by timer"
-        elif start_str and age_min >= 60:
+        elif start_str and age_min >= _stuck_run_threshold_min(job):
             logger.warning(
                 "K8siBackupRun %s/%s stuck Running for %.0f min, marking Failed",
                 namespace,
@@ -492,11 +510,11 @@ async def run_reconcile_timer(
     try:
         await asyncio.to_thread(
             batch.delete_namespaced_job,
-            name,
+            status.get("jobName") or name,
             namespace,
             propagation_policy="Background",
         )
-        logger.info("Deleted orphaned Job %s/%s", namespace, name)
+        logger.info("Deleted orphaned Job %s/%s", namespace, status.get("jobName") or name)
     except kubernetes.client.exceptions.ApiException as exc:
         if exc.status != 404:
             logger.warning("Could not delete orphaned Job %s/%s: %s", namespace, name, exc)
@@ -661,6 +679,9 @@ async def on_run_create(
             "completionTime": completion,
             "message": "",
         }
+        if result.get("jobName"):
+            # The reconciler reads/deletes the Job by this name (#5).
+            artifact_patch["jobName"] = result["jobName"]
         if result.get("snapshotId"):
             artifact_patch["snapshotId"] = result["snapshotId"]
         if result.get("sizeBytes") is not None:

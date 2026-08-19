@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import kubernetes.client.exceptions
 import pytest
 
-from k8si.operator.workflow import _wait_job_complete_sync, run_backup
+from k8si.operator.workflow import (
+    _cleanup_orphan_snap_pvcs,
+    _wait_job_complete_sync,
+    run_backup,
+)
 
 
 def test_run_backup_emits_kopf_events() -> None:
@@ -915,3 +919,141 @@ def test_log_phase_offloads_status_patch_via_to_thread() -> None:
         "_write_run_log must be invoked via asyncio.to_thread, not directly on the event loop"
     )
     assert to_thread_funcs.count(workflow._write_run_log) >= 5
+
+
+# ── goals #4/#5/#6: snapshot cleanup, jobName, bounded concurrency ──────────
+
+
+def test_run_backup_returns_job_name():
+    """#5: the reconciler looks Jobs up by the RUN name, but Jobs are named
+    k8si-{backup}-{ts} with a timestamp minted inside run_backup — the names
+    can never match. run_backup must return the actual Job name so the caller
+    can record it on the run status."""
+    spec = {
+        "pvc": "test-pvc",
+        "resticSecret": "test-secret",
+        "schedule": "0 2 * * *",
+        "volumeSnapshotClass": "test-snapclass",
+    }
+    body = {"metadata": {"name": "test-backup", "namespace": "default"}}
+    _snap = "k8si.operator.workflow.snapshot"
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context"),
+        patch(f"{_snap}.create_snapshot", new_callable=AsyncMock),
+        patch(f"{_snap}.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch(f"{_snap}.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value="node1"),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock) as mock_run_job,
+    ):
+        mock_run_job.return_value = "Created snapshot with root k1 and ID abc in 1s"
+        result = asyncio.run(run_backup("test-backup", "default", spec, MagicMock(), body))
+
+    job_name = mock_run_job.call_args[0][0]["metadata"]["name"]
+    assert job_name.startswith("k8si-test-backup-"), job_name
+    assert result["jobName"] == job_name
+
+
+def test_snapshot_phase_failure_cleans_up_created_snapshot():
+    """#4: a VolumeSnapshot left behind by a failed phase 1 wedges every later
+    run for 30 minutes inside the snapshot-conflict wait — the snapshot must
+    be deleted before the failure is re-raised."""
+    spec = {
+        "pvc": "test-pvc",
+        "resticSecret": "test-secret",
+        "schedule": "0 2 * * *",
+        "volumeSnapshotClass": "test-snapclass",
+    }
+    body = {"metadata": {"name": "test-backup", "namespace": "default"}}
+    _snap = "k8si.operator.workflow.snapshot"
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context"),
+        patch(f"{_snap}.create_snapshot", new_callable=AsyncMock) as mock_create_snap,
+        patch(f"{_snap}.delete_snapshot_and_pvc", new_callable=AsyncMock) as mock_delete,
+    ):
+        mock_create_snap.side_effect = TimeoutError("snapshot not ready after 300s")
+        with pytest.raises(TimeoutError):
+            asyncio.run(run_backup("test-backup", "default", spec, MagicMock(), body))
+
+    mock_delete.assert_called_once()
+    assert mock_delete.call_args[0][0] == "default"
+    assert mock_delete.call_args[0][1].startswith("k8si-test-backup-")
+    assert mock_delete.call_args[0][2] is None  # no ephemeral PVC exists yet
+
+
+def test_cleanup_orphan_snap_pvcs_also_sweeps_volume_snapshots():
+    """#4: the orphan sweep must cover leftover k8si-{name}-<ts> VolumeSnapshots
+    too, not just the ephemeral PVCs — both wedge later runs."""
+    with (
+        patch("kubernetes.client.CoreV1Api") as mock_v1_cls,
+        patch("kubernetes.client.CustomObjectsApi") as mock_custom_cls,
+    ):
+        v1 = MagicMock()
+        v1.list_namespaced_persistent_volume_claim.return_value = MagicMock(items=[])
+        mock_v1_cls.return_value = v1
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {
+            "items": [
+                {"metadata": {"name": "k8si-test-backup-20260101000000"}},
+                {"metadata": {"name": "k8si-other-backup-20260101000000"}},
+                {"metadata": {"name": "someone-elses-snapshot"}},
+            ]
+        }
+        mock_custom_cls.return_value = custom
+
+        asyncio.run(_cleanup_orphan_snap_pvcs("test-backup", "default"))
+
+    custom.delete_namespaced_custom_object.assert_called_once_with(
+        "snapshot.storage.k8s.io",
+        "v1",
+        "default",
+        "volumesnapshots",
+        "k8si-test-backup-20260101000000",
+    )
+
+
+def test_run_backup_concurrency_is_capped():
+    """#6: concurrent run_backup executions must be bounded — each parks a
+    worker for the full job duration, and unbounded concurrency starves the
+    shared default executor until every timer (including backup_timer) freezes
+    (the recorded scheduler-hang bug)."""
+    import k8si.operator.workflow as wf
+
+    spec = {
+        "pvc": "test-pvc",
+        "resticSecret": "test-secret",
+        "schedule": "0 2 * * *",
+        "backupMode": "direct",
+    }
+    body = {"metadata": {"name": "test-backup", "namespace": "default"}}
+    _snap = "k8si.operator.workflow.snapshot"
+    state = {"live": 0, "max": 0}
+
+    async def probe_job(job_body, namespace, timeout, logger):
+        state["live"] += 1
+        state["max"] = max(state["max"], state["live"])
+        await asyncio.sleep(0.05)
+        state["live"] -= 1
+        return "Created snapshot with root k1 and ID abc in 1s"
+
+    async def run_all():
+        with (
+            patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+            patch("k8si.operator.workflow.quiesce.quiesce_context"),
+            patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+            patch("k8si.operator.workflow._run_job", probe_job),
+        ):
+            return await asyncio.gather(
+                *[
+                    wf.run_backup("test-backup", "default", spec, MagicMock(), body)
+                    for _ in range(4)
+                ]
+            )
+
+    asyncio.run(run_all())
+    assert state["max"] <= wf._MAX_CONCURRENT_BACKUPS, (
+        f"observed {state['max']} concurrent run_backups, cap is {wf._MAX_CONCURRENT_BACKUPS}"
+    )
