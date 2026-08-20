@@ -14,6 +14,12 @@ spec:
         app: k8si-operator
     spec:
       serviceAccountName: k8si-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: operator
           image: ghcr.io/jaccoh/k8si:v0.9.0rc6
@@ -21,6 +27,11 @@ spec:
           env:
             - name: K8SI_IMAGE
               value: ghcr.io/jaccoh/k8si:v0.9.0rc6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           resources:
             requests:
               cpu: 50m

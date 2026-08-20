@@ -112,8 +112,47 @@ def _is_in_window(window: dict, now: datetime | None = None) -> bool:
     return now_m >= s or now_m < e
 
 
+def _webhook_url_allowed(url: str) -> bool:
+    """Reject webhook URLs that point back into the operator's own network.
+
+    notifyOnSuccess/notifyOnFailure are free-text CRD fields, and a patched
+    spec would otherwise make the operator POST into the cluster (cloud
+    metadata, kube-apiserver, internal services — goals #3). Blocks non-http(s)
+    schemes and literal private/loopback/link-local targets. Hostname-based
+    SSRF (a public name resolving internally) needs a NetworkPolicy; this is
+    the address-literal gate.
+    """
+    import ipaddress
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return True  # a hostname, not an address literal
+    return not (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    )
+
+
 async def _notify_webhook(url: str, payload: dict[str, Any]) -> None:
     """POST a JSON payload to a webhook URL; silently swallows all errors."""
+    if not _webhook_url_allowed(url):
+        log.warning("Webhook URL %s refused by SSRF guard — not delivered", url)
+        return
     try:
         await asyncio.to_thread(httpx.post, url, json=payload, timeout=10.0)
     except Exception as e:
