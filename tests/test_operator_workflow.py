@@ -1057,3 +1057,38 @@ def test_run_backup_concurrency_is_capped():
     assert state["max"] <= wf._MAX_CONCURRENT_BACKUPS, (
         f"observed {state['max']} concurrent run_backups, cap is {wf._MAX_CONCURRENT_BACKUPS}"
     )
+
+
+def test_cleanup_skips_pvcs_mounted_by_running_pods():
+    """#8: after an operator restart, a re-invoked run_backup's orphan sweep
+    could delete the ephemeral PVC that the ORIGINAL still-running backup Job
+    has mounted. PVCs mounted by any pod in the namespace must be skipped."""
+    orphan = MagicMock()
+    orphan.metadata.name = "k8si-snap-x-20260101000000"
+    mounted = MagicMock()
+    mounted.metadata.name = "k8si-snap-x-20260202000000"
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_persistent_volume_claim.return_value.items = [orphan, mounted]
+
+    pod = MagicMock()
+    vol = MagicMock()
+    vol.persistent_volume_claim.claim_name = "k8si-snap-x-20260202000000"
+    vol.persistent_volume_claim = vol.persistent_volume_claim  # keep attribute
+    other = MagicMock()
+    other.persistent_volume_claim = None
+    pod.spec.volumes = [vol, other]
+    mock_v1.list_namespaced_pod.return_value.items = [pod]
+
+    with (
+        patch("kubernetes.client.CoreV1Api", return_value=mock_v1),
+        patch("kubernetes.client.CustomObjectsApi") as mock_custom_cls,
+    ):
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+        mock_custom_cls.return_value = custom
+
+        asyncio.run(_cleanup_orphan_snap_pvcs("x", "default"))
+
+    mock_v1.delete_namespaced_persistent_volume_claim.assert_called_once_with(
+        "k8si-snap-x-20260101000000", "default"
+    )

@@ -168,9 +168,18 @@ async def _cleanup_orphan_snap_pvcs(name: str, namespace: str) -> None:
     v1 = kubernetes.client.CoreV1Api()
 
     def _delete_orphans() -> None:
+        # PVCs still mounted by any pod in the namespace are in active use —
+        # e.g. the Job of an original run whose operator restarted and
+        # re-invoked us (#8). Never sweep those.
+        mounted: set[str] = set()
+        for pod in v1.list_namespaced_pod(namespace).items:
+            for vol in pod.spec.volumes or []:
+                if vol.persistent_volume_claim and vol.persistent_volume_claim.claim_name:
+                    mounted.add(vol.persistent_volume_claim.claim_name)
+
         pvcs = v1.list_namespaced_persistent_volume_claim(namespace)
         for pvc in pvcs.items:
-            if pattern.match(pvc.metadata.name):
+            if pattern.match(pvc.metadata.name) and pvc.metadata.name not in mounted:
                 log.warning("Deleting orphaned snapshot PVC %s/%s", namespace, pvc.metadata.name)
                 try:
                     v1.delete_namespaced_persistent_volume_claim(pvc.metadata.name, namespace)

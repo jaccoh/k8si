@@ -563,6 +563,38 @@ async def run_reconcile_timer(
     )
 
 
+async def _run_has_live_job(namespace: str, run_name: str) -> bool:
+    """True if this run is already Running with a live K8s Job.
+
+    After an operator restart, kopf re-invokes on_run_create for unfinished
+    runs while the in-memory _running set is empty — re-executing would run a
+    second Job against the same PVC/repo (#8)."""
+    try:
+        custom = kubernetes.client.CustomObjectsApi()
+        run = await asyncio.to_thread(
+            custom.get_namespaced_custom_object,
+            "k8si.io",
+            "v1",
+            namespace,
+            "k8sibackupruns",
+            run_name,
+        )
+    except Exception:
+        return False
+    status = run.get("status", {})
+    if status.get("phase") != "Running":
+        return False
+    job_name = status.get("jobName")
+    if not job_name:
+        return False
+    try:
+        batch = kubernetes.client.BatchV1Api()
+        await asyncio.to_thread(batch.read_namespaced_job, str(job_name), namespace)
+        return True
+    except Exception:
+        return False
+
+
 @kopf.on.create("k8si.io", "v1", "k8sibackupruns")  # type: ignore[arg-type]
 async def on_run_create(
     body: dict,
@@ -591,6 +623,18 @@ async def on_run_create(
                 "completionTime": datetime.now(tz=UTC).isoformat(),
                 "message": "concurrent run rejected",
             },
+        )
+        return
+
+    # Operator restart: kopf re-invokes this handler for unfinished runs while
+    # _running is empty. If the original attempt's Job is still alive, refuse —
+    # the reconciler finishes the run from the Job state instead (#8).
+    if await _run_has_live_job(namespace, name):
+        logger.warning(
+            "K8siBackupRun %s/%s already Running with a live Job (operator restart?) —"
+            " leaving it to the reconciler instead of duplicating the backup",
+            namespace,
+            name,
         )
         return
 

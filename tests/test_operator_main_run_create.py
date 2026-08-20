@@ -497,9 +497,12 @@ def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
             patch("k8si.operator.main.metrics.record"),
         ):
             mock_k8s = MagicMock()
-            # First get_namespaced_custom_object: backup lookup.
-            # Second: re-read run after backup — timer already killed it.
+            # get_namespaced_custom_object sequence:
+            # 1. _run_has_live_job re-read (Pending — fresh run, no live Job)
+            # 2. backup lookup
+            # 3. re-read run after backup — timer already killed it.
             mock_k8s.get_namespaced_custom_object.side_effect = [
+                {"status": {"phase": "Pending"}},
                 _BACKUP_OBJ,
                 {"status": {"phase": "Failed"}, "metadata": {"name": "test-run"}},
             ]
@@ -564,3 +567,104 @@ def test_on_run_create_records_job_name_on_success():
             assert success_patch[0]["jobName"] == "k8si-test-backup-20260818120000"
 
     run_coro(_run())
+
+
+# ── goal #8: restart mid-backup must not duplicate the run ──────────────────
+
+
+def test_on_run_create_refuses_when_run_already_running_with_live_job():
+    """After an operator restart, kopf re-invokes on_run_create for an
+    unfinished run while the in-memory _running set is empty. If the run is
+    already Running with a live Job, starting a second backup would run two
+    Jobs against the same PVC/repo and the orphan sweep could delete the
+    in-flight ephemeral PVC — refuse instead and let run_reconcile_timer
+    finish the run from the Job state (#8)."""
+    from k8si.operator.main import on_run_create
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status") as mock_patch,
+            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record"),
+            patch("k8si.operator.main._run_has_live_job", new_callable=AsyncMock) as mock_live,
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = _BACKUP_OBJ
+            mock_k8s_cls.return_value = mock_k8s
+            mock_live.return_value = True
+
+            await on_run_create(
+                body={},
+                spec=_run_spec(),
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+            mock_run.assert_not_awaited()
+            phases = [
+                c.args[2].get("phase")
+                for c in mock_patch.call_args_list
+                if c.args[2] and c.args[2].get("phase")
+            ]
+            assert "Running" not in phases
+
+    run_coro(_run())
+
+
+def test_run_has_live_job_true_when_running_with_existing_job():
+    from k8si.operator.main import _run_has_live_job
+
+    with (
+        patch("kubernetes.client.CustomObjectsApi") as mock_custom_cls,
+        patch("kubernetes.client.BatchV1Api") as mock_batch_cls,
+    ):
+        custom = MagicMock()
+        custom.get_namespaced_custom_object.return_value = {
+            "status": {"phase": "Running", "jobName": "k8si-b-20260818"}
+        }
+        mock_custom_cls.return_value = custom
+        mock_batch_cls.return_value.read_namespaced_job.return_value = MagicMock()
+
+        import asyncio
+
+        assert asyncio.run(_run_has_live_job("default", "my-run")) is True
+
+
+def test_run_has_live_job_false_when_job_gone():
+    import kubernetes.client.exceptions
+
+    from k8si.operator.main import _run_has_live_job
+
+    with (
+        patch("kubernetes.client.CustomObjectsApi") as mock_custom_cls,
+        patch("kubernetes.client.BatchV1Api") as mock_batch_cls,
+    ):
+        custom = MagicMock()
+        custom.get_namespaced_custom_object.return_value = {
+            "status": {"phase": "Running", "jobName": "k8si-b-20260818"}
+        }
+        mock_custom_cls.return_value = custom
+        batch = MagicMock()
+        exc = kubernetes.client.exceptions.ApiException(status=404)
+        batch.read_namespaced_job.side_effect = exc
+        mock_batch_cls.return_value = batch
+
+        import asyncio
+
+        assert asyncio.run(_run_has_live_job("default", "my-run")) is False
+
+
+def test_run_has_live_job_false_for_pending_run():
+    from k8si.operator.main import _run_has_live_job
+
+    with patch("kubernetes.client.CustomObjectsApi") as mock_custom_cls:
+        custom = MagicMock()
+        custom.get_namespaced_custom_object.return_value = {"status": {"phase": "Pending"}}
+        mock_custom_cls.return_value = custom
+
+        import asyncio
+
+        assert asyncio.run(_run_has_live_job("default", "my-run")) is False
