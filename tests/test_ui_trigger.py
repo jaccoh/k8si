@@ -169,3 +169,64 @@ def test_trigger_allows_when_no_active_runs(mock_api_cls: MagicMock) -> None:
     resp = client.post("/api/backups/default/mybackup/trigger")
 
     assert resp.status_code == 200
+
+
+# ── goal #2: optional token auth on mutating endpoints ──────────────────────
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_trigger_requires_token_when_configured(mock_api_cls: MagicMock) -> None:
+    """When K8SI_UI_TOKEN is set, the mutating endpoints (trigger/pause) must
+    require a matching X-K8si-Token header — the dashboard is exposed on a
+    NodePort and can otherwise be driven by anyone on the network (goals #2)."""
+    import k8si.ui.app as app_module
+
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _backup_obj()
+
+    with patch.object(app_module, "_UI_TOKEN", "sekrit"):
+        client = _make_client()
+        resp = client.post("/api/backups/default/mybackup/trigger")
+        assert resp.status_code == 401
+
+        resp = client.post(
+            "/api/backups/default/mybackup/trigger", headers={"X-K8si-Token": "wrong"}
+        )
+        assert resp.status_code == 401
+
+        resp = client.post(
+            "/api/backups/default/mybackup/trigger", headers={"X-K8si-Token": "sekrit"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["triggered"] is True
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_pause_requires_token_when_configured(mock_api_cls: MagicMock) -> None:
+    import k8si.ui.app as app_module
+
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.get_namespaced_custom_object.return_value = _backup_obj()
+
+    with patch.object(app_module, "_UI_TOKEN", "sekrit"):
+        client = _make_client()
+        resp = client.patch("/api/backups/default/mybackup/paused", json={"paused": True})
+        assert resp.status_code == 401
+
+
+@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
+def test_reads_stay_open_with_token_configured(mock_api_cls: MagicMock) -> None:
+    """The dashboard is a read-mostly view — GETs stay accessible without the
+    token; only mutations are gated."""
+    import k8si.ui.app as app_module
+
+    mock_api = MagicMock()
+    mock_api_cls.return_value = mock_api
+    mock_api.list_namespaced_custom_object.return_value = {"items": []}
+
+    with patch.object(app_module, "_UI_TOKEN", "sekrit"):
+        client = _make_client()
+        resp = client.get("/api/backups")
+        assert resp.status_code == 200

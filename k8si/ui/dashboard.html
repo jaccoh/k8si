@@ -1277,6 +1277,27 @@
     }, 5000);
   }
 
+  // Mutating API calls carry the optional dashboard token (K8SI_UI_TOKEN on
+  // the server): stored locally after a one-time prompt, retried once on 401.
+  function apiFetch(url, opts) {
+    opts = opts || {};
+    var token = localStorage.getItem('k8si-ui-token');
+    if (token) {
+      opts.headers = Object.assign({}, opts.headers, {'X-K8si-Token': token});
+    }
+    return fetch(url, opts).then(function(resp) {
+      if (resp.status === 401) {
+        var t = window.prompt('Dashboard token required (set K8SI_UI_TOKEN on the k8si-ui deployment):');
+        if (t) {
+          localStorage.setItem('k8si-ui-token', t);
+          opts.headers = Object.assign({}, opts.headers, {'X-K8si-Token': t});
+          return fetch(url, opts);
+        }
+      }
+      return resp;
+    });
+  }
+
   // ── Backup trigger ──────────────────────────────────────────────────────────
 
   function triggerBackup(namespace, name, btn) {
@@ -1288,7 +1309,7 @@
     activeRunState[runKey] = {runName: null, phase: 'queued'};
     render();
 
-    fetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/trigger', {
+    apiFetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/trigger', {
       method: 'POST',
     })
       .then(function(resp) {
@@ -1342,7 +1363,7 @@
     btn.disabled = true;
     btn.textContent = paused ? 'Pausing…' : 'Resuming…';
 
-    fetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/paused', {
+    apiFetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/paused', {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({paused: paused}),

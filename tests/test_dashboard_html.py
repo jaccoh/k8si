@@ -164,3 +164,18 @@ def test_escape_html_escapes_single_quotes():
         "built by buildStatusBadge/buildSparkline/buildRow, enabling script "
         "injection (e.g. name = x');alert(document.cookie);// )"
     )
+
+
+def test_mutating_calls_use_token_aware_fetch():
+    """Goal #2: trigger/pause fetches must go through apiFetch (attaches the
+    optional X-K8si-Token from localStorage and retries once after a 401
+    prompt) — a bare fetch would fail permanently once K8SI_UI_TOKEN is set."""
+    html = DASHBOARD_HTML.read_text()
+    assert "function apiFetch" in html, "apiFetch wrapper missing"
+    assert "'X-K8si-Token'" in html, "token header not attached"
+    assert "fetch('/api/backups/' +" not in html, (
+        "mutating calls must not use bare fetch — they would bypass the token"
+    )
+    assert html.count("apiFetch('/api/backups/") == 2, (
+        "both mutating endpoints (trigger + paused) must use apiFetch"
+    )

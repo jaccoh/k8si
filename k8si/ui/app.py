@@ -11,13 +11,26 @@ from typing import Any
 import kubernetes
 import kubernetes.client
 import kubernetes.client.exceptions
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 GROUP = "k8si.io"
 VERSION = "v1"
 PLURAL = "k8sibackups"
 RUN_PLURAL = "k8sibackupruns"
+
+# Optional auth for the mutating endpoints (goals #2): the dashboard is
+# exposed on a NodePort, and without this anyone on the network can trigger
+# backups or pause them cluster-wide. Unset = open (LAN-trust default, e.g.
+# behind an authenticating proxy); set = X-K8si-Token header required.
+_UI_TOKEN = os.environ.get("K8SI_UI_TOKEN", "")
+
+
+def _require_token(request: Request) -> None:
+    import hmac
+
+    if _UI_TOKEN and not hmac.compare_digest(request.headers.get("X-K8si-Token", ""), _UI_TOKEN):
+        raise HTTPException(status_code=401, detail="missing or invalid X-K8si-Token header")
 
 
 def _is_new_run(last_backup_time: str | None, since: str | None) -> bool:
@@ -128,7 +141,7 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@app.post("/api/backups/{namespace}/{name}/trigger")
+@app.post("/api/backups/{namespace}/{name}/trigger", dependencies=[Depends(_require_token)])
 def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
     custom = kubernetes.client.CustomObjectsApi()
     try:
@@ -211,7 +224,7 @@ def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
     return {"triggered": True, "triggeredAt": triggered_at, "runName": run_name}
 
 
-@app.patch("/api/backups/{namespace}/{name}/paused")
+@app.patch("/api/backups/{namespace}/{name}/paused", dependencies=[Depends(_require_token)])
 def set_paused(namespace: str, name: str, body: dict[str, Any]) -> dict[str, Any]:
     custom = kubernetes.client.CustomObjectsApi()
     try:
