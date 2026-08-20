@@ -16,11 +16,11 @@ spec:
       serviceAccountName: k8si-operator
       containers:
         - name: operator
-          image: ghcr.io/jaccoh/k8si:v0.9.0rc5
+          image: ghcr.io/jaccoh/k8si:v0.9.0rc6
           command: [python, -m, kopf, run, --all-namespaces, -m, k8si.operator.main]
           env:
             - name: K8SI_IMAGE
-              value: ghcr.io/jaccoh/k8si:v0.9.0rc5
+              value: ghcr.io/jaccoh/k8si:v0.9.0rc6
           resources:
             requests:
               cpu: 50m
