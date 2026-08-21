@@ -22,11 +22,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
-          image: ghcr.io/jaccoh/k8si:v0.9.0rc6
+          image: ghcr.io/jaccoh/k8si:v0.9.0
           command: [python, -m, kopf, run, --all-namespaces, -m, k8si.operator.main]
           env:
             - name: K8SI_IMAGE
-              value: ghcr.io/jaccoh/k8si:v0.9.0rc6
+              value: ghcr.io/jaccoh/k8si:v0.9.0
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
