@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,73 @@ _running: set[tuple[str, str]] = set()
 # each patch attempt and retry a couple of times on resourceVersion conflicts.
 _PARENT_UPDATE_ATTEMPTS = 3
 _PARENT_UPDATE_BACKOFF_S = 0.2
+
+# How many finished K8siBackupRuns to keep per backup. Every run object
+# carries a 60s kopf timer for the operator's whole life, so without pruning
+# they accumulate forever. Override with K8SI_RUN_RETENTION.
+_RUN_RETENTION_DEFAULT = 30
+
+
+def _resolve_run_retention() -> int:
+    raw = os.environ.get("K8SI_RUN_RETENTION", "")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _RUN_RETENTION_DEFAULT
+
+
+async def _prune_old_runs(
+    custom: Any, namespace: str, backup_name: str, keep: int | None = None
+) -> None:
+    """Delete older K8siBackupRuns of *backup_name*, keeping the newest *keep*.
+
+    Called whenever a run reaches a terminal phase. Best-effort by design:
+    retention hygiene must never fail a backup that just succeeded (or
+    finished failing) — every error is swallowed after logging.
+    """
+    if keep is None:
+        keep = _resolve_run_retention()
+    try:
+        runs = await asyncio.to_thread(
+            custom.list_namespaced_custom_object,
+            "k8si.io",
+            "v1",
+            namespace,
+            "k8sibackupruns",
+            label_selector=f"k8si.io/backup={backup_name}",
+        )
+        items = list(runs.get("items", []))
+        if len(items) <= keep:
+            return
+        # Runs are named {backup}-{YYYYmmddHHMM%S} — creationTimestamp with the
+        # name as tiebreaker is creation order, oldest first.
+        items.sort(
+            key=lambda r: (
+                r.get("metadata", {}).get("creationTimestamp", ""),
+                r.get("metadata", {}).get("name", ""),
+            )
+        )
+        for run in items[:-keep]:
+            run_name = run.get("metadata", {}).get("name", "")
+            try:
+                await asyncio.to_thread(
+                    custom.delete_namespaced_custom_object,
+                    "k8si.io",
+                    "v1",
+                    namespace,
+                    "k8sibackupruns",
+                    run_name,
+                )
+                log.info("Pruned old K8siBackupRun %s/%s", namespace, run_name)
+            except kubernetes.client.exceptions.ApiException as e:
+                if e.status != 404:
+                    log.warning("Could not prune K8siBackupRun %s/%s: %s", namespace, run_name, e)
+            except Exception as e:
+                log.warning("Could not prune K8siBackupRun %s/%s: %s", namespace, run_name, e)
+    except Exception as e:
+        log.warning(
+            "Run retention check failed for %s/%s (continuing): %s", namespace, backup_name, e
+        )
 
 
 def _has_active_run_sync(namespace: str, backup_name: str) -> bool:
@@ -521,6 +589,7 @@ async def run_reconcile_timer(
                         backup_spec,
                         duration,
                     )
+                    await _prune_old_runs(custom, namespace, backup_name)
                 except Exception as e:
                     logger.warning(
                         "run_reconcile_timer: could not update parent %s/%s: %s",
@@ -608,6 +677,7 @@ async def run_reconcile_timer(
         duration,
         error=message,
     )
+    await _prune_old_runs(custom, namespace, backup_name)
 
 
 async def _run_has_live_job(namespace: str, run_name: str) -> bool:
@@ -823,6 +893,7 @@ async def on_run_create(
             backup_spec,
             duration,
         )
+        await _prune_old_runs(custom, namespace, backup_name)
     except Exception as e:
         duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
         logger.error("K8siBackupRun %s/%s failed: %s", namespace, name, e)
@@ -847,6 +918,7 @@ async def on_run_create(
             name,
             {"phase": "Failed", "completionTime": completion, "message": str(e)},
         )
+        await _prune_old_runs(custom, namespace, backup_name)
     finally:
         _running.discard(key)
 
