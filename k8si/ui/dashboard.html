@@ -1218,8 +1218,16 @@
         + ns + '\',\'' + nm + '\',false,this)">' + ICON_PLAY + '</button>'
       : '<button class="btn-trigger" aria-label="Pause" title="Pause" onclick="setPaused(\''
         + ns + '\',\'' + nm + '\',true,this)">' + ICON_PAUSE + '</button>';
-    const triggerBtn = '<button class="btn-trigger" aria-label="Backup now" title="Backup now"'
-      + (backup.paused ? ' disabled' : '')
+    // The clicked button gets detached by every render() (fast-poll re-renders
+    // every 3s during a run), so the LIVE phase must drive the freshly built
+    // button too — otherwise it renders enabled and stateless mid-run,
+    // inviting a second click that the backend rejects with a 409.
+    const livePhase = liveRun ? liveRun.phase : null;
+    const btnState = livePhase === 'queued' || livePhase === 'running' ? livePhase : null;
+    const btnTitle = btnState === 'queued' ? 'Queued…' : btnState === 'running' ? 'Running…' : 'Backup now';
+    const triggerBtn = '<button class="btn-trigger' + (btnState ? ' ' + btnState : '') + '"'
+      + ' aria-label="Backup now" title="' + btnTitle + '"'
+      + ((backup.paused || btnState) ? ' disabled' : '')
       + ' onclick="triggerBackup(\'' + ns + '\',\'' + nm + '\',this)">' + ICON_PLAY + '</button>';
     const pausedBadge = backup.paused ? '<span class="badge-paused">paused</span>' : '';
     const restoreBadge = (backup.lastRestoreResult === 'failed')

@@ -70,6 +70,9 @@ const dom = new JSDOM(html, {
       if (u === "/api/version") {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ version: "dom-test" }) });
       }
+      if (u.includes("/trigger")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ runName: "zeta-run-x" }) });
+      }
       if (u === "/api/backups") {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(FIXTURES) });
       }
@@ -148,6 +151,20 @@ check("row actions are icon-only buttons in one aligned group", () => {
   const ths = [...document.querySelector(".backup-table thead").querySelectorAll("th")];
   assert(ths.length === 8, `8 headers expected per table — got ${ths.length}`);
   assert(!ths.some((th) => th.textContent.trim() === "Logs"), "no separate Logs header column");
+});
+
+check("trigger button reflects live phase across re-renders (proof.mjs)", () => {
+  // proof.mjs (2026-08-30 22:17): after triggerBackup's optimistic render()
+  // the clicked button is detached; the FRESH button used to render with no
+  // state and enabled — inviting a second click that 409s.
+  const btn = document.querySelector('button[aria-label="Backup now"]');
+  assert(btn, "no Backup now button rendered");
+  window.triggerBackup("beta", "zeta", btn);
+  const fresh = document.querySelector('button[aria-label="Backup now"]');
+  assert(fresh && fresh !== btn, "render() must have replaced the clicked button");
+  assert(fresh.disabled === true, "fresh button must be disabled while the run is queued");
+  assert(fresh.className.includes("queued"), `fresh button must carry the queued class — got "${fresh.className}"`);
+  assert((fresh.title || "").includes("Queued"), `tooltip must reflect the state — got "${fresh.title}"`);
 });
 
 check("queued backup renders a queued status badge", () => {
