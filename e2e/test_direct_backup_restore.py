@@ -129,7 +129,7 @@ def test_direct_backup_and_restore(ns, repo_pvc, k8si_image):
         "kind": "K8siBackup",
         "metadata": {"name": "e2e-direct", "namespace": ns},
     }
-    result = asyncio.run(run_backup("e2e-direct", ns, spec, log, body))
+    result = asyncio.run(run_backup("e2e-direct", ns, spec, log, body, run_name="e2e-direct-run"))
     assert result["lastBackupResult"] == "success", f"Unexpected result: {result}"
     log.info("Direct backup succeeded: %s", result)
 

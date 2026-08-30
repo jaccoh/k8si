@@ -19,7 +19,6 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
-LAST_BACKUP_FILE = ".k8si-last-backup"
 ARTIFACT_MARKER = "K8SI_ARTIFACT "
 
 
@@ -113,7 +112,6 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
         except BackupError as e:
             log.error("Repository check failed: %s", e.stderr)
 
-    _write_last_backup_timestamp(config.data_path)
     log.info("PVC backup complete.")
 
 
@@ -161,11 +159,3 @@ def _resolve_artifact(config: Config, backend: BackupBackend) -> dict | None:
     except Exception as e:
         log.warning("Artifact resolution via backend metadata failed: %s", e)
         return None
-
-
-def _write_last_backup_timestamp(data_path: Path) -> None:
-    ts_file = data_path / LAST_BACKUP_FILE
-    try:
-        ts_file.write_text(datetime.now(tz=UTC).isoformat())
-    except OSError as e:
-        log.warning("Could not write last-backup timestamp: %s", e)

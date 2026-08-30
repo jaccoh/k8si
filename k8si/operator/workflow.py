@@ -34,24 +34,16 @@ log = logging.getLogger(__name__)
 
 BACKEND_TYPE: str = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
 
+
+def _effective_backend_type(spec: dict[str, Any]) -> str:
+    """Per-backup backend: spec.backendType overrides the operator-wide
+    BACKEND_TYPE (CRD contract; mirrors build_restore_patch)."""
+    override = str(spec.get("backendType") or "").strip().lower()
+    return override or BACKEND_TYPE
+
+
 _HOOK_JOB_TIMEOUT = 300
 _JOB_GONE_TIMEOUT = 120
-
-
-def _write_run_log(name: str, namespace: str, entries: list[dict]) -> None:
-    """Directly PATCH K8siBackup status.lastRunLog. Best-effort — swallows all errors."""
-    try:
-        api = kubernetes.client.CustomObjectsApi()
-        api.patch_namespaced_custom_object_status(
-            group="k8si.io",
-            version="v1",
-            namespace=namespace,
-            plural="k8sibackups",
-            name=name,
-            body={"status": {"lastRunLog": entries}},
-        )
-    except Exception:
-        pass
 
 
 def _patch_run_status(run_ns: str, run_name: str, fields: dict) -> None:
@@ -148,7 +140,7 @@ async def run_backup(
     spec: dict[str, Any],
     logger: logging.Logger,
     body: dict[str, Any] | None = None,
-    run_name: str | None = None,
+    run_name: str = "",
     run_ns: str | None = None,
     on_job_created: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
@@ -169,37 +161,31 @@ async def _run_backup(
     spec: dict[str, Any],
     logger: logging.Logger,
     body: dict[str, Any] | None = None,
-    run_name: str | None = None,
+    run_name: str = "",
     run_ns: str | None = None,
     on_job_created: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the full snapshot-first backup. Returns status fields on success.
 
-    When run_name is provided, live log entries are patched to K8siBackupRun status.
-    Otherwise they are patched to K8siBackup status (legacy, for tests).
+    Live log entries are patched to the K8siBackupRun named by *run_name*.
     """
+    if not run_name:
+        raise ValueError("run_name is required: log entries are patched to the K8siBackupRun")
     run_log: list[dict] = []
     _effective_run_ns = run_ns or namespace
-
-    if run_name:
-        await asyncio.to_thread(_patch_run_status, _effective_run_ns, run_name, {"log": []})
-    else:
-        await asyncio.to_thread(_write_run_log, name, namespace, run_log)
 
     async def _log_phase(phase: str, message: str) -> None:
         run_log.append(
             {"time": datetime.now(tz=UTC).isoformat(), "phase": phase, "message": message}
         )
-        if run_name:
-            await asyncio.to_thread(
-                _patch_run_status, _effective_run_ns, run_name, {"log": run_log}
-            )
-        else:
-            await asyncio.to_thread(_write_run_log, name, namespace, run_log)
+        await asyncio.to_thread(_patch_run_status, _effective_run_ns, run_name, {"log": run_log})
+
+    await asyncio.to_thread(_patch_run_status, _effective_run_ns, run_name, {"log": []})
 
     await _cleanup_orphan_snap_pvcs(name, namespace)
     pvc_name = spec["pvc"]
-    restic_secret = _resolve_backup_secret(spec, BACKEND_TYPE)
+    backend_type = _effective_backend_type(spec)
+    restic_secret = _resolve_backup_secret(spec, backend_type)
     snapshot_class = spec.get("volumeSnapshotClass") or None
     db_spec = spec.get("database")
     hook = spec.get("preSnapshotHook")
@@ -241,7 +227,7 @@ async def _run_backup(
                     node,
                     repo_pvc,
                     job_timeout,
-                    backend_type=BACKEND_TYPE,
+                    backend_type=backend_type,
                 )
                 _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
                 await _log_phase("BackupJobStarted", f"Starting Job {job_name}")
@@ -300,7 +286,7 @@ async def _run_backup(
                 node,
                 repo_pvc,
                 job_timeout,
-                backend_type=BACKEND_TYPE,
+                backend_type=backend_type,
             )
             _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
             await _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
@@ -318,7 +304,7 @@ async def _run_backup(
                 namespace, snap_name, snap_pvc if snap_pvc_created else None
             )
 
-    snapshot_id, size_bytes = _parse_artifact(raw_logs, BACKEND_TYPE)
+    snapshot_id, size_bytes = _parse_artifact(raw_logs, backend_type)
     if snapshot_id:
         logger.info("Artifact: snapshot %s, size %s B", snapshot_id, size_bytes)
     else:
@@ -331,7 +317,7 @@ async def _run_backup(
         "message": "",
         "snapshotId": snapshot_id,
         "sizeBytes": size_bytes,
-        "backendType": BACKEND_TYPE,
+        "backendType": backend_type,
         # The actual Job name (k8si-{backup}-{ts}) — recorded on the run so
         # the reconciler can find/delete the Job (#5); it never equals the
         # run name, which is what the reconciler used to look up.

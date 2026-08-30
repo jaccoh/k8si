@@ -100,7 +100,7 @@ def test_mariadb_backup_and_restore(ns, repo_pvc, mariadb_env, k8si_image):
         "restore": {"sentinels": ["ibdata1"]},
     }
 
-    result = asyncio.run(run_backup("e2e-mariadb", ns, spec, log))
+    result = asyncio.run(run_backup("e2e-mariadb", ns, spec, log, run_name="e2e-mariadb-run"))
     assert result["lastBackupResult"] == "success", f"Unexpected result: {result}"
     log.info("MariaDB backup succeeded: %s", result)
 

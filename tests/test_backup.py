@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from k8si.backend import BackupError, RepositoryLockedError, RepositoryNotInitializedError
-from k8si.backup import LAST_BACKUP_FILE, _run_cycle, run_once
+from k8si.backup import _run_cycle, run_once
 from k8si.config import Config
 
 
@@ -24,11 +24,14 @@ def make_config(tmp_path: Path) -> Config:
     )
 
 
-def test_successful_cycle_writes_timestamp(tmp_path: Path) -> None:
+def test_successful_cycle_no_marker_file(tmp_path: Path) -> None:
+    """The .k8si-last-backup marker is gone: in snapshot mode it was written to
+    an ephemeral clone PVC that is deleted right after the backup, so it never
+    survived — the parent K8siBackup status is the source of truth."""
     config = make_config(tmp_path)
     backend = MagicMock()
     _run_cycle(config, backend)
-    assert (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
     backend.backup.assert_called_once_with(source=tmp_path, tags=["app=sonarr"])
     backend.forget.assert_called_once_with(daily=7, weekly=4, monthly=3, prune=True)
 
@@ -44,7 +47,7 @@ def test_unrecoverable_backup_error_propagates(tmp_path: Path) -> None:
     backend.backup.side_effect = BackupError("failed", 1, "connection refused")
     with pytest.raises(BackupError):
         _run_cycle(config, backend)
-    assert not (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_run_once_runs_single_cycle(tmp_path: Path) -> None:
@@ -89,7 +92,7 @@ def test_auto_init_on_missing_repo(tmp_path: Path) -> None:
     _run_cycle(config, backend)
     backend.init.assert_called_once()
     assert backend.backup.call_count == 2
-    assert (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_auto_init_on_kopia_not_initialized_repo(tmp_path: Path) -> None:
@@ -110,7 +113,7 @@ def test_auto_init_on_kopia_not_initialized_repo(tmp_path: Path) -> None:
     _run_cycle(config, backend)
     backend.init.assert_called_once()
     assert backend.backup.call_count == 2
-    assert (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_forget_error_propagates(tmp_path: Path) -> None:
@@ -127,7 +130,7 @@ def test_forget_error_propagates(tmp_path: Path) -> None:
     backend.forget.side_effect = BackupError("prune failed", 1, "other error")
     with pytest.raises(BackupError):
         _run_cycle(config, backend)
-    assert not (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_backup_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
@@ -141,7 +144,7 @@ def test_backup_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
     _run_cycle(config, backend)
     assert backend.unlock.call_count == 2  # proactive unlock + reactive unlock
     assert backend.backup.call_count == 2
-    assert (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_forget_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
@@ -155,7 +158,7 @@ def test_forget_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
     _run_cycle(config, backend)
     assert backend.unlock.call_count == 2  # proactive + reactive
     assert backend.forget.call_count == 2
-    assert (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_proactive_unlock_called_before_backup(tmp_path: Path) -> None:
@@ -238,7 +241,7 @@ def test_backup_fails_after_init_is_logged_and_raises(tmp_path: Path) -> None:
     with pytest.raises(BackupError):
         _run_cycle(config, backend)
     backend.init.assert_called_once()
-    assert not (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_backup_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) -> None:
@@ -256,7 +259,7 @@ def test_backup_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) ->
     ]
     with pytest.raises(BackupError):
         _run_cycle(config, backend)
-    assert not (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_forget_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) -> None:
@@ -274,7 +277,7 @@ def test_forget_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) ->
     ]
     with pytest.raises(BackupError):
         _run_cycle(config, backend)
-    assert not (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_hook_stdout_is_logged(tmp_path: Path) -> None:
@@ -341,14 +344,6 @@ def test_hook_failure_required_raises_runtime_error(tmp_path: Path) -> None:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="script error")
         with pytest.raises(RuntimeError, match="Pre-snapshot hook failed"):
             _run_cycle(config, backend)
-
-
-def test_write_timestamp_oserror_is_swallowed(tmp_path: Path) -> None:
-    """OSError during timestamp write is logged but does not propagate."""
-    from k8si.backup import _write_last_backup_timestamp
-
-    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
-        _write_last_backup_timestamp(tmp_path)  # must not raise
 
 
 # ── run() schedule loop ────────────────────────────────────────────────────────
@@ -435,7 +430,7 @@ def test_cycle_artifact_resolution_failure_does_not_fail_backup(tmp_path: Path, 
     _run_cycle(config, backend)  # must not raise
 
     assert _artifact_payload(capsys) is None
-    assert (tmp_path / LAST_BACKUP_FILE).exists()
+    assert not (tmp_path / ".k8si-last-backup").exists()
 
 
 def test_cycle_no_snapshots_no_artifact_line(tmp_path: Path, capsys) -> None:

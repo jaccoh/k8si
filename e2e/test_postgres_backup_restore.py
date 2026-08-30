@@ -94,7 +94,7 @@ def test_postgres_backup_and_restore(ns, repo_pvc, postgres_env, k8si_image):
         "restore": {"sentinels": [_SENTINEL]},
     }
 
-    result = asyncio.run(run_backup("e2e-postgres", ns, spec, log))
+    result = asyncio.run(run_backup("e2e-postgres", ns, spec, log, run_name="e2e-postgres-run"))
     assert result["lastBackupResult"] == "success", f"Unexpected result: {result}"
     log.info("Postgres backup succeeded: %s", result)
 

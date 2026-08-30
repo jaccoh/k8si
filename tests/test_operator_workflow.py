@@ -37,7 +37,9 @@ def test_run_backup_emits_kopf_events() -> None:
     ):
         mock_quiesce_ctx.return_value = MagicMock()
 
-        result = asyncio.run(run_backup("test-backup", "default", spec, MagicMock(), body))
+        result = asyncio.run(
+            run_backup("test-backup", "default", spec, MagicMock(), body, run_name="test-run")
+        )
 
         assert result["lastBackupResult"] == "success"
 
@@ -74,7 +76,9 @@ def test_run_backup_direct_mode() -> None:
     ):
         mock_quiesce_ctx.return_value = MagicMock()
 
-        result = asyncio.run(run_backup("test-backup", "default", spec, MagicMock(), body))
+        result = asyncio.run(
+            run_backup("test-backup", "default", spec, MagicMock(), body, run_name="test-run")
+        )
 
         assert result["lastBackupResult"] == "success"
 
@@ -116,7 +120,13 @@ def test_run_backup_invokes_on_job_created_snapshot_mode() -> None:
 
         result = asyncio.run(
             run_backup(
-                "test-backup", "default", spec, MagicMock(), body, on_job_created=_on_created
+                "test-backup",
+                "default",
+                spec,
+                MagicMock(),
+                body,
+                run_name="test-run",
+                on_job_created=_on_created,
             )
         )
 
@@ -153,7 +163,13 @@ def test_run_backup_invokes_on_job_created_direct_mode() -> None:
 
         asyncio.run(
             run_backup(
-                "test-backup", "default", spec, MagicMock(), body, on_job_created=_on_created
+                "test-backup",
+                "default",
+                spec,
+                MagicMock(),
+                body,
+                run_name="test-run",
+                on_job_created=_on_created,
             )
         )
 
@@ -233,7 +249,7 @@ def test_orphan_snap_pvcs_deleted_before_backup() -> None:
         patch("k8si.operator.workflow.kopf.event"),
     ):
         mock_ctx.return_value = MagicMock()
-        asyncio.run(run_backup("mybackup", "default", spec, MagicMock(), body))
+        asyncio.run(run_backup("mybackup", "default", spec, MagicMock(), body, run_name="test-run"))
         mock_cleanup.assert_called_once_with("mybackup", "default")
 
 
@@ -755,7 +771,7 @@ def test_run_backup_snapshot_phase_exception_emits_warning() -> None:
     ):
         mock_ctx.return_value = MagicMock()
         with pytest.raises(RuntimeError, match="snap failed"):
-            asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+            asyncio.run(run_backup("test", "default", spec, MagicMock(), body, run_name="test-run"))
 
     reasons = [call[1]["reason"] for call in mock_event.call_args_list]
     assert "SnapshotFailed" in reasons
@@ -784,7 +800,7 @@ def test_run_backup_phase2_exception_cleans_up_snapshot() -> None:
     ):
         mock_ctx.return_value = MagicMock()
         with pytest.raises(RuntimeError, match="backup failed"):
-            asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+            asyncio.run(run_backup("test", "default", spec, MagicMock(), body, run_name="test-run"))
 
     mock_delete.assert_called_once()
 
@@ -806,7 +822,7 @@ def test_run_backup_direct_mode_exception_emits_warning() -> None:
     ):
         mock_ctx.return_value = MagicMock()
         with pytest.raises(RuntimeError, match="direct failed"):
-            asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+            asyncio.run(run_backup("test", "default", spec, MagicMock(), body, run_name="test-run"))
 
     reasons = [call[1]["reason"] for call in mock_event.call_args_list]
     assert "BackupFailed" in reasons
@@ -888,7 +904,7 @@ def test_run_backup_direct_mode_with_db_and_hook_emits_events() -> None:
         patch("k8si.operator.workflow.kopf.event") as mock_event,
     ):
         mock_ctx.return_value = MagicMock()
-        asyncio.run(run_backup("test", "default", spec, MagicMock(), body))
+        asyncio.run(run_backup("test", "default", spec, MagicMock(), body, run_name="test-run"))
 
     reasons = [call[1]["reason"] for call in mock_event.call_args_list]
     assert "QuiesceStarted" in reasons
@@ -911,36 +927,11 @@ def test_run_job_cleanup_exception_is_swallowed() -> None:
         asyncio.run(_run_job(job_body, "default", 60, logging.getLogger("test")))  # must not raise
 
 
-# ── _write_run_log ─────────────────────────────────────────────────────────────
+# ── run-status log patching (K8siBackupRun.status.log) ────────────────────────
 
 
-def test_write_run_log_patches_crd() -> None:
-    from k8si.operator.workflow import _write_run_log
-
-    entries = [{"time": "2026-06-12T10:00:00Z", "phase": "BackupJobStarted", "message": "starting"}]
-    with patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_cls:
-        _write_run_log("myapp", "default", entries)
-
-    call = mock_cls.return_value.patch_namespaced_custom_object_status.call_args
-    assert call.kwargs["name"] == "myapp"
-    assert call.kwargs["namespace"] == "default"
-    assert call.kwargs["body"]["status"]["lastRunLog"] == entries
-
-
-def test_write_run_log_swallows_api_exception() -> None:
-    from kubernetes.client.exceptions import ApiException
-
-    from k8si.operator.workflow import _write_run_log
-
-    with patch("k8si.operator.workflow.kubernetes.client.CustomObjectsApi") as mock_cls:
-        mock_cls.return_value.patch_namespaced_custom_object_status.side_effect = ApiException(
-            status=403
-        )
-        _write_run_log("myapp", "default", [])  # must not raise
-
-
-def test_run_backup_clears_log_at_start() -> None:
-    """run_backup writes an empty lastRunLog list before any phase entry."""
+def test_run_backup_clears_run_log_at_start() -> None:
+    """run_backup writes an empty log list to the K8siBackupRun before any phase entry."""
     import copy
 
     calls: list[dict] = []
@@ -963,19 +954,19 @@ def test_run_backup_clears_log_at_start() -> None:
     ):
         mock_ctx.return_value = MagicMock()
         mock_api_cls.return_value.patch_namespaced_custom_object_status.side_effect = capture
-        asyncio.run(run_backup("myapp", "default", spec, MagicMock()))
+        asyncio.run(run_backup("myapp", "default", spec, MagicMock(), run_name="myapp-run"))
 
     assert calls, "Expected at least one PATCH call"
     first = calls[0]
-    assert first.get("status", {}).get("lastRunLog") == [], "First call must clear the log"
+    assert first.get("status", {}).get("log") == [], "First call must clear the run log"
 
 
 def test_run_backup_logs_backup_job_started_phase() -> None:
-    """BackupJobStarted must appear in lastRunLog written to CRD during run_backup."""
+    """BackupJobStarted must appear in the run's status.log during run_backup."""
     logged_phases: list[str] = []
 
-    def capture(*args, **kwargs):  # noqa: ANN001,ANN002,ANN003
-        for entry in kwargs.get("body", {}).get("status", {}).get("lastRunLog", []):
+    def capture(*args, **kwargs):  # noqa:ANN001,ANN002,ANN003
+        for entry in kwargs.get("body", {}).get("status", {}).get("log", []):
             logged_phases.append(entry["phase"])
 
     spec = {"pvc": "pvc", "resticSecret": "sec", "schedule": "0 2 * * *"}
@@ -993,14 +984,14 @@ def test_run_backup_logs_backup_job_started_phase() -> None:
     ):
         mock_ctx.return_value = MagicMock()
         mock_api_cls.return_value.patch_namespaced_custom_object_status.side_effect = capture
-        asyncio.run(run_backup("myapp", "default", spec, MagicMock()))
+        asyncio.run(run_backup("myapp", "default", spec, MagicMock(), run_name="myapp-run"))
 
     assert "BackupJobStarted" in logged_phases, f"Expected BackupJobStarted, got {logged_phases}"
     assert "BackupJobCompleted" in logged_phases
 
 
 def test_log_phase_offloads_status_patch_via_to_thread() -> None:
-    """_log_phase (and the initial log-clear) must call _write_run_log/_patch_run_status
+    """_log_phase (and the initial log-clear) must call _patch_run_status
     via asyncio.to_thread, never directly on the event loop — a direct call blocks Kopf's
     asyncio loop (and every other backup's timers/reconciliation) for the full k8s API
     round-trip, and _log_phase runs ~6x per backup run."""
@@ -1028,14 +1019,96 @@ def test_log_phase_offloads_status_patch_via_to_thread() -> None:
         patch("k8si.operator.workflow.asyncio.to_thread", side_effect=spy_to_thread),
     ):
         mock_ctx.return_value = MagicMock()
-        asyncio.run(run_backup("myapp", "default", spec, MagicMock()))
+        asyncio.run(run_backup("myapp", "default", spec, MagicMock(), run_name="myapp-run"))
 
     # Initial log-clear + SnapshotStarted/Created + BackupJobStarted/Completed = 5 patches,
     # every single one must be routed through asyncio.to_thread.
-    assert workflow._write_run_log in to_thread_funcs, (
-        "_write_run_log must be invoked via asyncio.to_thread, not directly on the event loop"
+    assert workflow._patch_run_status in to_thread_funcs, (
+        "_patch_run_status must be invoked via asyncio.to_thread, not directly on the event loop"
     )
-    assert to_thread_funcs.count(workflow._write_run_log) >= 5
+    assert to_thread_funcs.count(workflow._patch_run_status) >= 5
+
+
+# ── spec.backendType: per-backup backend override ─────────────────────────────
+
+
+def test_run_backup_spec_backend_type_overrides_module_default() -> None:
+    """spec.backendType exists on the CRD and must be a real per-backup
+    override of the operator-wide BACKEND_TYPE: the Job env, the secret
+    selection (kopiaSecret) and the reported backendType all follow it —
+    while the module global stays untouched."""
+    import k8si.operator.workflow as wf
+
+    assert wf.BACKEND_TYPE == "restic", "module default must be restic for this test"
+    spec = {
+        "pvc": "test-pvc",
+        "resticSecret": "restic-sec",
+        "kopiaSecret": "kopia-sec",
+        "backendType": "kopia",
+        "schedule": "0 2 * * *",
+    }
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch(
+            "k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""
+        ) as mock_run_job,
+        patch("k8si.operator.workflow._patch_run_status"),
+    ):
+        mock_ctx.return_value = MagicMock()
+        result = asyncio.run(
+            run_backup("test-backup", "default", spec, MagicMock(), run_name="run-1")
+        )
+
+    job = mock_run_job.call_args[0][0]
+    env_map = {
+        e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map["BACKEND_TYPE"] == "kopia"
+    ssh_vol = next(
+        v for v in job["spec"]["template"]["spec"]["volumes"] if v["name"] == "restic-ssh"
+    )
+    assert ssh_vol["secret"]["secretName"] == "kopia-sec"
+    assert result["backendType"] == "kopia"
+    assert wf.BACKEND_TYPE == "restic", "module global must not be mutated"
+
+
+def test_run_backup_backend_type_defaults_to_module_global() -> None:
+    """Without spec.backendType the operator-wide BACKEND_TYPE applies."""
+    spec = {
+        "pvc": "test-pvc",
+        "resticSecret": "restic-sec",
+        "schedule": "0 2 * * *",
+    }
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value=None),
+        patch(
+            "k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""
+        ) as mock_run_job,
+        patch("k8si.operator.workflow._patch_run_status"),
+    ):
+        mock_ctx.return_value = MagicMock()
+        result = asyncio.run(
+            run_backup("test-backup", "default", spec, MagicMock(), run_name="run-1")
+        )
+
+    job = mock_run_job.call_args[0][0]
+    env_map = {
+        e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map["BACKEND_TYPE"] == "restic"
+    assert result["backendType"] == "restic"
 
 
 # ── goals #4/#5/#6: snapshot cleanup, jobName, bounded concurrency ──────────
@@ -1065,7 +1138,9 @@ def test_run_backup_returns_job_name():
         patch("k8si.operator.workflow._run_job", new_callable=AsyncMock) as mock_run_job,
     ):
         mock_run_job.return_value = "Created snapshot with root k1 and ID abc in 1s"
-        result = asyncio.run(run_backup("test-backup", "default", spec, MagicMock(), body))
+        result = asyncio.run(
+            run_backup("test-backup", "default", spec, MagicMock(), body, run_name="test-run")
+        )
 
     job_name = mock_run_job.call_args[0][0]["metadata"]["name"]
     assert job_name.startswith("k8si-test-backup-"), job_name
@@ -1093,7 +1168,9 @@ def test_snapshot_phase_failure_cleans_up_created_snapshot():
     ):
         mock_create_snap.side_effect = TimeoutError("snapshot not ready after 300s")
         with pytest.raises(TimeoutError):
-            asyncio.run(run_backup("test-backup", "default", spec, MagicMock(), body))
+            asyncio.run(
+                run_backup("test-backup", "default", spec, MagicMock(), body, run_name="test-run")
+            )
 
     mock_delete.assert_called_once()
     assert mock_delete.call_args[0][0] == "default"
@@ -1165,7 +1242,9 @@ def test_run_backup_concurrency_is_capped():
         ):
             return await asyncio.gather(
                 *[
-                    wf.run_backup("test-backup", "default", spec, MagicMock(), body)
+                    wf.run_backup(
+                        "test-backup", "default", spec, MagicMock(), body, run_name="test-run"
+                    )
                     for _ in range(4)
                 ]
             )

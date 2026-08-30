@@ -101,7 +101,7 @@ def test_sqlite_backup_and_restore(ns, repo_pvc, data_pvc, k8si_image):
         "restore": {"sentinels": ["test.db"]},
     }
 
-    result = asyncio.run(run_backup("e2e", ns, spec, log))
+    result = asyncio.run(run_backup("e2e", ns, spec, log, run_name="e2e-run"))
     assert result["lastBackupResult"] == "success", f"Unexpected result: {result}"
     log.info("Backup succeeded: %s", result)
 

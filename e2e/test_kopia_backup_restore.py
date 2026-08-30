@@ -124,7 +124,7 @@ def test_kopia_backup_and_restore(ns, repo_pvc, data_pvc, k8si_image, kopia_back
         "restore": {"sentinels": ["sentinel.txt"]},
     }
 
-    result = asyncio.run(run_backup("e2e-kopia", ns, spec, log))
+    result = asyncio.run(run_backup("e2e-kopia", ns, spec, log, run_name="e2e-kopia-run"))
     assert result["lastBackupResult"] == "success", f"Unexpected result: {result}"
     assert result["backendType"] == "kopia", f"Unexpected backendType: {result}"
     # snapshotId/sizeBytes prove _parse_artifact matched the real kopia CLI output
