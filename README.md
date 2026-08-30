@@ -26,7 +26,7 @@ In the default `snapshot` mode the backup job never mounts your live PVC — it 
 |-----------|--------------|
 | **Restore init container** | Checks sentinel files on the PVC at every pod start; restores from the backup backend if data is missing or incomplete. Fails loud when it can't restore safely. |
 | **Operator** | Kopf-based. A 60s timer turns each `K8siBackup` schedule into a `K8siBackupRun` and drives the pipeline, with retry caps, backup windows, timeouts, and watchdogs for stuck runs. |
-| **Dashboard** | FastAPI web UI: status across namespaces, run sparkline, live log drawer, Backup-now and pause/resume buttons. NodePort `:30080`. See [security notes](#limitations--security-notes) — it is not authenticated. |
+| **Dashboard** | FastAPI web UI: status across namespaces, run sparkline, live log drawer, Backup-now and pause/resume buttons. NodePort `:30080` or Ingress (`deploy/ui-ingress.yaml`). Mutating endpoints take an optional `K8SI_UI_TOKEN` — see [Dashboard access control](#dashboard-access-control). |
 
 Backend is pluggable: **restic** (default, SFTP to e.g. Hetzner Storagebox out of the box) and **kopia** (experimental). Images: `ghcr.io/jaccoh/k8si` for `linux/amd64` and `linux/arm64`.
 
@@ -69,10 +69,15 @@ kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/crd_r
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/rbac.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/operator.yaml
 
-# Optional dashboard (creates resources in the k8si namespace)
-kubectl create namespace k8si --dry-run=client -o yaml | kubectl apply -f -
+# Optional dashboard (ClusterIP + Ingress instead of NodePort):
+# kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/ui-ingress.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/ui.yaml
 ```
+
+> `deploy/rbac.yaml` grants the operator cluster-wide `secrets get` and
+> `pods/exec` so any namespace can be backed up out of the box. If you would
+> rather enrol namespaces one by one, use `deploy/rbac-namespaced.yaml` — see
+> [RBAC modes](docs/reference.md#rbac-modes) for the trade-off.
 
 ### 2. Create the backend secret
 
@@ -159,6 +164,41 @@ docker run --rm ghcr.io/jaccoh/k8si:latest generate \
 
 `k8si generate` without `--no-sidecar` emits a **standalone mode** — the same restore init container plus a native-sidecar backup scheduler (K8s 1.29+), no operator or CRDs required. Don't combine the sidecar with an operator-managed `K8siBackup` for the same PVC, or you'll double-schedule backups.
 
+## Dashboard access control
+
+The dashboard ships open — anyone who can reach it can trigger or pause backups.
+Two knobs, usable together:
+
+**`K8SI_UI_TOKEN`** (since 0.9.0, off by default) puts a bearer token on the
+mutating endpoints (Backup-now, pause, resume). Every mutating call must then
+carry a matching `X-K8si-Token` header; the dashboard prompts for it the first
+time you press a button and remembers it for the session. Read-only views stay
+open.
+
+```bash
+kubectl -n k8si-system create secret generic k8si-ui-token \
+  --from-literal=token="$(openssl rand -hex 32)"
+```
+
+```yaml
+# add to the ui container env in deploy/ui.yaml
+- name: K8SI_UI_TOKEN
+  valueFrom:
+    secretKeyRef: {name: k8si-ui-token, key: token}
+```
+
+**`deploy/ui-ingress.yaml`** replaces the `:30080` NodePort with a ClusterIP
+Service plus an Ingress, so the dashboard sits behind your ingress controller's
+TLS, host routing and middlewares instead of a hole on every node:
+
+```bash
+kubectl apply -f deploy/ui.yaml          # SA, RBAC, Deployment, NodePort Service
+kubectl apply -f deploy/ui-ingress.yaml  # flips the Service to ClusterIP + Ingress
+```
+
+Set a real hostname in the Ingress before applying. Details and a commented
+Traefik block: [docs/reference.md](docs/reference.md#dashboard-exposure-and-access-control).
+
 ## Manual trigger, pause, windows
 
 Trigger a backup outside the schedule by patching `status.triggeredAt`:
@@ -191,9 +231,9 @@ The operator picks it up within 60s, bypassing the schedule check, the backup wi
 
 ## Limitations & security notes
 
-- **The dashboard is unauthenticated** and can trigger and pause backups cluster-wide, exposed on a NodePort on every node. Restrict it (NetworkPolicy, firewall, or an auth proxy) or don't install it.
+- **The dashboard is unauthenticated by default** and can trigger and pause backups cluster-wide, exposed on a NodePort on every node. Restrict it (NetworkPolicy, firewall, or an auth proxy), switch to the Ingress variant, or set [`K8SI_UI_TOKEN`](#dashboard-access-control).
 - **Backup jobs and restore containers run as root.** Restore must preserve file ownership; a non-root restore produces wrong permissions silently.
-- **The operator RBAC is broad** (cluster-wide watches, secret reads, pod exec for DB quiescing). Review `deploy/rbac.yaml` before installing on a shared cluster.
+- **The operator RBAC is broad by default** (cluster-wide watches, secret reads, pod exec for DB quiescing) so that backing up a new namespace needs no RBAC step. `deploy/rbac-namespaced.yaml` narrows `secrets get` and `pods/exec` to a per-namespace Role you enrol explicitly — see [RBAC modes](docs/reference.md#rbac-modes).
 - **VolumeSnapshot conflicts:** if another system (e.g. VolSync) is snapshotting the same PVC, k8si waits up to 30 minutes (polling every 60s) for the conflict to clear. If it never clears the run *fails* — which counts toward `maxRetriesPerDay`.
 - **Single-writer PVCs**; the sentinel quality gate needs at least one sentinel file to be meaningful.
 - **kopia is experimental** (see [docs/reference.md](docs/reference.md) for caveats).

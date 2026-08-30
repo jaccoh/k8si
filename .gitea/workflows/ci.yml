@@ -6,6 +6,31 @@ on:
     tags:
       - "v*"
   pull_request:
+  # ── Nightly e2e window ────────────────────────────────────────────────────────
+  # 21:00 UTC daily (= 23:00 Europe/Amsterdam).
+  #
+  # This slot is chosen against the storage node's (hoeve-stor01) I/O calendar.
+  # All e2e traffic lands on the Open-CAS-cached md0 RAID5 via topolvm-stor01,
+  # and heavy CI competing with the nightly cache flush has killed cilium/lvmd
+  # before. The windows to stay out of (all UTC):
+  #
+  #   01:00-06:30  k8si backup window — every K8siBackup CR in the cluster
+  #                fires between 01:00 and 06:00 (homelab2
+  #                infrastructure/apps/*/10-k8si-backups.yaml), snapshots and
+  #                restic pushes included.
+  #   05:00-~10:00 Open-CAS nightly flush — opencas-nightly-flush.timer fires
+  #                at 05:00 UTC and drains the whole NVMe dirty cache to SMR
+  #                RAID5, which takes hours (vmalert tolerates 24h + flush;
+  #                4.1 MB/s drain cap measured in
+  #                homelab2 docs/cache-layer-test-results.md).
+  #   06:00-20:00  Family-usage hours (local daytime).
+  #
+  # 21:00 UTC is 4h clear of the backup window, 11h after the flush finishes,
+  # and inside quiet hours. The heavy buildah jobs are skipped on schedule (see
+  # their `if:`) so nightly e2e reuses the last image published from main
+  # instead of rebuilding four multi-arch images into the flush-prone array.
+  schedule:
+    - cron: "0 21 * * *"
 
 jobs:
   lint:
@@ -60,7 +85,9 @@ jobs:
 
   docker-build-arm64:
     needs: [test]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Skipped on schedule events: nightly e2e reuses the last image
+    # published from main rather than rebuilding into the storage node.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name != 'schedule'
     runs-on: [self-hosted, amd64]
     timeout-minutes: 30
     steps:
@@ -129,7 +156,9 @@ jobs:
 
   docker-build-amd64:
     needs: [test]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Skipped on schedule events: nightly e2e reuses the last image
+    # published from main rather than rebuilding into the storage node.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name != 'schedule'
     runs-on: [self-hosted, amd64]
     timeout-minutes: 45
     steps:
@@ -198,7 +227,9 @@ jobs:
 
   docker-build-ui-arm64:
     needs: [test]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Skipped on schedule events: nightly e2e reuses the last image
+    # published from main rather than rebuilding into the storage node.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name != 'schedule'
     runs-on: [self-hosted, amd64]
     timeout-minutes: 30
     steps:
@@ -268,7 +299,9 @@ jobs:
 
   docker-build-ui-amd64:
     needs: [test]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Skipped on schedule events: nightly e2e reuses the last image
+    # published from main rather than rebuilding into the storage node.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name != 'schedule'
     runs-on: [self-hosted, amd64]
     timeout-minutes: 45
     steps:
@@ -338,7 +371,9 @@ jobs:
 
   docker-manifest:
     needs: [docker-build-arm64, docker-build-amd64, docker-build-ui-arm64, docker-build-ui-amd64]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Skipped on schedule events: nightly e2e reuses the last image
+    # published from main rather than rebuilding into the storage node.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name != 'schedule'
     runs-on: [self-hosted, amd64]
     steps:
       - uses: actions/checkout@v7
@@ -420,6 +455,10 @@ jobs:
 
   e2e:
     needs: [docker-manifest]
+    # Runs after a successful build on push/tag, and standalone on the
+    # nightly schedule (docker-manifest is skipped there, so its result
+    # is 'skipped' rather than 'success').
+    if: always() && (needs.docker-manifest.result == 'success' || github.event_name == 'schedule')
     runs-on: [self-hosted, amd64]
     timeout-minutes: 30
     env:
@@ -451,7 +490,9 @@ jobs:
 
   release:
     needs: [e2e]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Skipped on schedule events: nightly e2e reuses the last image
+    # published from main rather than rebuilding into the storage node.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name != 'schedule'
     runs-on: [self-hosted, amd64]
     steps:
       - uses: actions/checkout@v7
