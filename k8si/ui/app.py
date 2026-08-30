@@ -250,7 +250,11 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
     """SSE stream for a specific K8siBackupRun — polls phase and log until terminal."""
     custom = kubernetes.client.CustomObjectsApi()
     try:
-        custom.get_namespaced_custom_object(GROUP, VERSION, namespace, RUN_PLURAL, run_name)
+        # async def endpoint → runs on the event loop; a direct blocking call
+        # here would stall every other SSE stream the UI is serving.
+        await asyncio.to_thread(
+            custom.get_namespaced_custom_object, GROUP, VERSION, namespace, RUN_PLURAL, run_name
+        )
     except kubernetes.client.exceptions.ApiException as e:
         if e.status == 404:
             raise HTTPException(status_code=404, detail=f"run {namespace}/{run_name} not found")
@@ -332,7 +336,10 @@ async def stream_logs(
     """Legacy SSE endpoint — watches K8siBackup.status.lastRunLog."""
     custom = kubernetes.client.CustomObjectsApi()
     try:
-        custom.get_namespaced_custom_object(GROUP, VERSION, namespace, PLURAL, name)
+        # Off the event loop like every other k8s call in this endpoint.
+        await asyncio.to_thread(
+            custom.get_namespaced_custom_object, GROUP, VERSION, namespace, PLURAL, name
+        )
     except kubernetes.client.exceptions.ApiException as e:
         if e.status == 404:
             raise HTTPException(status_code=404, detail=f"{namespace}/{name} not found")
