@@ -298,12 +298,39 @@ def test_actions_are_one_aligned_group_not_a_flex_td():
 
 
 def test_action_buttons_share_consistent_sizing():
-    """Backup/Pause/Logs buttons must have identical height and inline-flex
-    centering so they line up across every row regardless of row height."""
+    """Backup/Pause/Logs buttons must be identical compact squares so they
+    line up across every row regardless of row height."""
     css = _extract_style_block()
     for cls in ("btn-trigger", "btn-logs"):
         m = re.search(rf"\.{cls}\s*\{{([^}}]*)\}}", css)
         assert m, f".{cls} rule missing"
         assert re.search(r"display:\s*inline-flex", m.group(1)), f".{cls} must be inline-flex"
-        assert re.search(r"align-items:\s*center", m.group(1)), f".{cls} must center its label"
-        assert re.search(r"height:\s*24px", m.group(1)), f".{cls} must have a fixed height"
+        assert re.search(r"align-items:\s*center", m.group(1)), f".{cls} must center its icon"
+        assert re.search(r"height:\s*26px", m.group(1)), f".{cls} must have a fixed height"
+        assert re.search(r"width:\s*26px", m.group(1)), f".{cls} must be a compact square"
+
+
+def test_action_buttons_are_icon_only_with_tooltips():
+    """User feedback 2026-08-30: text buttons ('Backup now' / 'Pause' / 'Logs')
+    looked heavy and dated. Buttons are icon-only now: every button carries
+    its meaning in aria-label + title (tooltip), the icon is inline SVG that
+    inherits currentColor, and runtime state changes go through button
+    classes + title — never textContent, which would wipe the SVG."""
+    body = _extract_function("buildRow")
+    for label in ("Backup now", "Pause", "Resume", "Logs"):
+        assert f'aria-label="{label}"' in body, f"icon button needs aria-label '{label}'"
+    html = DASHBOARD_HTML.read_text()
+    assert "<svg" in html and 'fill="currentColor"' in html, (
+        "buttons must render inline SVG icons that inherit currentColor for hover states"
+    )
+
+    trigger = _extract_function("triggerBackup")
+    assert "btn.textContent" not in trigger, (
+        "triggerBackup must not set textContent on icon buttons — it wipes the "
+        "SVG; state goes through classes + title"
+    )
+    assert "setBtnState" in trigger, "state changes must go through setBtnState"
+    assert "btn.title" in _extract_function("setBtnState"), (
+        "setBtnState must update the tooltip (btn.title) — icon-only buttons "
+        "carry their state text there"
+    )

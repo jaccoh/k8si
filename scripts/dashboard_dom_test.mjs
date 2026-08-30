@@ -124,7 +124,7 @@ check("message cell keeps full text in title tooltip", () => {
   assert(zeta.textContent.includes("after 1800s"), "cell text must not be pre-truncated by JS");
 });
 
-check("row actions are one aligned group (Backup now + Pause + Logs)", () => {
+check("row actions are icon-only buttons in one aligned group", () => {
   const rows = [...document.querySelectorAll(".backup-table tbody tr")];
   assert(rows.length > 0, "no rows rendered");
   for (const tr of rows) {
@@ -132,11 +132,18 @@ check("row actions are one aligned group (Backup now + Pause + Logs)", () => {
     assert(tds.length === 8, `row must have 8 cells — got ${tds.length}`);
     const group = tr.querySelector("td .actions-cell");
     assert(group, "each row needs a div.actions-cell in its last cell");
-    const btns = [...group.querySelectorAll("button")].map((b) => b.textContent.trim());
+    const btns = [...group.querySelectorAll("button")];
+    assert(btns.length === 3, `three icon buttons expected — got ${btns.length}`);
+    const labels = btns.map((b) => b.getAttribute("aria-label") || "");
     assert(
-      btns.includes("Backup now") && btns.includes("Logs"),
-      `actions group must contain Backup now + Logs — got ${btns}`
+      labels.includes("Backup now") && labels.includes("Logs"),
+      `aria-labels must name the actions — got ${labels}`
     );
+    for (const b of btns) {
+      assert(b.querySelector("svg"), `button '${b.getAttribute("aria-label")}' needs an SVG icon`);
+      assert((b.textContent || "").trim() === "", "icon buttons must carry no visible text");
+      assert((b.getAttribute("title") || "").length > 0, "icon buttons need a title tooltip");
+    }
   }
   const ths = [...document.querySelector(".backup-table thead").querySelectorAll("th")];
   assert(ths.length === 8, `8 headers expected per table — got ${ths.length}`);

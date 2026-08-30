@@ -248,7 +248,7 @@
   #tables-container { overflow-x: auto; }
   .backup-table {
     width: 100%;
-    min-width: 860px;
+    min-width: 820px;
     table-layout: fixed;
     border-collapse: collapse;
     background: #161b22;
@@ -498,16 +498,16 @@
   .actions-cell {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     white-space: nowrap;
   }
   .btn-trigger {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 24px;
-    font-size: 11px;
-    padding: 0 10px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
     background: #21262d;
     border: 1px solid #30363d;
     border-radius: 4px;
@@ -515,6 +515,18 @@
     cursor: pointer;
     white-space: nowrap;
   }
+  .btn-trigger svg, .btn-logs svg { width: 13px; height: 13px; }
+  .btn-trigger.queued {
+    color: #d29922;
+    border-color: #5a3e00;
+    animation: pulse 1.2s infinite;
+  }
+  .btn-trigger.running {
+    color: #58a6ff;
+    border-color: #1a3a6e;
+    animation: pulse 1.2s infinite;
+  }
+  .btn-trigger.error { color: #f85149; border-color: #4a1515; }
   .btn-trigger:hover:not(:disabled) {
     background: #1c2128;
     border-color: #58a6ff;
@@ -762,15 +774,20 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 24px;
-    font-size: 11px;
-    padding: 0 10px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
     background: #21262d;
     border: 1px solid #30363d;
     border-radius: 4px;
     color: #8b949e;
     cursor: pointer;
     white-space: nowrap;
+  }
+  .btn-logs:hover {
+    background: #1c2128;
+    border-color: #58a6ff;
+    color: #58a6ff;
   }
   .btn-logs:hover { border-color: #58a6ff; color: #58a6ff; }
   .btn-logs.active { border-color: #58a6ff; color: #58a6ff; background: #0d2340; }
@@ -1162,6 +1179,13 @@
     return '<span class="status ' + statusClass + '">' + inner + '</span>';
   }
 
+  // Icon-only action buttons: the icon carries no text — meaning lives in
+  // aria-label + title (tooltip). fill=currentColor makes hover/state colors
+  // apply to the glyph itself.
+  const ICON_PLAY = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.2v9.6l7.6-4.8z"/></svg>';
+  const ICON_PAUSE = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.6 3h2.4v10H4.6zM9 3h2.4v10H9z"/></svg>';
+  const ICON_CONSOLE = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 2.5h11a.5.5 0 0 1 .5.5v10a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 2 13V3a.5.5 0 0 1 .5-.5zm2 2.9-.9 1 2.1 2.1-2.1 2.1.9 1 3.1-3.1-3.1-3.1zm4.5 4.6h3V9.1h-3v.9z"/></svg>';
+
   function buildRow(backup) {
     const runKey = backup.namespace + '/' + backup.name;
     const liveRun = activeRunState[runKey];
@@ -1191,11 +1215,13 @@
     const ns = escapeHtml(backup.namespace);
     const nm = escapeHtml(backup.name);
     const pauseBtn = backup.paused
-      ? '<button class="btn-trigger" onclick="setPaused(\'' + ns + '\',\'' + nm + '\',false,this)">Resume</button>'
-      : '<button class="btn-trigger" onclick="setPaused(\'' + ns + '\',\'' + nm + '\',true,this)">Pause</button>';
-    const triggerBtn = '<button class="btn-trigger"'
-      + (backup.paused ? ' disabled title="Resume to trigger manually"' : '')
-      + ' onclick="triggerBackup(\'' + ns + '\',\'' + nm + '\',this)">Backup now</button>';
+      ? '<button class="btn-trigger" aria-label="Resume" title="Resume" onclick="setPaused(\''
+        + ns + '\',\'' + nm + '\',false,this)">' + ICON_PLAY + '</button>'
+      : '<button class="btn-trigger" aria-label="Pause" title="Pause" onclick="setPaused(\''
+        + ns + '\',\'' + nm + '\',true,this)">' + ICON_PAUSE + '</button>';
+    const triggerBtn = '<button class="btn-trigger" aria-label="Backup now" title="Backup now"'
+      + (backup.paused ? ' disabled' : '')
+      + ' onclick="triggerBackup(\'' + ns + '\',\'' + nm + '\',this)">' + ICON_PLAY + '</button>';
     const pausedBadge = backup.paused ? '<span class="badge-paused">paused</span>' : '';
     const restoreBadge = (backup.lastRestoreResult === 'failed')
       ? '<span class="badge-restore-failed" title="' + escapeHtml(backup.lastRestoreMessage || '') + '">restore failed</span>'
@@ -1205,8 +1231,8 @@
     const windowLine = (win.start && win.end)
       ? '<span class="schedule-window">' + escapeHtml(win.start) + ' – ' + escapeHtml(win.end) + ' UTC</span>'
       : '';
-    const logsBtn = '<button class="btn-logs" data-ns="' + ns + '" data-nm="' + nm
-      + '" onclick="openBackupLogs(\'' + ns + '\',\'' + nm + '\')">Logs</button>';
+    const logsBtn = '<button class="btn-logs" aria-label="Logs" title="Logs" data-ns="' + ns + '" data-nm="' + nm
+      + '" onclick="openBackupLogs(\'' + ns + '\',\'' + nm + '\')">' + ICON_CONSOLE + '</button>';
 
     return '<tr data-result="' + statusClass + '" data-name="' + nm + '" data-ns="' + ns + '">'
       + '<td><div class="app-cell">'
@@ -1237,7 +1263,7 @@
     const rows = backups.map(buildRow).join('');
     // Identical colgroup in every namespace table — combined with
     // table-layout:fixed this keeps all sections' columns pixel-aligned.
-    const widths = ['17%','10%','13%','12%','10%','10%','16%','12%'];
+    const widths = ['17%','10%','13%','12%','10%','10%','18%','10%'];
     let colgroup = '<colgroup>';
     for (const w of widths) colgroup += '<col style="width:' + w + '">';
     colgroup += '</colgroup>';
@@ -1483,11 +1509,18 @@
 
   // ── Backup trigger ──────────────────────────────────────────────────────────
 
+  // Icon-only buttons: runtime state is expressed through classes (color +
+  // pulse) and the title tooltip — never textContent, which would wipe the SVG.
+  function setBtnState(btn, state, title) {
+    btn.classList.remove('queued', 'running', 'error');
+    if (state) btn.classList.add(state);
+    if (title) btn.title = title;
+  }
+
   function triggerBackup(namespace, name, btn) {
     // Optimistic: immediately show queued state
     btn.disabled = true;
-    btn.textContent = 'Queued…';
-    btn.className = 'btn-trigger queued';
+    setBtnState(btn, 'queued', 'Queued…');
     var runKey = namespace + '/' + name;
     activeRunState[runKey] = {runName: null, phase: 'queued'};
     render();
@@ -1512,14 +1545,12 @@
         openRunLogs(namespace, data.runName, name, [], function(phase) {
           // SSE phase callback: update button and badge as run progresses
           if (phase === 'running') {
-            btn.textContent = 'Running…';
-            btn.className = 'btn-trigger running';
+            setBtnState(btn, 'running', 'Running…');
             activeRunState[runKey].phase = 'running';
             render();
           } else if (phase === 'done') {
-            btn.textContent = 'Backup now';
-            btn.className = 'btn-trigger';
             btn.disabled = false;
+            setBtnState(btn, null, 'Backup now');
             delete activeRunState[runKey];
             render();
             loadBackups();
@@ -1530,12 +1561,10 @@
         delete activeRunState[runKey];
         render();
         var msg = err.message || 'error';
-        btn.textContent = 'Failed: ' + msg;
-        btn.className = 'btn-trigger error';
         btn.disabled = false;
+        setBtnState(btn, 'error', 'Failed: ' + msg);
         setTimeout(function() {
-          btn.textContent = 'Backup now';
-          btn.className = 'btn-trigger';
+          setBtnState(btn, null, 'Backup now');
         }, 4000);
       });
   }
@@ -1544,7 +1573,7 @@
 
   function setPaused(namespace, name, paused, btn) {
     btn.disabled = true;
-    btn.textContent = paused ? 'Pausing…' : 'Resuming…';
+    setBtnState(btn, 'queued', paused ? 'Pausing…' : 'Resuming…');
 
     apiFetch('/api/backups/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name) + '/paused', {
       method: 'PATCH',
@@ -1557,10 +1586,10 @@
         loadBackups();
       })
       .catch(function() {
-        btn.textContent = 'Error';
+        setBtnState(btn, 'error', 'Error');
         setTimeout(function() {
           btn.disabled = false;
-          btn.textContent = paused ? 'Pause' : 'Resume';
+          setBtnState(btn, null, paused ? 'Pause' : 'Resume');
         }, 3000);
       });
   }
