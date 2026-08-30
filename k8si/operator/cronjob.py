@@ -29,9 +29,19 @@ def _restic_env_vars(secret_name: str) -> list[dict[str, Any]]:
     return env
 
 
-def build_restore_patch(spec: dict[str, Any]) -> str:
-    """Return a YAML snippet to paste into spec.initContainers and spec.volumes."""
-    backend_type = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
+def build_restore_patch(spec: dict[str, Any], name: str = "", namespace: str = "") -> str:
+    """Return a YAML snippet to paste into spec.initContainers and spec.volumes.
+
+    *name*/*namespace* identify the K8siBackup CR this patch belongs to. When
+    *name* is given the patch emits ``K8SI_BACKUP_NAME``/``K8SI_BACKUP_NAMESPACE``
+    so the restore init container can report provenance back onto the CR status
+    (``lastRestoreResult`` & co. — see ``k8si/restore.py``). Without a name the
+    vars are omitted and restore reporting stays off, which is the default.
+    """
+    # Per-CR backendType wins over the operator-wide BACKEND_TYPE (CRD contract).
+    backend_type = str(spec.get("backendType") or "").strip().lower()
+    if not backend_type:
+        backend_type = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
     # kopia uses kopiaSecret; fall back to resticSecret for shared SFTP configs
     if backend_type == "kopia":
         restic_secret = spec.get("kopiaSecret") or spec.get("resticSecret", "")
@@ -61,6 +71,9 @@ def build_restore_patch(spec: dict[str, Any]) -> str:
         env.append({"name": "RESTORE_SIZE_MAX", "value": str(size_max)})
     if tags:
         env.append({"name": "RESTORE_TAGS", "value": ",".join(tags)})
+    if name:
+        env.append({"name": "K8SI_BACKUP_NAME", "value": str(name)})
+        env.append({"name": "K8SI_BACKUP_NAMESPACE", "value": str(namespace or "default")})
     env.extend(_restic_env_vars(restic_secret))
 
     fix_ssh_perms: dict[str, Any] = {
