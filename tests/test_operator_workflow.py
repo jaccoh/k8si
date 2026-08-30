@@ -245,7 +245,9 @@ def test_check_after_backup_injects_run_check_env() -> None:
     from k8si.operator.workflow import _build_backup_job
 
     spec = {"checkAfterBackup": True}
-    job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", spec, [], {}, None)
+    job = _build_backup_job(
+        "job-1", "default", "pvc-1", "secret-1", spec, [], {}, None, backend_type="restic"
+    )
     env_map = {
         e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
@@ -257,7 +259,9 @@ def test_check_after_backup_absent_when_not_set() -> None:
     from k8si.operator.workflow import _build_backup_job
 
     spec = {}
-    job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", spec, [], {}, None)
+    job = _build_backup_job(
+        "job-1", "default", "pvc-1", "secret-1", spec, [], {}, None, backend_type="restic"
+    )
     env_names = [e["name"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]]
     assert "RUN_CHECK" not in env_names
 
@@ -426,7 +430,9 @@ def test_find_pvc_node_sync_all_terminal_returns_none() -> None:
 def test_build_backup_job_includes_tags() -> None:
     from k8si.operator.workflow import _build_backup_job
 
-    job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", {}, ["app=test"], {}, None)
+    job = _build_backup_job(
+        "job-1", "default", "pvc-1", "secret-1", {}, ["app=test"], {}, None, backend_type="restic"
+    )
     env_map = {
         e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
@@ -437,16 +443,13 @@ def test_build_backup_job_includes_tags() -> None:
 
 
 def test_build_backup_job_injects_backend_type() -> None:
-    """BACKEND_TYPE must appear in the Job container env so kopia/restic uses correct backend."""
-    import k8si.operator.workflow as wf
+    """The effective backend must appear in the Job container env so kopia/restic
+    uses the correct backend (the caller resolves spec/backend override)."""
     from k8si.operator.workflow import _build_backup_job
 
-    original = wf.BACKEND_TYPE
-    wf.BACKEND_TYPE = "kopia"
-    try:
-        job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", {}, [], {}, None)
-    finally:
-        wf.BACKEND_TYPE = original
+    job = _build_backup_job(
+        "job-1", "default", "pvc-1", "secret-1", {}, [], {}, None, backend_type="kopia"
+    )
 
     env_map = {
         e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -455,16 +458,12 @@ def test_build_backup_job_injects_backend_type() -> None:
 
 
 def test_build_backup_job_backend_type_defaults_to_restic() -> None:
-    """When BACKEND_TYPE is restic, env must still be injected with value restic."""
-    import k8si.operator.workflow as wf
+    """When the effective backend is restic, env must still be injected with value restic."""
     from k8si.operator.workflow import _build_backup_job
 
-    original = wf.BACKEND_TYPE
-    wf.BACKEND_TYPE = "restic"
-    try:
-        job = _build_backup_job("job-1", "default", "pvc-1", "secret-1", {}, [], {}, None)
-    finally:
-        wf.BACKEND_TYPE = original
+    job = _build_backup_job(
+        "job-1", "default", "pvc-1", "secret-1", {}, [], {}, None, backend_type="restic"
+    )
 
     env_map = {
         e["name"]: e.get("value") for e in job["spec"]["template"]["spec"]["containers"][0]["env"]

@@ -1,7 +1,10 @@
-"""Full snapshot-first backup pipeline: quiesce → snapshot → backup job → cleanup."""
+"""Full snapshot-first backup pipeline: quiesce → snapshot → backup job → cleanup.
+
+Orchestration only — Job body construction lives in job_builder.py, artifact
+parsing in artifacts.py (both re-exported here for historical importers).
+"""
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -16,7 +19,13 @@ import kubernetes.client
 import kubernetes.client.exceptions
 
 from . import pool, quiesce, snapshot
-from .cronjob import K8SI_IMAGE, _restic_env_vars
+from .artifacts import _parse_artifact  # re-exported for historical importers
+from .cronjob import K8SI_IMAGE
+from .job_builder import (
+    _BACKUP_JOB_TIMEOUT,
+    _build_backup_job,  # re-exported for historical importers
+    _resolve_backup_secret,  # re-exported for historical importers
+)
 
 # Cap re-exported for tests / observability.
 _MAX_CONCURRENT_BACKUPS = pool.MAX_CONCURRENT_BACKUPS
@@ -25,117 +34,6 @@ log = logging.getLogger(__name__)
 
 BACKEND_TYPE: str = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
 
-# Structured artifact line emitted by the backup job (see k8si/backup.py) —
-# the reliable artifact source; the log regexes below are the fallback.
-ARTIFACT_MARKER = "K8SI_ARTIFACT "
-
-_SIZE_UNITS: dict[str, int] = {
-    "b": 1,
-    "kib": 1024,
-    "mib": 1024**2,
-    "gib": 1024**3,
-    "tib": 1024**4,
-    "kb": 1000,
-    "mb": 1000**2,
-    "gb": 1000**3,
-    "tb": 1000**4,
-}
-
-
-def _parse_structured_artifact(logs: str) -> tuple[str | None, int | None]:
-    """Parse the last K8SI_ARTIFACT JSON line the backup job emitted.
-
-    The job resolves the artifact from the backend's own metadata API
-    (restic snapshots --json / kopia snapshot create --json), so this line is
-    authoritative when present. Returns (None, None) when absent or invalid —
-    the caller then falls back to scraping the human-readable logs.
-    """
-    idx = logs.rfind(ARTIFACT_MARKER)
-    if idx == -1:
-        return None, None
-    tail = logs[idx + len(ARTIFACT_MARKER) :]
-    line = tail.splitlines()[0] if tail.splitlines() else ""
-    try:
-        payload = json.loads(line)
-    except json.JSONDecodeError:
-        return None, None
-    if not isinstance(payload, dict) or not payload.get("snapshotId"):
-        return None, None
-    size = payload.get("sizeBytes")
-    return str(payload["snapshotId"]), size if isinstance(size, int) else None
-
-
-def _resolve_backup_secret(spec: dict[str, Any], backend_type: str) -> str:
-    """Return the secret name to use for the backup job.
-
-    kopia uses spec.kopiaSecret (falls back to resticSecret for shared SFTP secrets).
-    restic always uses spec.resticSecret.
-    """
-    if backend_type == "kopia":
-        return str(spec.get("kopiaSecret") or spec.get("resticSecret") or "")
-    return str(spec.get("resticSecret") or "")
-
-
-def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | None]:
-    """Parse snapshot ID and total size in bytes from backup job stdout.
-
-    Returns (snapshot_id, size_bytes). Either field may be None if not found.
-    """
-    snap_id, size_bytes = _parse_structured_artifact(logs)
-    if snap_id:
-        return snap_id, size_bytes
-
-    if backend_type == "restic":
-        snap_id = None
-        m = re.search(r"snapshot ([a-f0-9]+) saved", logs)
-        if m:
-            snap_id = m.group(1)
-
-        size_bytes = None
-        # "processed N files, 23.456 GiB in 0:00"
-        m2 = re.search(
-            r"processed \d+ files?,\s+([\d.]+)\s*([A-Za-z]+)\s+in\b",
-            logs,
-        )
-        if m2:
-            amount, unit = float(m2.group(1)), m2.group(2).lower()
-            multiplier = _SIZE_UNITS.get(unit)
-            if multiplier is not None:
-                size_bytes = int(amount * multiplier)
-
-        return snap_id, size_bytes
-
-    if backend_type == "kopia":
-        snap_id = None
-        # Modern kopia: "Created snapshot with root <root> and ID <id> in Ns."
-        m = re.search(r"Created snapshot with root \S+ and ID (\S+)", logs)
-        if m:
-            snap_id = m.group(1).rstrip(".")
-        else:
-            # Legacy kopia: "Snapshotted source and ID <id> in 0:05"
-            m = re.search(r"Snapshotted source and ID (\S+)", logs)
-            if m:
-                snap_id = m.group(1)
-
-        size_bytes = None
-        # Progress lines: "* N hashing, N hashed (SIZE), N cached (SIZE), N uploading".
-        # A first run reports data under "hashed" with "cached (0 B)" last, so take
-        # the max across both rather than the last "cached" match.
-        for m2 in re.finditer(r"(?:hash|cach)ed \(([\d.]+)\s*([A-Za-z]+)\)", logs):
-            amount = float(m2.group(1))
-            unit = m2.group(2).lower()
-            multiplier = _SIZE_UNITS.get(unit)
-            if multiplier is not None:
-                candidate = int(amount * multiplier)
-                if size_bytes is None or candidate > size_bytes:
-                    size_bytes = candidate
-
-        return snap_id, size_bytes
-
-    return None, None
-
-
-_BACKUP_JOB_TIMEOUT = 3600
 _HOOK_JOB_TIMEOUT = 300
 _JOB_GONE_TIMEOUT = 120
 
@@ -343,6 +241,7 @@ async def _run_backup(
                     node,
                     repo_pvc,
                     job_timeout,
+                    backend_type=BACKEND_TYPE,
                 )
                 _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
                 await _log_phase("BackupJobStarted", f"Starting Job {job_name}")
@@ -401,6 +300,7 @@ async def _run_backup(
                 node,
                 repo_pvc,
                 job_timeout,
+                backend_type=BACKEND_TYPE,
             )
             _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
             await _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
@@ -512,91 +412,6 @@ async def _run_hook_job(
         if required:
             raise RuntimeError(f"Pre-snapshot hook {hook!r} failed: {e}") from e
         logger.error("Pre-snapshot hook failed (non-required, continuing): %s", e)
-
-
-def _build_backup_job(
-    job_name: str,
-    namespace: str,
-    pvc_name: str,
-    restic_secret: str,
-    spec: dict[str, Any],
-    tags: list[str],
-    retention: dict[str, int],
-    node: str | None = None,
-    repo_pvc: str | None = None,
-    job_timeout: int = _BACKUP_JOB_TIMEOUT,
-) -> dict[str, Any]:
-    env: list[dict[str, Any]] = [
-        {"name": "MODE", "value": "job"},
-        {"name": "DATA_PATH", "value": "/data"},
-        {"name": "BACKEND_TYPE", "value": BACKEND_TYPE},
-        {"name": "RETENTION_DAILY", "value": str(retention.get("daily", 7))},
-        {"name": "RETENTION_WEEKLY", "value": str(retention.get("weekly", 4))},
-        {"name": "RETENTION_MONTHLY", "value": str(retention.get("monthly", 3))},
-    ]
-    if tags:
-        env.append({"name": "BACKUP_TAGS", "value": ",".join(tags)})
-    if spec.get("checkAfterBackup"):
-        env.append({"name": "RUN_CHECK", "value": "true"})
-    env.extend(_restic_env_vars(restic_secret))
-
-    resources = spec.get(
-        "resources",
-        {
-            "requests": {"cpu": "50m", "memory": "128Mi"},
-            "limits": {"cpu": "200m", "memory": "1Gi"},
-        },
-    )
-
-    volumes: list[dict[str, Any]] = [
-        {"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}},
-        {
-            "name": "restic-ssh",
-            "secret": {
-                "secretName": restic_secret,
-                "optional": True,
-                "defaultMode": 0o400,
-                "items": [
-                    {"key": "id_ed25519", "path": "id_ed25519"},
-                    {"key": "known_hosts", "path": "known_hosts"},
-                ],
-            },
-        },
-    ]
-    volume_mounts: list[dict[str, Any]] = [
-        {"name": "data", "mountPath": "/data"},
-        {"name": "restic-ssh", "mountPath": "/restic-ssh", "readOnly": True},
-    ]
-    if repo_pvc:
-        volumes.append({"name": "repo", "persistentVolumeClaim": {"claimName": repo_pvc}})
-        volume_mounts.append({"name": "repo", "mountPath": "/repo"})
-
-    return {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": {"name": job_name, "namespace": namespace},
-        "spec": {
-            "backoffLimit": 0,
-            "activeDeadlineSeconds": job_timeout,
-            "ttlSecondsAfterFinished": 600,
-            "template": {
-                "spec": {
-                    "restartPolicy": "Never",
-                    **({"nodeSelector": {"kubernetes.io/hostname": node}} if node else {}),
-                    "volumes": volumes,
-                    "containers": [
-                        {
-                            "name": "k8si",
-                            "image": K8SI_IMAGE,
-                            "env": env,
-                            "volumeMounts": volume_mounts,
-                            "resources": resources,
-                        }
-                    ],
-                }
-            },
-        },
-    }
 
 
 def _get_pod_failure_reason(v1: Any, job_name: str, namespace: str) -> str:
