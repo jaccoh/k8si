@@ -20,6 +20,10 @@ class RepositoryNotInitializedError(BackupError):
     """The repository does not exist yet — recoverable by backend.init()."""
 
 
+class RepositoryLockedError(BackupError):
+    """The repository is locked by another client — recoverable by backend.unlock()."""
+
+
 @dataclass
 class SnapshotInfo:
     id: str

@@ -12,7 +12,13 @@ from pathlib import Path
 
 import sh
 
-from ..backend import BackupError, NoSnapshotsError, RepositoryNotInitializedError, SnapshotInfo
+from ..backend import (
+    BackupError,
+    NoSnapshotsError,
+    RepositoryLockedError,
+    RepositoryNotInitializedError,
+    SnapshotInfo,
+)
 
 log = logging.getLogger(__name__)
 
@@ -351,6 +357,11 @@ class KopiaBackend:
             ]
             stderr = "\n".join(p for p in parts if p).strip()
             log.error("kopia error: %s", stderr)
+            if "lock" in stderr.lower():
+                # Typed so the retry logic catches the condition, not the string.
+                raise RepositoryLockedError(
+                    f"kopia exited {e.exit_code}", e.exit_code, stderr
+                ) from e
             raise BackupError(f"kopia exited {e.exit_code}", e.exit_code, stderr) from e
 
     @staticmethod

@@ -9,7 +9,12 @@ from pathlib import Path
 
 from croniter import croniter
 
-from .backend import BackupBackend, BackupError, RepositoryNotInitializedError
+from .backend import (
+    BackupBackend,
+    BackupError,
+    RepositoryLockedError,
+    RepositoryNotInitializedError,
+)
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -63,7 +68,7 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
             except BackupError as init_err:
                 log.error("Backup failed after init: %s", init_err.stderr)
                 raise
-        elif "lock" in e.stderr.lower() or "locked" in e.stderr.lower():
+        elif isinstance(e, RepositoryLockedError):
             log.warning("Repository is locked, attempting automated unlock and retry")
             try:
                 backend.unlock()
@@ -84,23 +89,22 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
             monthly=config.retention_monthly,
             prune=True,
         )
-    except BackupError as e:
-        if "lock" in e.stderr.lower() or "locked" in e.stderr.lower():
-            log.warning("Repository is locked during forget, attempting automated unlock and retry")
-            try:
-                backend.unlock()
-                backend.forget(
-                    daily=config.retention_daily,
-                    weekly=config.retention_weekly,
-                    monthly=config.retention_monthly,
-                    prune=True,
-                )
-            except BackupError as retry_err:
-                log.error("Forget failed after unlock retry: %s", retry_err.stderr)
-                raise
-        else:
-            log.error("Forget/prune failed: %s", e.stderr)
+    except RepositoryLockedError:
+        log.warning("Repository is locked during forget, attempting automated unlock and retry")
+        try:
+            backend.unlock()
+            backend.forget(
+                daily=config.retention_daily,
+                weekly=config.retention_weekly,
+                monthly=config.retention_monthly,
+                prune=True,
+            )
+        except BackupError as retry_err:
+            log.error("Forget failed after unlock retry: %s", retry_err.stderr)
             raise
+    except BackupError as e:
+        log.error("Forget/prune failed: %s", e.stderr)
+        raise
 
     if config.run_check:
         try:

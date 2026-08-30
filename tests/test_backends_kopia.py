@@ -737,3 +737,34 @@ def test_backup_manifest_without_size_keeps_none_size() -> None:
     backend.backup(Path("/data"))
 
     assert backend.last_snapshot == {"snapshotId": "snap1", "sizeBytes": None}
+
+
+# ── typed repo-locked detection ───────────────────────────────────────────────
+
+
+def test_invoke_locked_output_raises_typed_error() -> None:
+    """A repo-locked kopia failure must surface as RepositoryLockedError so the
+    retry logic can catch the type instead of sniffing stderr strings."""
+    from k8si.backend import RepositoryLockedError
+
+    backend, mock_cmd = _make_backend()
+    err = _sh_error(1, "ERROR can't lock repository: locked by another client")
+    mock_cmd.side_effect = err
+
+    with pytest.raises(RepositoryLockedError) as exc_info:
+        backend._invoke("snapshot", "create", "/data")
+
+    assert str(exc_info.value) == "kopia exited 1"
+    assert "lock" in exc_info.value.stderr
+
+
+def test_invoke_unlocked_output_raises_plain_backup_error() -> None:
+    from k8si.backend import BackupError, RepositoryLockedError
+
+    backend, mock_cmd = _make_backend()
+    mock_cmd.side_effect = _sh_error(1, "ERROR unable to connect")
+
+    with pytest.raises(BackupError) as exc_info:
+        backend._invoke("snapshot", "create", "/data")
+
+    assert not isinstance(exc_info.value, RepositoryLockedError)

@@ -454,3 +454,42 @@ def test_verify_snapshot_raises_on_ambiguous_match() -> None:
     mock_cmd.return_value = json.dumps(data)
     with pytest.raises(BackupError, match="ambiguous"):
         backend.verify_snapshot("k8si-run=myrun")
+
+
+# ── typed repo-locked detection ───────────────────────────────────────────────
+
+
+def test_invoke_locked_stderr_raises_typed_error() -> None:
+    """A repo-locked restic failure must surface as RepositoryLockedError so
+    the retry logic can catch the type instead of sniffing stderr strings."""
+    from k8si.backend import RepositoryLockedError
+
+    backend, mock_cmd = _make_backend()
+    mock_cmd.side_effect = _sh_error(
+        1, "repository is already locked exclusively by PID 123 on host"
+    )
+
+    with pytest.raises(RepositoryLockedError) as exc_info:
+        backend._invoke("backup", "/data")
+
+    # Message and stderr payload stay exactly as BackupError carried them.
+    assert str(exc_info.value) == "restic exited 1"
+    assert "already locked" in exc_info.value.stderr
+
+
+def test_invoke_unlocked_stderr_raises_plain_backup_error() -> None:
+    from k8si.backend import RepositoryLockedError
+
+    backend, mock_cmd = _make_backend()
+    mock_cmd.side_effect = _sh_error(1, "connection refused")
+
+    with pytest.raises(BackupError) as exc_info:
+        backend._invoke("backup", "/data")
+
+    assert not isinstance(exc_info.value, RepositoryLockedError)
+
+
+def test_locked_error_subclasses_backup_error() -> None:
+    from k8si.backend import RepositoryLockedError
+
+    assert issubclass(RepositoryLockedError, BackupError)

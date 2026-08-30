@@ -11,7 +11,7 @@ from pathlib import Path
 
 import sh
 
-from ..backend import BackupError, NoSnapshotsError, SnapshotInfo
+from ..backend import BackupError, NoSnapshotsError, RepositoryLockedError, SnapshotInfo
 
 log = logging.getLogger(__name__)
 
@@ -171,4 +171,15 @@ class ResticBackend:
                 raw_stderr if isinstance(raw_stderr, str) else raw_stderr.decode(errors="replace")
             ).strip()
             log.error("restic error: %s", stderr)
+            if _looks_locked(stderr):
+                # Typed so the retry logic catches the condition, not the string.
+                raise RepositoryLockedError(
+                    f"restic exited {e.exit_code}", e.exit_code, stderr
+                ) from e
             raise BackupError(f"restic exited {e.exit_code}", e.exit_code, stderr) from e
+
+
+def _looks_locked(stderr: str) -> bool:
+    """restic says 'unable to create lock in backend' / 'repository is already
+    locked exclusively' — both carry 'lock' in the error output."""
+    return "lock" in stderr.lower()

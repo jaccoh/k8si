@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from k8si.backend import BackupError, RepositoryNotInitializedError
+from k8si.backend import BackupError, RepositoryLockedError, RepositoryNotInitializedError
 from k8si.backup import LAST_BACKUP_FILE, _run_cycle, run_once
 from k8si.config import Config
 
@@ -135,7 +135,7 @@ def test_backup_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.backup.side_effect = [
-        BackupError("failed", 1, "repository is locked by another process"),
+        RepositoryLockedError("failed", 1, "repository is locked by another process"),
         None,  # succeeds after unlock
     ]
     _run_cycle(config, backend)
@@ -149,7 +149,7 @@ def test_forget_locked_causes_unlock_and_retry(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.forget.side_effect = [
-        BackupError("failed", 1, "repository is locked"),
+        RepositoryLockedError("failed", 1, "repository is locked"),
         None,  # succeeds after unlock
     ]
     _run_cycle(config, backend)
@@ -251,8 +251,8 @@ def test_backup_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) ->
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.backup.side_effect = [
-        BackupError("failed", 1, "repository is locked"),
-        BackupError("failed", 1, "still locked"),
+        RepositoryLockedError("failed", 1, "repository is locked"),
+        RepositoryLockedError("failed", 1, "still locked"),
     ]
     with pytest.raises(BackupError):
         _run_cycle(config, backend)
@@ -269,8 +269,8 @@ def test_forget_fails_after_unlock_retry_is_logged_and_raises(tmp_path: Path) ->
     config = make_config(tmp_path)
     backend = MagicMock()
     backend.forget.side_effect = [
-        BackupError("prune failed", 1, "repository is locked"),
-        BackupError("prune failed", 1, "still locked"),
+        RepositoryLockedError("prune failed", 1, "repository is locked"),
+        RepositoryLockedError("prune failed", 1, "still locked"),
     ]
     with pytest.raises(BackupError):
         _run_cycle(config, backend)
@@ -446,3 +446,21 @@ def test_cycle_no_snapshots_no_artifact_line(tmp_path: Path, capsys) -> None:
     _run_cycle(config, backend)
 
     assert _artifact_payload(capsys) is None
+
+
+def test_lockish_stderr_without_typed_error_does_not_unlock(tmp_path: Path) -> None:
+    """The retry logic must catch the TYPE, not the string: a plain BackupError
+    whose stderr merely mentions 'locked' (e.g. an unrelated CLI wording) must
+    propagate without an unlock attempt."""
+    import pytest
+
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.backup.side_effect = BackupError("failed", 1, "unlocked feature is locked down")
+
+    with pytest.raises(BackupError):
+        _run_cycle(config, backend)
+
+    # No reactive unlock-retry: backup ran exactly once (the proactive unlock
+    # at cycle start is unconditional and does not count).
+    backend.backup.assert_called_once()
