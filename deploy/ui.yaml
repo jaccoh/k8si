@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: k8si-ui
-  namespace: k8si
+  namespace: k8si-system
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -35,14 +35,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: k8si-ui
-    namespace: k8si
+    namespace: k8si-system
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: k8si-ui
-  namespace: k8si
+  namespace: k8si-system
 spec:
   replicas: 1
   selector:
@@ -98,7 +98,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: k8si-ui
-  namespace: k8si
+  namespace: k8si-system
 spec:
   type: NodePort
   selector:

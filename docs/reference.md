@@ -103,6 +103,105 @@ Mounting differs per consumer:
 
 ---
 
+## RBAC modes
+
+Two interchangeable setups ship in `deploy/`. Pick one at install time; they
+are mutually exclusive (applying both grants the union, never the narrower set).
+
+| | `deploy/rbac.yaml` (default) | `deploy/rbac-namespaced.yaml` |
+|---|---|---|
+| Secrets `get` | ClusterRole — every namespace | namespace `Role` only |
+| `pods/exec` `create` | ClusterRole — every namespace | namespace `Role` only |
+| New backup namespace works immediately | yes | after you apply its Role + RoleBinding |
+| Blast radius of a compromised operator | read every Secret in the cluster, exec into any pod | only the namespaces you explicitly enrolled |
+
+Everything else is identical and stays cluster-scoped in both modes, because
+the operator runs `--all-namespaces` and genuinely needs it cluster-wide: the
+k8si CRDs, Jobs, pod *metadata* (read-only) and logs, events, VolumeSnapshots,
+PVCs and PVs.
+
+The two grants that move are the dangerous ones. `secrets get` reads your
+restic/kopia repository URL and password; `pods/exec create` is what runs
+`mysqldump` / `pg_dump` / `sqlite3` inside your application pods for database
+quiescing. Both are only ever exercised inside a namespace that owns a
+`K8siBackup`, so in the scoped mode they live in a per-namespace `Role`
+(`k8si-operator-namespace`) that you must replicate into every namespace you
+back up:
+
+```bash
+# Enrol one namespace (reads the last two documents of the manifest):
+sed -e 's/namespace: k8si-system/namespace: downloads/' \
+    deploy/rbac-namespaced.yaml | kubectl apply -f -
+
+# Or copy the Role + RoleBinding pair out of rbac-namespaced.yaml and edit
+# metadata.namespace by hand for each namespace.
+```
+
+**The trade-off is fail-closed vs. convenient.** In the scoped mode a freshly
+created backup namespace is inert until its Role and RoleBinding exist — its
+backups fail with RBAC errors instead of silently working. That is deliberate:
+an unreviewed namespace cannot hand the operator its Secrets. If you add
+namespaces rarely and deliberately, take the scoped mode. If namespaces come
+and go (or you just want `kubectl apply -f deploy/` to be the whole story),
+stay on the default.
+
+Upgrading from cluster-wide to scoped: apply `rbac-namespaced.yaml`, then
+delete the old ClusterRoleBinding is *not* required — the ClusterRole is
+replaced in place with the narrower rules, so the wide grants disappear on the
+same object name. Do it namespace by namespace (enrol first, then flip the
+ClusterRole) and a mis-enrolled namespace shows up as failed Jobs rather than
+failed backups you discover weeks later.
+
+---
+
+## Dashboard exposure and access control
+
+`deploy/ui.yaml` ships a NodePort Service on `:30080` — reachable from every
+node on the network, no TLS, no authentication. That is the LAN-trust default.
+`deploy/ui-ingress.yaml` is the variant for everything else: a ClusterIP
+Service plus an Ingress, so the dashboard goes through your ingress controller
+and inherits its TLS, host routing and middlewares (a commented Traefik block
+is included):
+
+```bash
+kubectl apply -f deploy/ui.yaml          # SA, RBAC, Deployment, NodePort Service
+kubectl apply -f deploy/ui-ingress.yaml  # flips the Service to ClusterIP + adds Ingress
+```
+
+Both Services are named `k8si-ui`, so whichever you applied last wins and there
+is never a duplicate. Set a real hostname in the Ingress before applying.
+
+> As of 0.10.0 both manifests land in `k8si-system`, the same namespace as the
+> operator. (In 0.9.x `deploy/ui.yaml` targeted a separate `k8si` namespace that
+> nothing else created — `kubectl apply -f deploy/` failed out of the box.)
+
+### `K8SI_UI_TOKEN` (off by default)
+
+The dashboard's mutating endpoints — trigger a backup now, pause, resume —
+accept an optional bearer token. Unset, the dashboard is open to anyone who can
+reach it. Set, every mutating call must carry a matching `X-K8si-Token` header
+(compared with `hmac.compare_digest`, so timing attacks don't help):
+
+```bash
+kubectl -n k8si-system create secret generic k8si-ui-token \
+  --from-literal=token="$(openssl rand -hex 32)"
+```
+
+```yaml
+# add to the ui container env in deploy/ui.yaml
+- name: K8SI_UI_TOKEN
+  valueFrom:
+    secretKeyRef: {name: k8si-ui-token, key: token}
+```
+
+The dashboard prompts for the token the first time you press Backup-now and
+remembers it for the session (stored in `sessionStorage`, not a cookie). Read-only
+views — status, sparkline, log drawer — stay open with or without the token;
+`K8SI_UI_TOKEN` protects the buttons, not the data. To lock down the data too,
+keep the dashboard behind your ingress access control.
+
+---
+
 ## K8siBackup spec reference
 
 ```yaml
@@ -114,9 +213,17 @@ metadata:
 spec:
   # required
   pvc: <pvc-claim-name>          # PVC to back up, mounted at /data
-  schedule: "0 2 * * *"          # Cron (UTC)
+                                 # IMMUTABLE — changing it would silently point
+                                 # the backup at a different dataset; create a
+                                 # new K8siBackup instead
+  schedule: "0 2 * * *"          # Cron (UTC), five fields — validated by a
+                                 # pattern; six-field and @-forms are rejected
 
   # backend — resticSecret (restic) or kopiaSecret (kopia)
+  # all three references are IMMUTABLE: they identify which dataset and which
+  # credentials the repository was built with. Rotate the Secret's contents,
+  # never the reference — repointing a repo at a different PVC/secret means a
+  # new K8siBackup.
   resticSecret: <secret-name>
   kopiaSecret: <secret-name>     # kopia backend
   repositoryPVC: <pvc-name>      # mount a PVC at /repo; use with
@@ -189,15 +296,43 @@ spec:
 
 `lastRestoreResult` (`success` / `failed` / `skipped`), `lastRestoreTime`,
 `lastRestoreSnapshotId`, and `lastRestoreMessage` are written by the restore
-init container — but **only when it is configured for reporting**, which the
-operator-generated `restorePatch` does not do. To get restore status on the CRD
-you need all of:
+init container — but **only when it is configured for reporting**. To get
+restore status on the CRD you need all of:
 
 1. `K8SI_BACKUP_NAME` / `K8SI_BACKUP_NAMESPACE` env on the init container
-   (`k8si generate --backup-name <name>` adds them), and
+   (`k8si generate --backup-name <name>` adds them). `build_restore_patch`
+   emits them whenever it is given the CR's `name`/`namespace`; without a name
+   the vars are omitted and reporting stays off. The operator call sites in
+   `k8si/operator/main.py` still call it with `spec` only, so until that
+   one-argument change lands the generated `restorePatch` does **not** carry
+   them — `k8si generate --backup-name` is the wired path today.
 2. the `k8si-restore` ClusterRole from `deploy/rbac.yaml` bound to a
-   ServiceAccount the pod uses (`k8si generate --backup-name` prints the
-   binding snippet; nothing in `deploy/` binds it for you).
+   ServiceAccount the pod uses. Nothing in `deploy/` binds it for you, because
+   the binding decides *which* pods may write status — that is a per-app call.
+   Add this to the app's namespace when you want reporting:
+
+   ```yaml
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: ClusterRoleBinding
+   metadata:
+     name: k8si-restore-<app>
+   roleRef:
+     apiGroup: rbac.authorization.k8s.io
+     kind: ClusterRole
+     name: k8si-restore
+   subjects:
+     - kind: ServiceAccount
+       name: <app-serviceaccount>
+       namespace: <app-namespace>
+   ```
+
+   The ClusterRole itself is deliberately minimal — a single rule granting
+   `patch` on `k8sibackups/status` and nothing else, so a compromised app pod
+   can append restore results but cannot read Secrets, cannot touch `spec`, and
+   cannot reach any other resource. Prefer a `RoleBinding` in the app's
+   namespace instead if all of that app's K8siBackups live there; the
+   ClusterRoleBinding form is only needed when the pod reports to a CR in
+   another namespace.
 
 Without both, restore status fields simply never populate.
 

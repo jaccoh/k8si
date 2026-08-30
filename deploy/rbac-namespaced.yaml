@@ -1,0 +1,141 @@
+# Scoped RBAC alternative to deploy/rbac.yaml (goals-doc #10).
+#
+# deploy/rbac.yaml (cluster-wide) stays the default: it works out of the box and
+# nothing breaks on upgrade. This manifest is the same operator with the two
+# genuinely dangerous grants pulled out of the ClusterRole:
+#
+#   * secrets get      — reads backup credentials (restic repo URL + password)
+#   * pods/exec create — runs `mysql`/`pg_dump`/`sqlite3` inside your app pods
+#
+# Both are only ever exercised inside a namespace that owns a K8siBackup, so
+# they live in a per-namespace Role here instead of a ClusterRole.
+#
+# USAGE
+#   1. Apply this file instead of deploy/rbac.yaml.
+#   2. Replicate the LAST TWO documents (Role + RoleBinding) into every
+#      namespace that holds backed-up PVCs, e.g.:
+#
+#      sed -e 's/namespace: k8si-system/namespace: downloads/' \
+#          deploy/rbac-namespaced.yaml | kubectl apply -f -
+#
+#      (or copy just the Role/RoleBinding pair and edit `metadata.namespace`)
+#
+# Trade-off: a new backup namespace is inert until its Role+RoleBinding exist —
+# backups in it fail with RBAC errors instead of silently working. That is the
+# point: an unreviewed namespace cannot hand the operator its secrets. See
+# docs/reference.md → "RBAC modes".
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8si-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8si-operator
+  namespace: k8si-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8si-operator
+  annotations:
+    k8si.io/rbac-mode: namespaced
+rules:
+  # k8si CRDs — the operator watches these cluster-wide.
+  - apiGroups: [k8si.io]
+    resources: [k8sibackups, k8sibackups/status]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [k8si.io]
+    resources: [k8sibackupruns, k8sibackupruns/status]
+    verbs: [get, list, watch, create, patch, update, delete]
+  # VolumeSnapshots — created from any namespace.
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [create, get, list, watch, delete, patch, update]
+  # PVCs are namespaced resources but the operator runs --all-namespaces, so
+  # this grant must span the cluster. Read-only volume metadata stays here.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, delete]
+  # Pod *metadata* only — logs for the log drawer. Not exec, not secrets.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # Backup Jobs run in the backup's own namespace.
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, watch, delete, patch, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8si-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8si-operator
+subjects:
+  - kind: ServiceAccount
+    name: k8si-operator
+    namespace: k8si-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8si-restore
+  annotations:
+    k8si.io/rbac-mode: namespaced
+rules:
+  - apiGroups: [k8si.io]
+    resources: [k8sibackups/status]
+    verbs: [patch]
+---
+# ── Per-namespace grants ──────────────────────────────────────────────────────
+# REPLICATE THIS PAIR INTO EVERY NAMESPACE THAT OWNS A K8siBackup.
+# This instance covers k8si-system only; it is the template, not the coverage.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8si-operator-namespace
+  namespace: k8si-system
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8si-operator-namespace
+  namespace: k8si-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8si-operator-namespace
+subjects:
+  - kind: ServiceAccount
+    name: k8si-operator
+    namespace: k8si-system

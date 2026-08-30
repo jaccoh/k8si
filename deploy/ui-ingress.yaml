@@ -1,0 +1,70 @@
+# ClusterIP + Ingress exposure variant for the k8si dashboard.
+#
+# deploy/ui.yaml ships a NodePort Service (:30080) — reachable from every node,
+# unauthenticated, fine for a trusted LAN. This file replaces that Service with
+# a ClusterIP one fronted by an Ingress, so the dashboard is reachable through
+# your existing ingress controller (TLS, host-based routing, middlewares)
+# instead of a hole on every node.
+#
+# Apply INSTEAD OF the Service block in deploy/ui.yaml (the SA/ClusterRole/
+# ClusterRoleBinding/Deployment in ui.yaml are still required):
+#
+#   kubectl apply -f deploy/ui.yaml          # SA, RBAC, Deployment, NodePort svc
+#   kubectl apply -f deploy/ui-ingress.yaml  # flips the svc to ClusterIP + Ingress
+#
+# Both Services are named k8si-ui, so whichever you apply last wins — there is
+# never a duplicate. Set a real hostname below.
+#
+# AUTH: the dashboard's mutating endpoints (Backup-now, pause/resume) accept an
+# optional bearer token. Create it, mount it, and the UI is no longer open:
+#
+#   kubectl -n k8si-system create secret generic k8si-ui-token \
+#     --from-literal=token="$(openssl rand -hex 32)"
+#
+# ...then add to the ui container env:
+#   - name: K8SI_UI_TOKEN
+#     valueFrom:
+#       secretKeyRef: {name: k8si-ui-token, key: token}
+#
+# See README → "Dashboard access control" and docs/reference.md.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8si-ui
+  namespace: k8si-system
+spec:
+  type: ClusterIP
+  selector:
+    app: k8si-ui
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: k8si-ui
+  namespace: k8si-system
+  annotations:
+    # Traefik (as used on the reference homelab deployment): TLS via the
+    # letsencrypt resolver and a LAN-only middleware. Uncomment and adjust.
+    # traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+    # traefik.ingress.kubernetes.io/router.middlewares: monitoring-lan-only@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [k8si.example.com]
+      secretName: k8si-ui-tls
+  rules:
+    - host: k8si.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: k8si-ui
+                port:
+                  number: 8080
