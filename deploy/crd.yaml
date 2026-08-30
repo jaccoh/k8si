@@ -47,22 +47,35 @@ spec:
                 pvc:
                   type: string
                   description: PVC name to back up (must be in the same namespace)
+                  x-kubernetes-validations:
+                    - rule: "self == oldSelf"
+                      message: "pvc is immutable — it identifies which volume's data is in this repository. Changing it would silently repoint the backup at a different dataset; create a new K8siBackup instead."
                 resticSecret:
                   type: string
                   description: Secret with RESTIC_REPOSITORY and RESTIC_PASSWORD (required); RESTIC_SFTP_COMMAND, id_ed25519, known_hosts optional for SFTP backends (restic)
+                  x-kubernetes-validations:
+                    - rule: "self == oldSelf"
+                      message: "resticSecret is immutable — it names the credential Secret the backup job reads. Rotate the Secret's contents, not this reference."
                 kopiaSecret:
                   type: string
                   description: Secret with RESTIC_REPOSITORY and RESTIC_PASSWORD (required); RESTIC_SFTP_COMMAND, id_ed25519, known_hosts optional for SFTP backends (kopia)
+                  x-kubernetes-validations:
+                    - rule: "self == oldSelf"
+                      message: "kopiaSecret is immutable — it names the credential Secret the backup job reads. Rotate the Secret's contents, not this reference."
                 repositoryPVC:
                   type: string
                   description: PVC mounted at /repo inside the backup job; use with RESTIC_REPOSITORY=file:///repo for local filesystem backends
+                  x-kubernetes-validations:
+                    - rule: "self == oldSelf"
+                      message: "repositoryPVC is immutable — it identifies the on-cluster repository holding this backup's data. Create a new K8siBackup to target a different repository."
                 backendType:
                   type: string
                   enum: [restic, kopia]
                   description: Backup backend to use. Defaults to BACKEND_TYPE env var on the operator pod.
                 schedule:
                   type: string
-                  description: Cron schedule for backups, e.g. "0 3 * * *"
+                  description: Cron schedule for backups, e.g. "0 3 * * *" (five fields, UTC)
+                  pattern: '^(\*|\d{1,4}|\d{1,4}-\d{1,4}|\*/\d{1,4}|\d{1,4}-\d{1,4}/\d{1,4}|[a-zA-Z]{3})(,(\*|\d{1,4}|\d{1,4}-\d{1,4}|\*/\d{1,4}|\d{1,4}-\d{1,4}/\d{1,4}|[a-zA-Z]{3}))*( +(\*|\d{1,4}|\d{1,4}-\d{1,4}|\*/\d{1,4}|\d{1,4}-\d{1,4}/\d{1,4}|[a-zA-Z]{3})(,(\*|\d{1,4}|\d{1,4}-\d{1,4}|\*/\d{1,4}|\d{1,4}-\d{1,4}/\d{1,4}|[a-zA-Z]{3}))*){4}$'
                 backupMode:
                   type: string
                   enum: [snapshot, direct]
@@ -106,12 +119,15 @@ spec:
                   properties:
                     daily:
                       type: integer
+                      minimum: 1
                       default: 7
                     weekly:
                       type: integer
+                      minimum: 1
                       default: 4
                     monthly:
                       type: integer
+                      minimum: 1
                       default: 3
                 preSnapshotHook:
                   type: string
@@ -165,10 +181,12 @@ spec:
                   description: Run a repository integrity check after each successful backup
                 maxRetriesPerDay:
                   type: integer
+                  minimum: 0
                   default: 3
                   description: Stop retrying after this many failures in a calendar day (UTC) to prevent retry storms
                 jobTimeout:
                   type: integer
+                  minimum: 60
                   default: 3600
                   description: Maximum seconds for the backup Job to complete; also sets activeDeadlineSeconds on the Job so it self-terminates (default 3600 = 1 hour)
                 notifyOnFailure:
@@ -196,6 +214,7 @@ spec:
                   type: string
                 recentBackups:
                   type: array
+                  maxItems: 30
                   items:
                     type: object
                     properties:
@@ -205,9 +224,11 @@ spec:
                         type: string
                 recentRuns:
                   type: array
+                  maxItems: 30
                   description: Rolling history of the last 30 backup runs with artifact metadata
                   items:
                     type: object
+                    required: [name, time, result]
                     properties:
                       name:
                         type: string
@@ -244,6 +265,7 @@ spec:
                   description: Human-readable summary of the last restore attempt
                 lastRunLog:
                   type: array
+                  maxItems: 200
                   description: Phase log entries for the most recent backup run, cleared at start of each run
                   items:
                     type: object
