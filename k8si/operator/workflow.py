@@ -407,10 +407,20 @@ async def _run_backup(
     }
 
 
+_TERMINAL_POD_PHASES = frozenset({"Succeeded", "Failed"})
+
+
 def _find_pvc_node_sync(pvc_name: str, namespace: str) -> str | None:
-    """Return the node name where pvc_name is currently mounted, or None."""
+    """Return the node name where pvc_name is currently mounted, or None.
+
+    Terminal pods (Succeeded/Failed) are skipped: their spec still lists the
+    PVC and their node assignment lingers after death, so a dead pod would pin
+    the backup Job to a node the volume is no longer attached to.
+    """
     v1 = kubernetes.client.CoreV1Api()
     for pod in v1.list_namespaced_pod(namespace).items:
+        if getattr(pod.status, "phase", None) in _TERMINAL_POD_PHASES:
+            continue
         for vol in pod.spec.volumes or []:
             if (
                 vol.persistent_volume_claim

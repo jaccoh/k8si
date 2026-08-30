@@ -374,6 +374,52 @@ def test_find_pvc_node_sync_no_match_returns_none() -> None:
     assert result is None
 
 
+def _mounting_pod(pvc: str, node: str, phase: str) -> MagicMock:
+    vol = MagicMock()
+    vol.persistent_volume_claim.claim_name = pvc
+    pod = MagicMock()
+    pod.spec.volumes = [vol]
+    pod.spec.node_name = node
+    pod.status.phase = phase
+    return pod
+
+
+def test_find_pvc_node_sync_skips_terminal_pods() -> None:
+    """A dead pod (Succeeded/Failed) still carries its node assignment for a
+    while and still lists the PVC in spec.volumes — pinning the backup Job to
+    that node attaches it where the volume no longer lives. Only non-terminal
+    pods may elect the node."""
+    from k8si.operator.workflow import _find_pvc_node_sync
+
+    pods = [
+        _mounting_pod("my-pvc", "dead-node-a", "Succeeded"),
+        _mounting_pod("my-pvc", "dead-node-b", "Failed"),
+        _mounting_pod("my-pvc", "live-node", "Running"),
+    ]
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = pods
+
+    with patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        result = _find_pvc_node_sync("my-pvc", "default")
+
+    assert result == "live-node"
+
+
+def test_find_pvc_node_sync_all_terminal_returns_none() -> None:
+    """When every pod mounting the PVC is terminal there is no live placement:
+    the Job must float (None), not pin to a dead pod's node."""
+    from k8si.operator.workflow import _find_pvc_node_sync
+
+    pods = [_mounting_pod("my-pvc", "dead-node", "Succeeded")]
+    mock_v1 = MagicMock()
+    mock_v1.list_namespaced_pod.return_value.items = pods
+
+    with patch("k8si.operator.workflow.kubernetes.client.CoreV1Api", return_value=mock_v1):
+        result = _find_pvc_node_sync("my-pvc", "default")
+
+    assert result is None
+
+
 # ── _build_backup_job: tags ───────────────────────────────────────────────────
 
 
