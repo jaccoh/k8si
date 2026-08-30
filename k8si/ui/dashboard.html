@@ -178,6 +178,7 @@
   .stat-card.healthy { border-top: 2px solid #3fb950; }
   .stat-card.failed  { border-top: 2px solid #f85149; }
   .stat-card.running { border-top: 2px solid #58a6ff; }
+  .stat-card.queued { border-top: 2px solid #d29922; }
   .stat-card.pending { border-top: 2px solid #6e7681; }
   .stat-value {
     font-size: 28px;
@@ -226,10 +227,29 @@
     color: #c9d1d9;
   }
   .section-search::placeholder { color: #484f58; }
+  .sort-chip {
+    font-size: 11px;
+    color: #8b949e;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 2px 10px;
+    margin-left: 10px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .sort-chip:hover { border-color: #58a6ff; color: #58a6ff; }
 
   /* Table */
+  /* Namespace sections each render their own table — fixed layout + a
+     shared <colgroup> (see buildTable) keeps all sections' columns aligned
+     and stops content (long error strings) from stretching any column. */
+  #tables-container { overflow-x: auto; }
   .backup-table {
     width: 100%;
+    min-width: 920px;
+    table-layout: fixed;
     border-collapse: collapse;
     background: #161b22;
     border: 1px solid #30363d;
@@ -251,6 +271,16 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
+  }
+  .backup-table th[data-key] {
+    cursor: pointer;
+    user-select: none;
+  }
+  .backup-table th[data-key]:hover { color: #c9d1d9; }
+  .sort-ind {
+    font-size: 9px;
+    margin-left: 4px;
+    color: #58a6ff;
   }
   .backup-table tbody tr {
     border-bottom: 1px solid #21262d;
@@ -384,10 +414,14 @@
   }
 
   /* Message */
+  /* display:block is load-bearing: on the old inline <span>, max-width and
+     text-overflow were inert, so one unbreakable error string stretched the
+     whole table sideways (2026-08-30 report). Full text stays in title=. */
   .msg-cell {
+    display: block;
     font-size: 11px;
     color: #6e7681;
-    max-width: 200px;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -767,6 +801,10 @@
         <span class="dot"></span> Running now
         <span class="sidebar-badge" id="badge-running">0</span>
       </div>
+      <div class="sidebar-item" data-filter="queued" onclick="setFilter('queued')">
+        <span class="dot"></span> Queued
+        <span class="sidebar-badge" id="badge-queued">0</span>
+      </div>
     </div>
     <div class="sidebar-section" style="margin-top: 16px;">
       <div class="sidebar-label">Namespaces</div>
@@ -791,6 +829,10 @@
         <span class="stat-value" id="stat-running">0</span>
         <span class="stat-label">Running</span>
       </div>
+      <div class="stat-card queued">
+        <span class="stat-value" id="stat-queued">0</span>
+        <span class="stat-label">Queued</span>
+      </div>
       <div class="stat-card pending">
         <span class="stat-value" id="stat-pending">0</span>
         <span class="stat-label">Pending</span>
@@ -801,6 +843,8 @@
     <div class="section-header">
       <span class="section-title" id="section-title">All backups</span>
       <span class="section-count" id="section-count">0</span>
+      <span class="sort-chip" id="sort-chip" style="display:none" onclick="clearSort()"
+            title="Clear sorting"></span>
       <input class="section-search" id="search-input" placeholder="Filter backups…" oninput="applySearch()">
     </div>
 
@@ -846,6 +890,11 @@
   let fastPollTimer = null;
   // Client-side run state: key = "ns/name" → {runName, phase: 'queued'|'running'}
   let activeRunState = {};
+
+  // Column sorting: sortKey = column key, sortDir = 1 asc / -1 desc.
+  // Shared by every namespace section — one click sorts them all.
+  let sortKey = null;
+  let sortDir = 1;
 
   // EventSource connections are capped (~6 per origin on HTTP/1.1) and the
   // dashboard itself polls /api/backups — bound the number of live log tabs.
@@ -946,6 +995,101 @@
     }
 
     return '<div class="history">' + bars.join('') + '</div>';
+  }
+
+  // ── Column sorting ──────────────────────────────────────────────────────────
+
+  var STATUS_RANK = {running: 0, queued: 1, failed: 2, pending: 3, success: 4};
+  var SORT_LABELS = {
+    name: 'Name',
+    status: 'Status',
+    lastBackupTime: 'Last backup',
+    nextBackupTime: 'Next backup',
+    successRate: 'Success rate'
+  };
+  // Natural first click per column: names A→Z, statuses by attention, times
+  // and success rates newest/best first.
+  var SORT_DEFAULT_DIR = {name: 1, status: 1, lastBackupTime: -1, nextBackupTime: -1, successRate: -1};
+
+  function effectiveStatus(b) {
+    var live = activeRunState[(b.namespace || '') + '/' + (b.name || '')];
+    if (live) return live.phase;
+    return b.lastBackupResult || 'pending';
+  }
+
+  function sortValue(b, key) {
+    if (key === 'name') return (b.name || '').toLowerCase();
+    if (key === 'status') {
+      var rank = STATUS_RANK[effectiveStatus(b)];
+      return rank === undefined ? 99 : rank;
+    }
+    if (key === 'lastBackupTime') {
+      var lastTs = Date.parse(b.lastBackupTime || '');
+      return isNaN(lastTs) ? null : lastTs;
+    }
+    if (key === 'nextBackupTime') {
+      var nextTs = Date.parse(b.nextBackupTime || '');
+      return isNaN(nextTs) ? null : nextTs;
+    }
+    if (key === 'successRate') return typeof b.successRate === 'number' ? b.successRate : null;
+    return null;
+  }
+
+  function cmpBackups(key) {
+    return function(a, b) {
+      var va = sortValue(a, key), vb = sortValue(b, key);
+      var aEmpty = va === null || va === undefined, bEmpty = vb === null || vb === undefined;
+      if (aEmpty && bEmpty) return 0;
+      if (aEmpty) return 1;  // missing values (never-backed-up, no rate) always last
+      if (bEmpty) return -1;
+      var r = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb));
+      return r * sortDir;
+    };
+  }
+
+  function toggleSort(key) {
+    if (sortKey === key) {
+      sortDir = -sortDir;
+    } else {
+      sortKey = key;
+      sortDir = SORT_DEFAULT_DIR[key] || 1;
+    }
+    render();
+  }
+
+  function clearSort() {
+    sortKey = null;
+    sortDir = 1;
+    render();
+  }
+
+  function setSortIndicators() {
+    var ths = document.querySelectorAll('.backup-table th[data-key]');
+    for (var i = 0; i < ths.length; i++) {
+      var el = ths[i];
+      var ind = el.querySelector('.sort-ind');
+      if (!ind) continue;
+      if (el.getAttribute('data-key') === sortKey) {
+        el.setAttribute('aria-sort', sortDir > 0 ? 'ascending' : 'descending');
+        ind.textContent = sortDir > 0 ? '▲' : '▼';
+      } else {
+        el.removeAttribute('aria-sort');
+        ind.textContent = '';
+      }
+    }
+  }
+
+  function updateSortChip() {
+    var chip = document.getElementById('sort-chip');
+    if (!chip) return;
+    if (!sortKey) {
+      chip.style.display = 'none';
+      chip.textContent = '';
+      return;
+    }
+    chip.style.display = '';
+    chip.textContent = 'Sorted: ' + (SORT_LABELS[sortKey] || sortKey) + (sortDir > 0 ? ' ↑' : ' ↓');
+    chip.title = 'Click to clear sorting';
   }
 
   // ── HTML builders ───────────────────────────────────────────────────────────
@@ -1066,16 +1210,29 @@
       + '</tr>';
   }
 
+  function sortableTh(key, label) {
+    return '<th data-key="' + key + '" onclick="toggleSort(\'' + key + '\')"'
+      + ' title="Sort by ' + label.toLowerCase() + '">'
+      + label + '<span class="sort-ind"></span></th>';
+  }
+
   function buildTable(backups) {
     const rows = backups.map(buildRow).join('');
+    // Identical colgroup in every namespace table — combined with
+    // table-layout:fixed this keeps all sections' columns pixel-aligned.
+    const widths = ['16%','9%','12%','11%','9%','10%','17%','12%','4%'];
+    let colgroup = '<colgroup>';
+    for (const w of widths) colgroup += '<col style="width:' + w + '">';
+    colgroup += '</colgroup>';
     return '<table class="backup-table">'
+      + colgroup
       + '<thead><tr>'
-      + '<th>Name</th>'
-      + '<th>Status</th>'
-      + '<th>Last backup</th>'
-      + '<th>Next backup</th>'
+      + sortableTh('name', 'Name')
+      + sortableTh('status', 'Status')
+      + sortableTh('lastBackupTime', 'Last backup')
+      + sortableTh('nextBackupTime', 'Next backup')
       + '<th>Schedule</th>'
-      + '<th>History</th>'
+      + sortableTh('successRate', 'History')
       + '<th>Message</th>'
       + '<th></th>'
       + '<th>Logs</th>'
@@ -1102,18 +1259,23 @@
       );
     }
 
-    return items;
+    // Always hand out a copy: with no filter/search active this would return
+    // allBackups itself, and render()'s in-place .sort() would permanently
+    // scramble the API's ordering (the "default" order after clearSort).
+    return items.slice();
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
   function render() {
     const visible = filteredBackups();
+    if (sortKey) visible.sort(cmpBackups(sortKey));
 
     // Section header
     const filterLabel = activeFilter === 'all' ? 'All backups'
       : activeFilter === 'success' ? 'Healthy backups'
       : activeFilter === 'failed' ? 'Failed backups'
+      : activeFilter === 'queued' ? 'Queued backups'
       : 'Running backups';
     document.getElementById('section-title').textContent = filterLabel;
     document.getElementById('section-count').textContent = visible.length;
@@ -1147,6 +1309,8 @@
       html += buildTable(byNs[ns]);
     }
     container.innerHTML = html;
+    setSortIndicators();
+    updateSortChip();
   }
 
   function renderSidebar() {
@@ -1155,16 +1319,19 @@
     const healthy = allBackups.filter(b => b.lastBackupResult === 'success').length;
     const failed  = allBackups.filter(b => b.lastBackupResult === 'failed').length;
     const running = allBackups.filter(b => b.lastBackupResult === 'running').length;
+    const queued  = allBackups.filter(b => b.lastBackupResult === 'queued').length;
 
     document.getElementById('badge-all').textContent     = total;
     document.getElementById('badge-success').textContent = healthy;
     document.getElementById('badge-failed').textContent  = failed;
     document.getElementById('badge-running').textContent = running;
+    document.getElementById('badge-queued').textContent  = queued;
 
     // Stat cards
     document.getElementById('stat-healthy').textContent = healthy;
     document.getElementById('stat-failed').textContent  = failed;
     document.getElementById('stat-running').textContent = running;
+    document.getElementById('stat-queued').textContent  = queued;
     const pending = allBackups.filter(b => b.lastBackupResult === 'pending' || !b.lastBackupResult).length;
     document.getElementById('stat-pending').textContent = pending;
 
@@ -1256,7 +1423,7 @@
   function scheduleFastPoll() {
     if (fastPollTimer) return; // already scheduled
     var hasActive = allBackups.some(function(b) {
-      return b.lastBackupResult === 'running' || b.triggeredAt;
+      return b.lastBackupResult === 'running' || b.lastBackupResult === 'queued' || b.triggeredAt;
     }) || Object.keys(activeRunState).length > 0;
     if (hasActive) {
       fastPollTimer = setTimeout(function() {

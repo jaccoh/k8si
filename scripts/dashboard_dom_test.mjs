@@ -1,0 +1,194 @@
+// DOM-level behavioural harness for k8si/ui/dashboard.html.
+//
+// Driven by tests/test_dashboard_dom.py (skipped unless node + jsdom are
+// installed — `npm install` at the repo root). Source-regex tests can prove a
+// function exists; only this harness proves the dashboard *behaves*: rows
+// render grouped, headers sort asc/desc on click, the sort chip clears,
+// queued backups are counted, and message cells keep their full text in the
+// title tooltip while the cell itself ellipsizes.
+//
+// Prints one JSON line at the end: {"pass": [...], "fail": [...]}
+// Exit code 0 iff nothing failed.
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { JSDOM } from "jsdom";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const html = readFileSync(path.join(repoRoot, "k8si", "ui", "dashboard.html"), "utf8");
+
+const LONG_MSG =
+  "Timed out waiting for in-progress VolumeSnapshot(s) on PVC pvc-traefik-acme after 1800s: " +
+  "snapshot k8si-traefik-acme-2026083016 never became Ready (server outage 2026-08-30)";
+
+const FIXTURES = [
+  {
+    name: "zeta", namespace: "beta", pvc: "pvc-zeta", schedule: "0 2 * * *",
+    paused: false, lastBackupResult: "failed",
+    lastBackupTime: "2026-08-30T16:00:00+02:00", nextBackupTime: "2026-08-31T02:00:00+02:00",
+    lastBackupDuration: 1812, message: LONG_MSG,
+    successRate: 0.4, streak: -2, recentRuns: [], lastRunRef: "zeta-run-2",
+  },
+  {
+    name: "alpha", namespace: "beta", pvc: "pvc-alpha", schedule: "15 2 * * *",
+    paused: false, lastBackupResult: "success",
+    lastBackupTime: "2026-08-30T15:00:00+02:00", nextBackupTime: "2026-08-31T02:15:00+02:00",
+    lastBackupDuration: 95, message: "",
+    successRate: 1, streak: 7, recentRuns: [], lastRunRef: "alpha-run-9",
+  },
+  {
+    name: "never", namespace: "beta", pvc: "pvc-never", schedule: "30 2 * * *",
+    paused: false, lastBackupResult: "pending",
+    lastBackupTime: null, nextBackupTime: "2026-08-31T02:30:00+02:00",
+    lastBackupDuration: null, message: "",
+    successRate: null, streak: 0, recentRuns: [], lastRunRef: null,
+  },
+  {
+    name: "gamma", namespace: "alpha-ns", pvc: "pvc-gamma", schedule: "0 3 * * *",
+    paused: false, lastBackupResult: "queued",
+    lastBackupTime: "2026-08-29T03:00:00+02:00", nextBackupTime: "2026-08-30T03:00:00+02:00",
+    lastBackupDuration: 240, message: "",
+    successRate: 0.9, streak: 3, recentRuns: [], lastRunRef: "gamma-run-4",
+  },
+  {
+    name: "delta", namespace: "alpha-ns", pvc: "pvc-delta", schedule: "45 3 * * *",
+    paused: false, lastBackupResult: "success",
+    lastBackupTime: "2026-08-29T03:45:00+02:00", nextBackupTime: "2026-08-30T03:45:00+02:00",
+    lastBackupDuration: 60, message: "",
+    successRate: 1, streak: 5, recentRuns: [], lastRunRef: "delta-run-5",
+  },
+];
+
+const dom = new JSDOM(html, {
+  runScripts: "dangerously",
+  url: "http://dashboard.test/",
+  pretendToBeVisual: true,
+  beforeParse(window) {
+    window.fetch = (url) => {
+      const u = String(url);
+      if (u === "/api/version") {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ version: "dom-test" }) });
+      }
+      if (u === "/api/backups") {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(FIXTURES) });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+    };
+    class FakeEventSource {
+      constructor() { this.onmessage = null; this.onerror = null; this.onopen = null; }
+      close() {}
+    }
+    window.EventSource = FakeEventSource;
+  },
+});
+
+const { window } = dom;
+const { document } = window;
+
+const results = { pass: [], fail: [] };
+function check(name, fn) {
+  try {
+    fn();
+    results.pass.push(name);
+  } catch (err) {
+    results.fail.push(`${name}: ${err && err.message}`);
+  }
+}
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg || "assertion failed");
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function tableRows(tableIdx) {
+  return [...document.querySelectorAll(".backup-table")].length < tableIdx + 1
+    ? []
+    : [...document.querySelectorAll(".backup-table")[tableIdx].querySelectorAll("tbody tr")];
+}
+function firstTableHeader(key) {
+  return document.querySelector(`.backup-table th[data-key="${key}"]`);
+}
+
+await sleep(120); // let the initial fetch → render settle
+
+check("renders one table per namespace (2)", () => {
+  const tables = document.querySelectorAll(".backup-table");
+  assert(tables.length === 2, `expected 2 tables, got ${tables.length}`);
+});
+
+check("message cell keeps full text in title tooltip", () => {
+  const cells = [...document.querySelectorAll(".msg-cell")];
+  assert(cells.length > 0, "no .msg-cell rendered");
+  const zeta = cells.find((c) => (c.getAttribute("title") || "").includes("1800s"));
+  assert(zeta, "the long failed message must be in a title tooltip");
+  assert(zeta.textContent.includes("after 1800s"), "cell text must not be pre-truncated by JS");
+});
+
+check("queued backup renders a queued status badge", () => {
+  const badge = document.querySelector(".status.queued");
+  assert(badge, "a queued CRD status must render the .status.queued badge");
+});
+
+check("queued counts wired into sidebar badge and stat card", () => {
+  assert(document.getElementById("badge-queued") !== null, "badge-queued element missing");
+  assert(document.getElementById("stat-queued") !== null, "stat-queued element missing");
+  assert((document.getElementById("badge-queued").textContent || "").trim() === "1",
+    `badge-queued should read 1, got "${document.getElementById("badge-queued").textContent}"`);
+});
+
+check("clicking Name header sorts ascending within every section", () => {
+  const th = firstTableHeader("name");
+  assert(th, "no sortable th[data-key=name]");
+  th.click();
+  // render() replaces the tables' innerHTML — re-query for the live header.
+  const thNow = firstTableHeader("name");
+  // Sections stay (alpha-ns first alphabetically); sorting applies within each.
+  const names0 = tableRows(0).map((tr) => tr.dataset.name); // alpha-ns
+  const names1 = tableRows(1).map((tr) => tr.dataset.name); // beta
+  assert(JSON.stringify(names0) === JSON.stringify(["delta", "gamma"]),
+    `alpha-ns section asc expected delta,gamma — got ${names0}`);
+  assert(JSON.stringify(names1) === JSON.stringify(["alpha", "never", "zeta"]),
+    `beta section asc expected alpha,never,zeta — got ${names1}`);
+  assert(thNow.getAttribute("aria-sort") === "ascending", "aria-sort must be ascending");
+});
+
+check("second click flips to descending", () => {
+  firstTableHeader("name").click();
+  const names1 = tableRows(1).map((tr) => tr.dataset.name);
+  assert(JSON.stringify(names1) === JSON.stringify(["zeta", "never", "alpha"]),
+    `beta section desc — got ${names1}`);
+  assert(firstTableHeader("name").getAttribute("aria-sort") === "descending",
+    "aria-sort must be descending");
+});
+
+check("Last backup sorts newest-first by default and nulls last", () => {
+  firstTableHeader("lastBackupTime").click();
+  const names1 = tableRows(1).map((tr) => tr.dataset.name);
+  assert(JSON.stringify(names1) === JSON.stringify(["zeta", "alpha", "never"]),
+    `newest first with never last — got ${names1}`);
+  const th = firstTableHeader("lastBackupTime");
+  assert(th.getAttribute("aria-sort") === "descending", "time columns default to descending");
+});
+
+check("sort chip shows the active sort and clears on click", () => {
+  const chip = document.getElementById("sort-chip");
+  assert(chip, "sort-chip element missing");
+  assert(chip.style.display !== "none" && chip.textContent.trim() !== "",
+    `chip must be visible with a label while sorting — got "${chip.textContent}"`);
+  chip.click();
+  const names0 = tableRows(0).map((tr) => tr.dataset.name);
+  assert(JSON.stringify(names0) === JSON.stringify(["gamma", "delta"]),
+    `clearSort must restore default order — got ${names0}`);
+  assert(chip.textContent.trim() === "" || chip.style.display === "none",
+    "chip must hide after clear");
+});
+
+check("status sort ranks running < queued < failed < pending < success", () => {
+  firstTableHeader("status").click();
+  const all = [...document.querySelectorAll(".backup-table tbody tr")].map((tr) => tr.dataset.name);
+  assert(JSON.stringify(all) === JSON.stringify(["gamma", "delta", "zeta", "never", "alpha"]),
+    `status asc within sections — got ${all}`);
+});
+
+console.log(JSON.stringify(results));
+process.exit(results.fail.length ? 1 : 0);

@@ -161,7 +161,7 @@ def trigger_backup(namespace: str, name: str) -> dict[str, Any]:
         )
         for run in runs.get("items", []):
             phase = run.get("status", {}).get("phase", "Pending")
-            if phase in ("Pending", "Running"):
+            if phase in ("Pending", "Queued", "Running"):
                 run_name_active = run["metadata"]["name"]
                 raise HTTPException(
                     status_code=409,

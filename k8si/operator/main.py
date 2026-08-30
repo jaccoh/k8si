@@ -24,7 +24,7 @@ _running: set[tuple[str, str]] = set()
 
 
 def _has_active_run_sync(namespace: str, backup_name: str) -> bool:
-    """Return True if any K8siBackupRun for this backup is Pending or Running in K8s.
+    """Return True if any K8siBackupRun for this backup is Pending, Queued or Running in K8s.
 
     Used by backup_timer to guard against creating a duplicate run after an operator
     restart (when the in-memory _running set is empty).
@@ -39,7 +39,7 @@ def _has_active_run_sync(namespace: str, backup_name: str) -> bool:
             label_selector=f"k8si.io/backup={backup_name}",
         )
         for run in runs.get("items", []):
-            if run.get("status", {}).get("phase", "Pending") in ("Pending", "Running"):
+            if run.get("status", {}).get("phase", "Pending") in ("Pending", "Queued", "Running"):
                 return True
     except Exception:
         pass
@@ -347,10 +347,13 @@ async def backup_timer(
             run_obj,
         )
         logger.info("Created K8siBackupRun %s/%s", namespace, run_name)
-        patch.status["lastBackupResult"] = "running"
+        # 'queued', not 'running': with the concurrency semaphore the Job may
+        # not start for a long time — the badge must not lie about that wait.
+        # on_run_create flips the parent to 'running' when the Job starts.
+        patch.status["lastBackupResult"] = "queued"
         patch.status["lastRunRef"] = run_name
-        metrics.record(name, namespace, "running", last_backup)
-        kopf.event(body, type="Normal", reason="BackupStarted", message=f"Created run {run_name}")
+        metrics.record(name, namespace, "queued", last_backup)
+        kopf.event(body, type="Normal", reason="BackupQueued", message=f"Queued run {run_name}")
     except Exception as e:
         logger.error("Failed to create K8siBackupRun %s/%s: %s", namespace, run_name, e)
 
@@ -711,13 +714,44 @@ async def on_run_create(
     run_mode = spec.get("mode")
     if run_mode:
         backup_spec = {**backup_spec, "backupMode": run_mode}
-    start_time = datetime.now(tz=UTC).isoformat()
 
     backup_start_dt = datetime.now(tz=UTC)
-    try:
+
+    async def _on_job_created(job_name: str) -> None:
+        """Flip run + parent to Running the moment the Job actually starts —
+        until then both honestly say 'queued' (this handler may have been
+        parked on the concurrency semaphore for a long time before the Job
+        existed). jobName lands on the run status in the same patch so the
+        reconciler can watch the Job from its first minute (#5)."""
         await asyncio.to_thread(
-            _patch_run_status, namespace, name, {"phase": "Running", "startTime": start_time}
+            _patch_run_status,
+            namespace,
+            name,
+            {
+                "phase": "Running",
+                "startTime": datetime.now(tz=UTC).isoformat(),
+                "jobName": job_name,
+            },
         )
+        try:
+            await asyncio.to_thread(
+                custom.patch_namespaced_custom_object_status,
+                "k8si.io",
+                "v1",
+                namespace,
+                "k8sibackups",
+                backup_name,
+                {"status": {"lastBackupResult": "running"}},
+            )
+        except Exception as e:
+            logger.warning("Could not flip parent %s/%s to running: %s", namespace, backup_name, e)
+        metrics.record(backup_name, namespace, "running", None)
+        kopf.event(
+            backup_obj, type="Normal", reason="BackupStarted", message=f"Job {job_name} started"
+        )
+
+    try:
+        await asyncio.to_thread(_patch_run_status, namespace, name, {"phase": "Queued"})
         result = await workflow.run_backup(
             backup_name,
             namespace,
@@ -726,6 +760,7 @@ async def on_run_create(
             body=backup_obj,
             run_name=name,
             run_ns=namespace,
+            on_job_created=_on_job_created,
         )
         duration = int((datetime.now(tz=UTC) - backup_start_dt).total_seconds())
         completion = datetime.now(tz=UTC).isoformat()

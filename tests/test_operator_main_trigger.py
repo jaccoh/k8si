@@ -115,6 +115,42 @@ def test_triggered_bypasses_window():
     run_coro(_run_timer())
 
 
+def test_trigger_marks_parent_queued():
+    """Creating a K8siBackupRun sets the parent badge to 'queued' — NOT
+    'running': with the concurrency semaphore the Job may not start for a
+    long time, and a 'running' badge during that wait is a lie (the dashboard
+    showed a pulsing blue "running" for backups with no Job at all). The
+    queued→running flip happens at Job start via on_job_created."""
+    from k8si.operator import main
+
+    patch_obj = FakePatch()
+    logger = logging.getLogger("test")
+
+    async def _run_timer():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main.metrics.record"),
+            patch("k8si.operator.main.kopf.event"),
+            patch("k8si.operator.main._is_due", return_value=False),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s_cls.return_value = mock_k8s
+            await main.backup_timer(
+                body=BODY,
+                spec=SPEC,
+                name="test",
+                namespace="default",
+                status={"triggeredAt": _TRIGGERED_AT, "lastBackupTime": _LAST_BACKUP},
+                patch=patch_obj,
+                logger=logger,
+            )
+            mock_k8s.create_namespaced_custom_object.assert_called_once()
+
+    run_coro(_run_timer())
+    assert patch_obj.status["lastBackupResult"] == "queued"
+    assert patch_obj.status["lastRunRef"], "the run reference must be recorded on the parent"
+
+
 def test_paused_blocks_trigger():
     """spec.paused=True prevents backup even when triggeredAt is set."""
     from k8si.operator import main

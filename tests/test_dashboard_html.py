@@ -179,3 +179,92 @@ def test_mutating_calls_use_token_aware_fetch():
     assert html.count("apiFetch('/api/backups/") == 2, (
         "both mutating endpoints (trigger + paused) must use apiFetch"
     )
+
+
+# ── 0.10.0: table layout, sorting, queued status ─────────────────────────────
+
+
+def test_msg_cell_is_block_level():
+    """.msg-cell ellipsis is inert on an inline <span>: max-width/overflow/
+    text-overflow only apply to block-level boxes, so one long unbreakable
+    error message stretched the whole table sideways (user report 2026-08-30
+    screenshot). The full text stays available via the title tooltip."""
+    css = _extract_style_block()
+    m = re.search(r"\.msg-cell\s*\{([^}]*)\}", css)
+    assert m, ".msg-cell rule missing from dashboard styles"
+    assert re.search(r"display:\s*block", m.group(1)), (
+        ".msg-cell must be display:block — on an inline span the ellipsis rules "
+        "do nothing and long messages blow out the table width"
+    )
+    assert re.search(r"overflow:\s*hidden", m.group(1))
+    assert re.search(r"text-overflow:\s*ellipsis", m.group(1))
+
+
+def test_tables_use_fixed_layout_and_shared_colgroup():
+    """Every namespace renders its own <table>; with auto layout their column
+    widths drift apart (visible in the 2026-08-30 screenshot) and content can
+    still stretch a column. table-layout:fixed + one shared <colgroup> keeps
+    all sections aligned and caps every column."""
+    css = _extract_style_block()
+    m = re.search(r"\.backup-table\s*\{([^}]*)\}", css)
+    assert m, ".backup-table rule missing"
+    assert re.search(r"table-layout:\s*fixed", m.group(1)), (
+        ".backup-table must use table-layout:fixed for deterministic aligned columns"
+    )
+    body = _extract_function("buildTable")
+    assert "<colgroup>" in body, "buildTable must emit a colgroup"
+    widths = re.search(r"widths\s*=\s*\[([^\]]+)\]", body)
+    assert widths and len(widths.group(1).split(",")) == 9, (
+        "the colgroup must size all 9 columns (one width per column)"
+    )
+
+
+def test_column_headers_are_sortable():
+    """Clicking a column header sorts ascending, clicking again descending,
+    with a visible indicator (user request 2026-08-30). Headers carry
+    data-key; toggleSort flips direction; setSortIndicators maintains
+    aria-sort; render applies the sort before grouping."""
+    body = _extract_function("buildTable")
+    for key in ("name", "status", "lastBackupTime", "nextBackupTime", "successRate"):
+        assert f"sortableTh('{key}'" in body, f"header for {key} must be sortable"
+    th_src = _extract_function("sortableTh")
+    assert "data-key=" in th_src, "sortable headers must carry a data-key attribute"
+    assert "toggleSort(" in th_src, "headers must toggle sorting on click"
+
+    html = DASHBOARD_HTML.read_text()
+    assert "function toggleSort(" in html, "toggleSort missing"
+    assert "function clearSort(" in html, "clearSort missing"
+    assert "function setSortIndicators(" in html, "setSortIndicators missing"
+    assert "aria-sort" in html, "sort state must be exposed via aria-sort"
+
+    render_body = _extract_function("render")
+    assert re.search(r"sortKey.*\.sort\(|\.sort\(cmpBackups", render_body), (
+        "render must apply the active sort before grouping into namespace sections"
+    )
+
+
+def test_status_rank_covers_all_five_phases():
+    """Sorting by status needs a defined order for every phase the CRD can
+    report — including the new 'queued' (needs-attention order: running <
+    queued < failed < pending < success)."""
+    html = DASHBOARD_HTML.read_text()
+    m = re.search(r"STATUS_RANK\s*=\s*\{([^}]*)\}", html)
+    assert m, "STATUS_RANK map missing from dashboard script"
+    for phase in ("running", "queued", "failed", "pending", "success"):
+        assert phase in m.group(1), f"STATUS_RANK must rank the '{phase}' phase"
+
+
+def test_queued_status_wired_into_views_and_polling():
+    """The operator reports 'queued' between trigger and Job start (0.10.0).
+    The dashboard must expose it: a sidebar view, a stat card, and fast
+    polling while anything is queued (the slow 30s cadence would otherwise
+    lag the queued→running flip)."""
+    html = DASHBOARD_HTML.read_text()
+    assert 'data-filter="queued"' in html, "sidebar needs a Queued view"
+    assert 'id="badge-queued"' in html, "sidebar Queued view needs a count badge"
+    assert 'id="stat-queued"' in html, "summary strip needs a Queued stat card"
+    poll = _extract_function("scheduleFastPoll")
+    assert "'queued'" in poll, "scheduleFastPoll must fast-poll while a backup is queued"
+
+    labels = _extract_function("render")
+    assert "Queued backups" in labels, "the queued filter needs a section title"

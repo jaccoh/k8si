@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -219,6 +220,7 @@ async def run_backup(
     body: dict[str, Any] | None = None,
     run_name: str | None = None,
     run_ns: str | None = None,
+    on_job_created: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the full snapshot-first backup. Returns status fields on success.
 
@@ -226,7 +228,9 @@ async def run_backup(
     job duration — unbounded parallel backups froze the operator (#6).
     """
     async with pool.SEMAPHORE:
-        return await _run_backup(name, namespace, spec, logger, body, run_name, run_ns)
+        return await _run_backup(
+            name, namespace, spec, logger, body, run_name, run_ns, on_job_created
+        )
 
 
 async def _run_backup(
@@ -237,6 +241,7 @@ async def _run_backup(
     body: dict[str, Any] | None = None,
     run_name: str | None = None,
     run_ns: str | None = None,
+    on_job_created: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the full snapshot-first backup. Returns status fields on success.
 
@@ -309,6 +314,8 @@ async def _run_backup(
                 )
                 _emit_event(body, "Normal", "BackupJobStarted", f"Starting Job {job_name}")
                 await _log_phase("BackupJobStarted", f"Starting Job {job_name}")
+                if on_job_created:
+                    await on_job_created(job_name)
                 raw_logs = await _run_job(job_body, namespace, timeout=job_timeout, logger=logger)
                 _emit_event(body, "Normal", "BackupJobCompleted", f"Job {job_name} completed")
                 await _log_phase("BackupJobCompleted", f"Job {job_name} completed")
@@ -365,6 +372,8 @@ async def _run_backup(
             )
             _emit_event(body, "Normal", "BackupJobStarted", f"Starting backup Job {job_name}")
             await _log_phase("BackupJobStarted", f"Starting backup Job {job_name}")
+            if on_job_created:
+                await on_job_created(job_name)
             raw_logs = await _run_job(job_body, namespace, timeout=job_timeout, logger=logger)
             _emit_event(body, "Normal", "BackupJobCompleted", f"Backup Job {job_name} completed")
             await _log_phase("BackupJobCompleted", f"Backup Job {job_name} completed")

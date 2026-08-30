@@ -1,0 +1,9 @@
+{
+  "name": "k8si-dev-tools",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only tooling: jsdom for the dashboard DOM test harness (tests/test_dashboard_dom.py). Not shipped in any image.",
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  }
+}

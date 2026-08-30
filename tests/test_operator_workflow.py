@@ -88,6 +88,78 @@ def test_run_backup_direct_mode() -> None:
         assert pvc_spec["claimName"] == "test-pvc"
 
 
+# ── on_job_created callback (queued → running flip at Job start) ──────────────
+
+
+def test_run_backup_invokes_on_job_created_snapshot_mode() -> None:
+    """The on_job_created callback must fire when the backup Job starts — not
+    at completion: main.py uses it to flip run+parent status to running and to
+    record jobName while the Job is live (#5 + queued-status work)."""
+    spec = {"pvc": "test-pvc", "resticSecret": "test-secret", "schedule": "0 2 * * *"}
+    body = {"metadata": {"name": "test-backup", "namespace": "default"}}
+    seen: list[str] = []
+
+    async def _on_created(job_name: str) -> None:
+        seen.append(job_name)
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_quiesce_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value="node1"),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
+        patch("k8si.operator.workflow.kopf.event"),
+    ):
+        mock_quiesce_ctx.return_value = MagicMock()
+
+        result = asyncio.run(
+            run_backup(
+                "test-backup", "default", spec, MagicMock(), body, on_job_created=_on_created
+            )
+        )
+
+    assert seen == [result["jobName"]], "callback must fire exactly once, with the Job name"
+    assert seen[0].startswith("k8si-test-backup-")
+
+
+def test_run_backup_invokes_on_job_created_direct_mode() -> None:
+    """Same flip in direct mode: the Job is created without a snapshot, but
+    the callback timing (at Job start) is identical."""
+    spec = {
+        "pvc": "test-pvc",
+        "resticSecret": "test-secret",
+        "schedule": "0 2 * * *",
+        "backupMode": "direct",
+    }
+    body = {"metadata": {"name": "test-backup", "namespace": "default"}}
+    seen: list[str] = []
+
+    async def _on_created(job_name: str) -> None:
+        seen.append(job_name)
+
+    with (
+        patch("k8si.operator.workflow._cleanup_orphan_snap_pvcs", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.quiesce.quiesce_context") as mock_quiesce_ctx,
+        patch("k8si.operator.workflow.snapshot.create_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.create_pvc_from_snapshot", new_callable=AsyncMock),
+        patch("k8si.operator.workflow.snapshot.delete_snapshot_and_pvc", new_callable=AsyncMock),
+        patch("k8si.operator.workflow._find_pvc_node_sync", return_value="node1"),
+        patch("k8si.operator.workflow._run_job", new_callable=AsyncMock, return_value=""),
+        patch("k8si.operator.workflow.kopf.event"),
+    ):
+        mock_quiesce_ctx.return_value = MagicMock()
+
+        asyncio.run(
+            run_backup(
+                "test-backup", "default", spec, MagicMock(), body, on_job_created=_on_created
+            )
+        )
+
+    assert len(seen) == 1 and seen[0].startswith("k8si-test-backup-")
+
+
 # ── Bug 1: OOMKill detection ───────────────────────────────────────────────────
 
 

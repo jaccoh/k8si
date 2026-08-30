@@ -13,3 +13,4 @@ htmlcov/
 CLAUDE.md
 docs/superpowers/
 docs/operator-plan.md
+node_modules/

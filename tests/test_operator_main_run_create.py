@@ -103,7 +103,9 @@ def test_on_run_create_sets_succeeded_on_success():
             )
 
             phases = [c.args[2].get("phase") for c in mock_patch.call_args_list if c.args[2]]
-            assert "Running" in phases
+            # "Queued" up front — "Running" only arrives via the on_job_created
+            # callback once the Job actually starts (the mock never invokes it).
+            assert "Queued" in phases
             assert "Succeeded" in phases
 
     run_coro(_run())
@@ -142,6 +144,109 @@ def test_on_run_create_sets_failed_on_exception():
             )
             assert failed_call is not None
             assert "disk full" in failed_call.args[2].get("message", "")
+
+    run_coro(_run())
+
+
+# ── queued → running flip at Job start ────────────────────────────────────────
+
+
+def test_on_run_create_marks_queued_not_running():
+    """The run is marked Queued (not Running) before run_backup starts: with
+    the concurrency semaphore (#6) the handler can park for a long time before
+    any Job exists, and during that wait neither the run nor the parent badge
+    may claim "running"."""
+    from k8si.operator.main import on_run_create
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status") as mock_patch,
+            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record"),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = _BACKUP_OBJ
+            mock_k8s_cls.return_value = mock_k8s
+            mock_run.return_value = {}
+
+            await on_run_create(
+                body={},
+                spec=_run_spec(),
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+            phases = [c.args[2].get("phase") for c in mock_patch.call_args_list if c.args[2]]
+            assert "Queued" in phases
+            assert "Running" not in phases, (
+                "Running must only be set by the on_job_created callback at Job start"
+            )
+            assert mock_run.call_args.kwargs.get("on_job_created") is not None, (
+                "run_backup must receive the on_job_created callback"
+            )
+
+    run_coro(_run())
+
+
+def test_on_job_created_flips_run_and_parent_to_running():
+    """Invoking the callback handed to run_backup (at Job start) must:
+    - patch the run to phase=Running with startTime AND jobName together (the
+      reconciler looks the Job up via status.jobName, #5),
+    - flip the parent K8siBackup lastBackupResult from 'queued' to 'running',
+    - record the running metric."""
+    from k8si.operator.main import on_run_create
+
+    async def _run():
+        with (
+            patch("kubernetes.client.CustomObjectsApi") as mock_k8s_cls,
+            patch("k8si.operator.main._patch_run_status") as mock_patch,
+            patch("k8si.operator.main.workflow.run_backup", new_callable=AsyncMock) as mock_run,
+            patch("k8si.operator.main._update_parent_backup", new_callable=AsyncMock),
+            patch("k8si.operator.main.metrics.record") as mock_metrics,
+            patch("k8si.operator.main.kopf.event"),
+        ):
+            mock_k8s = MagicMock()
+            mock_k8s.get_namespaced_custom_object.return_value = _BACKUP_OBJ
+            mock_k8s_cls.return_value = mock_k8s
+
+            async def _capture(*args, **kwargs):
+                await kwargs["on_job_created"]("k8si-test-20260830")
+
+            mock_run.side_effect = _capture
+
+            await on_run_create(
+                body={},
+                spec=_run_spec(),
+                name="test-run",
+                namespace="default",
+                logger=logging.getLogger("test"),
+            )
+
+            running_call = next(
+                (c for c in mock_patch.call_args_list if c.args[2].get("phase") == "Running"), None
+            )
+            assert running_call is not None, "callback must patch run phase to Running"
+            fields = running_call.args[2]
+            assert fields.get("jobName") == "k8si-test-20260830"
+            assert fields.get("startTime"), "startTime must be recorded at Job start"
+
+            parent_call = next(
+                (
+                    c
+                    for c in mock_k8s.patch_namespaced_custom_object_status.call_args_list
+                    if c.args[3] == "k8sibackups"
+                ),
+                None,
+            )
+            assert parent_call is not None, "callback must patch the parent backup status"
+            assert parent_call.args[5]["status"]["lastBackupResult"] == "running"
+
+            assert any(c.args[2] == "running" for c in mock_metrics.call_args_list), (
+                "metrics must record the queued→running flip"
+            )
 
     run_coro(_run())
 
@@ -507,7 +612,11 @@ def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
                 {"status": {"phase": "Failed"}, "metadata": {"name": "test-run"}},
             ]
             mock_k8s_cls.return_value = mock_k8s
-            mock_run.return_value = {}
+
+            async def _capture(*args, **kwargs):
+                await kwargs["on_job_created"]("k8si-test-20260830")
+
+            mock_run.side_effect = _capture
 
             await on_run_create(
                 body={},
@@ -519,7 +628,8 @@ def test_on_run_create_does_not_overwrite_timer_killed_run_with_succeeded():
 
         phases = [c.args[2].get("phase") for c in mock_patch.call_args_list if c.args[2]]
         assert "Succeeded" not in phases, "Must not overwrite timer-killed run with Succeeded"
-        assert "Running" in phases, "Must still set Running when backup starts"
+        assert "Queued" in phases, "Must mark the run Queued before the backup starts"
+        assert "Running" in phases, "Must flip to Running when the Job starts"
 
     run_coro(_run())
 
