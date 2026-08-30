@@ -113,7 +113,11 @@ def _shape(item: dict[str, Any]) -> dict[str, Any]:
     spec = item.get("spec", {})
     status = item.get("status", {})
     recent = status.get("recentBackups", [])
-    stats = _compute_stats(recent)
+    # The sparkline renders recentRuns, so the %/streak must describe that same
+    # history — computing them from recentBackups showed a number for a
+    # different history than the bars beside it. Fall back for pre-0.9 backups
+    # that only carry the legacy field.
+    stats = _compute_stats(status.get("recentRuns") or recent)
     return {
         "name": meta.get("name", ""),
         "namespace": meta.get("namespace", ""),
