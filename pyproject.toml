@@ -1,6 +1,6 @@
 [project]
 name = "k8si"
-version = "0.9.0"
+version = "0.10.0rc1"
 description = "Kubernetes backup operator with pluggable backends (restic, kopia)"
 requires-python = ">=3.13"
 dependencies = [
