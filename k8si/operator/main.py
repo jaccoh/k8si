@@ -293,7 +293,7 @@ def on_create(
 ) -> None:
     patch.status["lastBackupResult"] = "pending"
     patch.status["nextBackupTime"] = compute_next_backup(spec["schedule"])
-    patch.status["restorePatch"] = build_restore_patch(spec)
+    patch.status["restorePatch"] = build_restore_patch(spec, name=name, namespace=namespace)
     logger.info("K8siBackup %s/%s registered", namespace, name)
     kopf.event(body, type="Normal", reason="Registered", message=f"K8siBackup {name} registered")
 
@@ -309,7 +309,7 @@ def on_update(
     **_: object,
 ) -> None:
     patch.status["nextBackupTime"] = compute_next_backup(spec["schedule"])
-    patch.status["restorePatch"] = build_restore_patch(spec)
+    patch.status["restorePatch"] = build_restore_patch(spec, name=name, namespace=namespace)
     logger.info("K8siBackup %s/%s updated", namespace, name)
     kopf.event(body, type="Normal", reason="Updated", message=f"K8siBackup {name} updated")
 
