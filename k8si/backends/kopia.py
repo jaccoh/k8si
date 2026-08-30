@@ -41,6 +41,9 @@ class KopiaBackend:
         )
         self._connected = False
         self._last_source: str | None = None
+        # Artifact captured from `snapshot create --json` (see backup()):
+        # {"snapshotId": ..., "sizeBytes": ...} or None when unavailable.
+        self.last_snapshot: dict | None = None
 
     def _ensure_connected(self) -> None:
         if self._connected:
@@ -249,7 +252,44 @@ class KopiaBackend:
         if tags:
             for tag in tags:
                 args.extend(["--tags", tag.replace("=", ":", 1)])
-        self._invoke(*args)
+        # kopia 0.15.0 prints the snapshot manifest (with its ID) as JSON to
+        # stdout — the structured artifact source the operator prefers over
+        # scraping the human-readable 'Created snapshot ... and ID ...' line.
+        args.append("--json")
+        output = self._invoke(*args)
+        self.last_snapshot = self._manifest_to_artifact(self._extract_manifest(output))
+
+    @staticmethod
+    def _extract_manifest(output: str) -> dict | None:
+        """Find the snapshot manifest JSON in merged kopia output.
+
+        Progress (stderr) is merged into stdout by _err_to_out and interleaves
+        with the indented manifest, so scan every '{' and keep the last object
+        that looks like a snapshot manifest.
+        """
+        decoder = json.JSONDecoder()
+        best: dict | None = None
+        idx = output.find("{")
+        while idx != -1:
+            try:
+                obj, _end = decoder.raw_decode(output, idx)
+            except json.JSONDecodeError:
+                idx = output.find("{", idx + 1)
+                continue
+            if isinstance(obj, dict) and "id" in obj and ("startTime" in obj or "rootEntry" in obj):
+                best = obj
+            idx = output.find("{", idx + 1)
+        return best
+
+    @staticmethod
+    def _manifest_to_artifact(manifest: dict | None) -> dict | None:
+        if not manifest:
+            return None
+        size = manifest.get("rootEntry", {}).get("summ", {}).get("size")
+        return {
+            "snapshotId": str(manifest["id"]),
+            "sizeBytes": int(size) if isinstance(size, (int, float)) else None,
+        }
 
     def forget(self, daily: int, weekly: int, monthly: int, prune: bool = True) -> None:
         self._ensure_connected()

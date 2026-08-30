@@ -165,3 +165,76 @@ def test_parse_kopia_first_run_size_from_hashed():
     snap_id, size = _parse_artifact(KOPIA_FIRST_RUN_LOGS, "kopia")
     assert snap_id == "5fc52d496b7a5c7866fd6ca1f9d8d2c2"
     assert size == 14
+
+
+# ---------------------------------------------------------------------------
+# Structured artifact line (K8SI_ARTIFACT) — the reliable path
+# ---------------------------------------------------------------------------
+
+RESTIC_STRUCTURED_LOGS = """\
+open repository
+lock repository
+processed 4 files, 1.234 KiB in 0:00
+snapshot abc12345 saved
+K8SI_ARTIFACT {"snapshotId": "deadbeef99", "sizeBytes": 2048}
+"""
+
+KOPIA_STRUCTURED_LOGS = """\
+Snapshotting /data ...
+  * 1234 hashing, 5678 cached (23.456 GiB), 12 uploading
+Created snapshot with root kabcde1234567890aabbccddeeff0011 and ID kregexid0099aabb in 14s.
+K8SI_ARTIFACT {"snapshotId": "kstructured77", "sizeBytes": 3072}
+"""
+
+
+def test_parse_restic_prefers_structured_over_regex():
+    """The structured line comes from the backend's own metadata API (restic
+    snapshots --json / kopia snapshot create --json) and must win over the
+    regex-scraped values when both are present."""
+    snap_id, size = _parse_artifact(RESTIC_STRUCTURED_LOGS, "restic")
+    assert snap_id == "deadbeef99"
+    assert size == 2048
+
+
+def test_parse_kopia_prefers_structured_over_regex():
+    snap_id, size = _parse_artifact(KOPIA_STRUCTURED_LOGS, "kopia")
+    assert snap_id == "kstructured77"
+    assert size == 3072
+
+
+def test_parse_structured_marker_without_size():
+    logs = 'K8SI_ARTIFACT {"snapshotId": "abc"}\n'
+    snap_id, size = _parse_artifact(logs, "restic")
+    assert snap_id == "abc"
+    assert size is None
+
+
+def test_parse_structured_marker_malformed_json_falls_back_to_regex():
+    logs = (
+        "snapshot abc12345 saved\n"
+        "processed 4 files, 1.234 KiB in 0:00\n"
+        'K8SI_ARTIFACT {"snapshotId": broken-json\n'
+    )
+    snap_id, size = _parse_artifact(logs, "restic")
+    assert snap_id == "abc12345"
+    assert size is not None and 1200 < size < 1300
+
+
+def test_parse_structured_marker_without_snapshot_id_ignored():
+    """A payload lacking snapshotId carries no artifact — ignore it."""
+    logs = 'snapshot abc12345 saved\nK8SI_ARTIFACT {"sizeBytes": 42}\n'
+    snap_id, _ = _parse_artifact(logs, "restic")
+    assert snap_id == "abc12345"
+
+
+def test_parse_structured_marker_non_dict_payload_ignored():
+    logs = "snapshot abc12345 saved\nK8SI_ARTIFACT [1, 2, 3]\n"
+    snap_id, _ = _parse_artifact(logs, "restic")
+    assert snap_id == "abc12345"
+
+
+def test_parse_takes_last_structured_marker():
+    """If a job ever emits two markers, the last one (from the final retry) wins."""
+    logs = 'K8SI_ARTIFACT {"snapshotId": "first"}\nK8SI_ARTIFACT {"snapshotId": "second"}\n'
+    snap_id, _ = _parse_artifact(logs, "restic")
+    assert snap_id == "second"

@@ -1,5 +1,6 @@
 """Sidecar mode: periodic backup with retention."""
 
+import json
 import logging
 import subprocess
 import time
@@ -14,6 +15,7 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 LAST_BACKUP_FILE = ".k8si-last-backup"
+ARTIFACT_MARKER = "K8SI_ARTIFACT "
 
 
 def run_once(config: Config, backend: BackupBackend) -> None:
@@ -73,6 +75,8 @@ def _run_cycle(config: Config, backend: BackupBackend) -> None:
             log.error("Backup failed: %s", e.stderr)
             raise
 
+    _emit_artifact(config, backend)
+
     try:
         backend.forget(
             daily=config.retention_daily,
@@ -119,6 +123,40 @@ def _run_hook(hook: Path, *, required: bool = False) -> None:
         if required:
             raise RuntimeError(msg)
         log.error(msg)
+
+
+def _emit_artifact(config: Config, backend: BackupBackend) -> None:
+    """Resolve the backup artifact via the backend's metadata API and print one
+    structured line (``K8SI_ARTIFACT {...}``) for the operator to parse.
+
+    Structured output beats the operator's log-scraping fallback: restic and
+    kopia human-readable formats drift between versions, while
+    ``restic snapshots --json`` and kopia's create manifest do not.
+    Best-effort — a resolution failure never fails the backup.
+    """
+    artifact = _resolve_artifact(config, backend)
+    if artifact:
+        print(f"{ARTIFACT_MARKER}{json.dumps(artifact)}", flush=True)
+
+
+def _resolve_artifact(config: Config, backend: BackupBackend) -> dict | None:
+    """Return {"snapshotId": ..., "sizeBytes": ...} for the just-made snapshot."""
+    # Exact source first: the manifest kopia printed during `snapshot create --json`.
+    captured = getattr(backend, "last_snapshot", None)
+    if isinstance(captured, dict) and captured.get("snapshotId"):
+        return {"snapshotId": captured["snapshotId"], "sizeBytes": captured.get("sizeBytes")}
+    try:
+        snaps = backend.snapshots(tags=config.backup_tags)
+        if not snaps:
+            return None
+        latest = max(snaps, key=lambda s: str(s.get("time", "")))
+        snap_id = str(latest.get("id") or "")
+        if not snap_id:
+            return None
+        return {"snapshotId": snap_id, "sizeBytes": backend.snapshot_size(snap_id)}
+    except Exception as e:
+        log.warning("Artifact resolution via backend metadata failed: %s", e)
+        return None
 
 
 def _write_last_backup_timestamp(data_path: Path) -> None:

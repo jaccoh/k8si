@@ -1,6 +1,7 @@
 """Full snapshot-first backup pipeline: quiesce → snapshot → backup job → cleanup."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -24,6 +25,10 @@ log = logging.getLogger(__name__)
 
 BACKEND_TYPE: str = os.environ.get("BACKEND_TYPE", "restic").lower().strip()
 
+# Structured artifact line emitted by the backup job (see k8si/backup.py) —
+# the reliable artifact source; the log regexes below are the fallback.
+ARTIFACT_MARKER = "K8SI_ARTIFACT "
+
 _SIZE_UNITS: dict[str, int] = {
     "b": 1,
     "kib": 1024,
@@ -35,6 +40,29 @@ _SIZE_UNITS: dict[str, int] = {
     "gb": 1000**3,
     "tb": 1000**4,
 }
+
+
+def _parse_structured_artifact(logs: str) -> tuple[str | None, int | None]:
+    """Parse the last K8SI_ARTIFACT JSON line the backup job emitted.
+
+    The job resolves the artifact from the backend's own metadata API
+    (restic snapshots --json / kopia snapshot create --json), so this line is
+    authoritative when present. Returns (None, None) when absent or invalid —
+    the caller then falls back to scraping the human-readable logs.
+    """
+    idx = logs.rfind(ARTIFACT_MARKER)
+    if idx == -1:
+        return None, None
+    tail = logs[idx + len(ARTIFACT_MARKER) :]
+    line = tail.splitlines()[0] if tail.splitlines() else ""
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None, None
+    if not isinstance(payload, dict) or not payload.get("snapshotId"):
+        return None, None
+    size = payload.get("sizeBytes")
+    return str(payload["snapshotId"]), size if isinstance(size, int) else None
 
 
 def _resolve_backup_secret(spec: dict[str, Any], backend_type: str) -> str:
@@ -53,13 +81,17 @@ def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | Non
 
     Returns (snapshot_id, size_bytes). Either field may be None if not found.
     """
+    snap_id, size_bytes = _parse_structured_artifact(logs)
+    if snap_id:
+        return snap_id, size_bytes
+
     if backend_type == "restic":
-        snap_id: str | None = None
+        snap_id = None
         m = re.search(r"snapshot ([a-f0-9]+) saved", logs)
         if m:
             snap_id = m.group(1)
 
-        size_bytes: int | None = None
+        size_bytes = None
         # "processed N files, 23.456 GiB in 0:00"
         m2 = re.search(
             r"processed \d+ files?,\s+([\d.]+)\s*([A-Za-z]+)\s+in\b",

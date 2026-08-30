@@ -376,3 +376,73 @@ def test_run_enters_loop_and_calls_cycle(tmp_path: Path) -> None:
             run(config, backend)
 
     assert calls["n"] == 1
+
+
+# ── structured artifact emission (K8SI_ARTIFACT line) ─────────────────────────
+
+
+def _artifact_payload(capsys) -> "dict | None":  # type: ignore[no-any-unimported]
+    """Extract the K8SI_ARTIFACT JSON payload from captured stdout, if any."""
+    import json
+
+    out = capsys.readouterr().out
+    marker = "K8SI_ARTIFACT "
+    idx = out.rfind(marker)
+    if idx == -1:
+        return None
+    return json.loads(out[idx + len(marker) :].strip())
+
+
+def test_cycle_emits_structured_artifact_line(tmp_path: Path, capsys) -> None:
+    """After a successful backup the cycle resolves the artifact via the
+    backend's metadata API (restic snapshots --json / kopia manifest) and
+    prints one structured line for the operator to parse — no log scraping."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.snapshots.return_value = [
+        {"id": "older", "short_id": "older", "time": "2026-08-29T00:00:00Z"},
+        {"id": "newest", "short_id": "newest", "time": "2026-08-30T00:00:00Z"},
+    ]
+    backend.snapshot_size.return_value = 42
+
+    _run_cycle(config, backend)
+
+    assert _artifact_payload(capsys) == {"snapshotId": "newest", "sizeBytes": 42}
+    backend.snapshots.assert_called_once_with(tags=["app=sonarr"])
+    backend.snapshot_size.assert_called_once_with("newest")
+
+
+def test_cycle_prefers_create_time_manifest_over_list(tmp_path: Path, capsys) -> None:
+    """For kopia, the manifest captured from `snapshot create --json` is exact;
+    the list-based fallback must not be needed when it is present."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.last_snapshot = {"snapshotId": "from-create", "sizeBytes": 7}
+
+    _run_cycle(config, backend)
+
+    assert _artifact_payload(capsys) == {"snapshotId": "from-create", "sizeBytes": 7}
+    backend.snapshots.assert_not_called()
+
+
+def test_cycle_artifact_resolution_failure_does_not_fail_backup(tmp_path: Path, capsys) -> None:
+    """Artifact emission is best-effort: the regex fallback in the operator
+    still works when the metadata API fails — the backup itself must succeed."""
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.snapshots.side_effect = Exception("repo unreachable")
+
+    _run_cycle(config, backend)  # must not raise
+
+    assert _artifact_payload(capsys) is None
+    assert (tmp_path / LAST_BACKUP_FILE).exists()
+
+
+def test_cycle_no_snapshots_no_artifact_line(tmp_path: Path, capsys) -> None:
+    config = make_config(tmp_path)
+    backend = MagicMock()
+    backend.snapshots.return_value = []
+
+    _run_cycle(config, backend)
+
+    assert _artifact_payload(capsys) is None

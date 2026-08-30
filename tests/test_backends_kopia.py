@@ -246,7 +246,7 @@ def test_backup_calls_snapshot_create() -> None:
     mock_cmd.return_value = "created"
 
     backend.backup(Path("/data"), tags=["app=test"])
-    mock_cmd.assert_called_once_with("snapshot", "create", "/data", "--tags", "app:test")
+    mock_cmd.assert_called_once_with("snapshot", "create", "/data", "--tags", "app:test", "--json")
 
 
 def test_backup_translates_restic_style_tags() -> None:
@@ -258,7 +258,14 @@ def test_backup_translates_restic_style_tags() -> None:
 
     backend.backup(Path("/data"), tags=["app=sonarr", "env=prod"])
     mock_cmd.assert_called_once_with(
-        "snapshot", "create", "/data", "--tags", "app:sonarr", "--tags", "env:prod"
+        "snapshot",
+        "create",
+        "/data",
+        "--tags",
+        "app:sonarr",
+        "--tags",
+        "env:prod",
+        "--json",
     )
 
 
@@ -652,3 +659,81 @@ def test_verify_snapshot_raises_on_ambiguous_match() -> None:
     mock_cmd.return_value = json.dumps(kopia_data)
     with pytest.raises(BackupError, match="ambiguous"):
         backend.verify_snapshot("k8si-run=myrun")
+
+
+# ── snapshot create --json: structured artifact capture ───────────────────────
+
+# What kopia 0.15.0 prints for `snapshot create --json`: the snapshot manifest,
+# indented, to stdout — with progress (stderr) merged in by _err_to_out.
+KOPIA_CREATE_JSON_OUTPUT = """\
+ * 0 hashing, 0 hashed (0 B), 0 cached (0 B), uploaded 0 B, estimating...
+ * 0 hashing, 2 hashed (14 B), 0 cached (0 B), uploaded 195 B, estimating...
+{
+  "id": "5fc52d496b7a5c7866fd6ca1f9d8d2c2",
+  "source": {
+    "host": "k8si-job",
+    "userName": "root",
+    "path": "/data"
+  },
+  "startTime": "2026-08-30T20:00:00.000000000Z",
+  "endTime": "2026-08-30T20:00:01.000000000Z",
+  "rootEntry": {
+    "name": "data",
+    "type": "DIR",
+    "obj": "ked2772c42cdaf458bedc3aa8ef5b5e6d",
+    "summ": {
+      "size": 14
+    }
+  }
+}
+"""
+
+
+def test_backup_passes_json_flag() -> None:
+    """kopia 0.15.0 supports `snapshot create --json` (manifest to stdout) —
+    the backend must request it so the artifact comes from structured output."""
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = "created"
+
+    backend.backup(Path("/data"), tags=["app=test"])
+    mock_cmd.assert_called_once_with("snapshot", "create", "/data", "--tags", "app:test", "--json")
+
+
+def test_backup_parses_manifest_into_last_snapshot() -> None:
+    """The manifest printed by --json is captured as the artifact: snapshot id
+    plus total size from rootEntry.summ.size."""
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = KOPIA_CREATE_JSON_OUTPUT
+
+    backend.backup(Path("/data"))
+
+    assert backend.last_snapshot == {
+        "snapshotId": "5fc52d496b7a5c7866fd6ca1f9d8d2c2",
+        "sizeBytes": 14,
+    }
+
+
+def test_backup_without_manifest_leaves_last_snapshot_none() -> None:
+    """No manifest in the output (older kopia, or --json ignored) → no capture;
+    the list-based fallback resolves the artifact instead."""
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = "Created snapshot with root k1 and ID abc in 1s"
+
+    backend.backup(Path("/data"))
+
+    assert backend.last_snapshot is None
+
+
+def test_backup_manifest_without_size_keeps_none_size() -> None:
+    """A manifest without rootEntry.summ.size (partial snapshot) yields
+    sizeBytes None rather than a bogus 0."""
+    backend, mock_cmd = _make_backend()
+    backend._connected = True
+    mock_cmd.return_value = '{\n  "id": "snap1",\n  "startTime": "t",\n  "rootEntry": {}\n}\n'
+
+    backend.backup(Path("/data"))
+
+    assert backend.last_snapshot == {"snapshotId": "snap1", "sizeBytes": None}
