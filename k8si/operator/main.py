@@ -22,6 +22,11 @@ log = logging.getLogger(__name__)
 # Populated and owned by on_run_create; backup_timer only reads it.
 _running: set[tuple[str, str]] = set()
 
+# Parent-status updates are read-modify-write on the histories: re-read before
+# each patch attempt and retry a couple of times on resourceVersion conflicts.
+_PARENT_UPDATE_ATTEMPTS = 3
+_PARENT_UPDATE_BACKOFF_S = 0.2
+
 
 def _has_active_run_sync(namespace: str, backup_name: str) -> bool:
     """Return True if any K8siBackupRun for this backup is Pending, Queued or Running in K8s.
@@ -858,50 +863,96 @@ async def _update_parent_backup(
     duration: int,
     error: str = "",
 ) -> None:
-    """Update parent K8siBackup status after a run completes."""
-    status = backup_obj.get("status", {})
+    """Update parent K8siBackup status after a run completes.
+
+    recentRuns/recentBackups are read-modify-write: the caller's backup_obj was
+    fetched before the (possibly hours-long) backup ran, so the object is
+    re-read right before patching and the patch retried on 409 conflicts —
+    otherwise a concurrently finished run's history entries are silently
+    dropped.
+    """
     schedule = backup_spec.get("schedule", "0 2 * * *")
     now_iso = run_result.get("lastBackupTime") or datetime.now(tz=UTC).isoformat()
 
-    recent_backups = list(status.get("recentBackups", []))
-    recent_backups.insert(0, {"time": now_iso, "result": result})
+    for attempt in range(1, _PARENT_UPDATE_ATTEMPTS + 1):
+        # Re-read: build the histories from live status, not the caller's stale snapshot.
+        live = backup_obj
+        try:
+            fetched = await asyncio.to_thread(
+                custom.get_namespaced_custom_object,
+                "k8si.io",
+                "v1",
+                namespace,
+                "k8sibackups",
+                backup_name,
+            )
+            if isinstance(fetched, dict):
+                live = fetched
+        except Exception as e:
+            log.warning(
+                "Could not re-read parent K8siBackup %s/%s before patching: %s"
+                " — proceeding from caller snapshot",
+                namespace,
+                backup_name,
+                e,
+            )
 
-    recent_runs = list(status.get("recentRuns", []))
-    run_entry: dict[str, Any] = {"name": run_name, "time": now_iso, "result": result}
-    if run_result.get("snapshotId"):
-        run_entry["snapshotId"] = run_result["snapshotId"]
-    if run_result.get("sizeBytes") is not None:
-        run_entry["sizeBytes"] = run_result["sizeBytes"]
-    if run_result.get("backendType"):
-        run_entry["backendType"] = run_result["backendType"]
-    recent_runs.insert(0, run_entry)
+        status = live.get("status", {})
 
-    fields: dict[str, Any] = {
-        "lastRunRef": run_name,
-        "recentRuns": recent_runs[:30],
-        # Legacy fields — kept for v0.8.0 backward compat
-        "lastBackupResult": result,
-        "lastBackupDuration": duration,
-        "nextBackupTime": compute_next_backup(schedule),
-        "recentBackups": recent_backups[:30],
-        "message": error or run_result.get("message", ""),
-    }
-    if result == "success":
-        fields["lastSuccessfulRunRef"] = run_name
-        fields["lastBackupTime"] = now_iso
+        recent_backups = list(status.get("recentBackups", []))
+        recent_backups.insert(0, {"time": now_iso, "result": result})
 
-    try:
-        await asyncio.to_thread(
-            custom.patch_namespaced_custom_object_status,
-            "k8si.io",
-            "v1",
-            namespace,
-            "k8sibackups",
-            backup_name,
-            {"status": fields},
-        )
-    except Exception as e:
-        log.warning("Failed to update parent K8siBackup %s/%s: %s", namespace, backup_name, e)
+        recent_runs = list(status.get("recentRuns", []))
+        run_entry: dict[str, Any] = {"name": run_name, "time": now_iso, "result": result}
+        if run_result.get("snapshotId"):
+            run_entry["snapshotId"] = run_result["snapshotId"]
+        if run_result.get("sizeBytes") is not None:
+            run_entry["sizeBytes"] = run_result["sizeBytes"]
+        if run_result.get("backendType"):
+            run_entry["backendType"] = run_result["backendType"]
+        recent_runs.insert(0, run_entry)
+
+        fields: dict[str, Any] = {
+            "lastRunRef": run_name,
+            "recentRuns": recent_runs[:30],
+            # Legacy fields — kept for v0.8.0 backward compat
+            "lastBackupResult": result,
+            "lastBackupDuration": duration,
+            "nextBackupTime": compute_next_backup(schedule),
+            "recentBackups": recent_backups[:30],
+            "message": error or run_result.get("message", ""),
+        }
+        if result == "success":
+            fields["lastSuccessfulRunRef"] = run_name
+            fields["lastBackupTime"] = now_iso
+
+        try:
+            await asyncio.to_thread(
+                custom.patch_namespaced_custom_object_status,
+                "k8si.io",
+                "v1",
+                namespace,
+                "k8sibackups",
+                backup_name,
+                {"status": fields},
+            )
+            break
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status == 409 and attempt < _PARENT_UPDATE_ATTEMPTS:
+                log.warning(
+                    "409 conflict updating parent K8siBackup %s/%s (attempt %d/%d) — retrying",
+                    namespace,
+                    backup_name,
+                    attempt,
+                    _PARENT_UPDATE_ATTEMPTS,
+                )
+                await asyncio.sleep(_PARENT_UPDATE_BACKOFF_S * attempt)
+                continue
+            log.warning("Failed to update parent K8siBackup %s/%s: %s", namespace, backup_name, e)
+            break
+        except Exception as e:
+            log.warning("Failed to update parent K8siBackup %s/%s: %s", namespace, backup_name, e)
+            break
 
     metrics.record(
         backup_name, namespace, result, now_iso if result == "success" else None, duration=duration
