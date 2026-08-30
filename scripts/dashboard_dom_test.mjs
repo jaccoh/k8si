@@ -157,10 +157,10 @@ check("trigger button reflects live phase across re-renders (proof.mjs)", () => 
   // proof.mjs (2026-08-30 22:17): after triggerBackup's optimistic render()
   // the clicked button is detached; the FRESH button used to render with no
   // state and enabled — inviting a second click that 409s.
-  const btn = document.querySelector('button[aria-label="Backup now"]');
+  const btn = document.querySelector('tr[data-name="zeta"] button[aria-label="Backup now"]');
   assert(btn, "no Backup now button rendered");
   window.triggerBackup("beta", "zeta", btn);
-  const fresh = document.querySelector('button[aria-label="Backup now"]');
+  const fresh = document.querySelector('tr[data-name="zeta"] button[aria-label="Backup now"]');
   assert(fresh && fresh !== btn, "render() must have replaced the clicked button");
   assert(fresh.disabled === true, "fresh button must be disabled while the run is queued");
   assert(fresh.className.includes("queued"), `fresh button must carry the queued class — got "${fresh.className}"`);
