@@ -248,7 +248,7 @@
   #tables-container { overflow-x: auto; }
   .backup-table {
     width: 100%;
-    min-width: 920px;
+    min-width: 860px;
     table-layout: fixed;
     border-collapse: collapse;
     background: #161b22;
@@ -390,6 +390,7 @@
     border: 1px solid #30363d;
     border-radius: 4px;
     padding: 2px 7px;
+    white-space: nowrap;
   }
   .schedule-window {
     font-size: 10px;
@@ -491,9 +492,22 @@
   .state-message.error { color: #f85149; }
 
   /* Trigger button */
+  /* Row action buttons — one group per row, identical height everywhere so
+     they line up across rows (a td with display:flex would stretch them to
+     the row height on taller rows — crooked). */
+  .actions-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
   .btn-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
     font-size: 11px;
-    padding: 3px 9px;
+    padding: 0 10px;
     background: #21262d;
     border: 1px solid #30363d;
     border-radius: 4px;
@@ -745,8 +759,12 @@
   .drawer-status-dot.done { background: #3fb950; }
   .drawer-status-dot.failed { background: #f85149; }
   .btn-logs {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
     font-size: 11px;
-    padding: 3px 9px;
+    padding: 0 10px;
     background: #21262d;
     border: 1px solid #30363d;
     border-radius: 4px;
@@ -1205,8 +1223,7 @@
             backup.namespace, backup.name)
         + buildHistoryStats(backup) + '</td>'
       + '<td><span class="' + msgClass + '" title="' + msgText + '">' + msgText + '</span></td>'
-      + '<td style="white-space:nowrap;display:flex;gap:4px">' + triggerBtn + pauseBtn + '</td>'
-      + '<td>' + logsBtn + '</td>'
+      + '<td><div class="actions-cell">' + triggerBtn + pauseBtn + logsBtn + '</div></td>'
       + '</tr>';
   }
 
@@ -1220,7 +1237,7 @@
     const rows = backups.map(buildRow).join('');
     // Identical colgroup in every namespace table — combined with
     // table-layout:fixed this keeps all sections' columns pixel-aligned.
-    const widths = ['16%','9%','12%','11%','9%','10%','17%','12%','4%'];
+    const widths = ['17%','10%','13%','12%','10%','10%','16%','12%'];
     let colgroup = '<colgroup>';
     for (const w of widths) colgroup += '<col style="width:' + w + '">';
     colgroup += '</colgroup>';
@@ -1235,7 +1252,6 @@
       + sortableTh('successRate', 'History')
       + '<th>Message</th>'
       + '<th></th>'
-      + '<th>Logs</th>'
       + '</tr></thead>'
       + '<tbody>' + rows + '</tbody>'
       + '</table>';

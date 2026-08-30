@@ -214,8 +214,8 @@ def test_tables_use_fixed_layout_and_shared_colgroup():
     body = _extract_function("buildTable")
     assert "<colgroup>" in body, "buildTable must emit a colgroup"
     widths = re.search(r"widths\s*=\s*\[([^\]]+)\]", body)
-    assert widths and len(widths.group(1).split(",")) == 9, (
-        "the colgroup must size all 9 columns (one width per column)"
+    assert widths and len(widths.group(1).split(",")) == 8, (
+        "the colgroup must size all 8 columns (one width per column)"
     )
 
 
@@ -268,3 +268,42 @@ def test_queued_status_wired_into_views_and_polling():
 
     labels = _extract_function("render")
     assert "Queued backups" in labels, "the queued filter needs a section title"
+
+
+# ── 0.10.0: action buttons layout ────────────────────────────────────────────
+
+
+def test_actions_are_one_aligned_group_not_a_flex_td():
+    """The actions cell used to be a <td style="display:flex"> — a td that is
+    no longer a table-cell falls out of the fixed column grid and its buttons
+    STRETCH to the row height (visibly crooked on taller rows; user report
+    2026-08-30 "stone-age and crooked"). All row actions (Backup now, Pause,
+    Logs) must live in ONE <div class="actions-cell"> inside a normal td, and
+    no td may carry display:flex."""
+    html = DASHBOARD_HTML.read_text()
+    body = _extract_function("buildRow")
+    assert 'actions-cell"' in body, "buildRow must wrap the action buttons in div.actions-cell"
+    assert body.index("triggerBtn") < body.index("actions-cell")
+    assert "logsBtn" in body.split("actions-cell")[1], (
+        "the Logs button belongs in the same actions group — the old lone "
+        "Logs column clipped off-screen behind an empty message column"
+    )
+    assert not re.search(r"<td[^>]*display:\s*flex", html), (
+        "no td may use display:flex — it breaks the fixed table grid and "
+        "stretches the buttons to the row height"
+    )
+    assert "<th>Logs</th>" not in _extract_function("buildTable"), (
+        "the separate Logs header column is gone; Logs lives in the actions group"
+    )
+
+
+def test_action_buttons_share_consistent_sizing():
+    """Backup/Pause/Logs buttons must have identical height and inline-flex
+    centering so they line up across every row regardless of row height."""
+    css = _extract_style_block()
+    for cls in ("btn-trigger", "btn-logs"):
+        m = re.search(rf"\.{cls}\s*\{{([^}}]*)\}}", css)
+        assert m, f".{cls} rule missing"
+        assert re.search(r"display:\s*inline-flex", m.group(1)), f".{cls} must be inline-flex"
+        assert re.search(r"align-items:\s*center", m.group(1)), f".{cls} must center its label"
+        assert re.search(r"height:\s*24px", m.group(1)), f".{cls} must have a fixed height"
