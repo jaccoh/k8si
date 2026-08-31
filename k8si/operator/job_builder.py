@@ -97,6 +97,12 @@ def _build_backup_job(
             "template": {
                 "spec": {
                     "restartPolicy": "Never",
+                    # kopia repositories have one designated maintenance user,
+                    # captured from this hostname at repository-create time —
+                    # the default per-pod hostname would make every run a new
+                    # user and kill all runs after the first. It also keeps the
+                    # kopia snapshot source identity stable.
+                    "hostname": "k8si-backup",
                     **({"nodeSelector": {"kubernetes.io/hostname": node}} if node else {}),
                     "volumes": volumes,
                     "containers": [

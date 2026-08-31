@@ -1288,3 +1288,29 @@ def test_cleanup_skips_pvcs_mounted_by_running_pods():
     mock_v1.delete_namespaced_persistent_volume_claim.assert_called_once_with(
         "k8si-snap-x-20260101000000", "default"
     )
+
+
+def test_backup_job_has_stable_hostname_for_kopia() -> None:
+    """kopia repositories have ONE designated maintenance user, captured from
+    the connecting hostname at repository-create time. Backup Jobs used to get
+    the default pod hostname (k8si-<backup>-<ts>-<rand>), so every run was a
+    DIFFERENT kopia user — the first Job became the designated user and every
+    later run died with 'maintenance must be run by designated user' (found
+    live on the sonarr/radarr kopia migration, 2026-08-31). A fixed hostname
+    also keeps the snapshot source identity stable in the repo."""
+    from k8si.operator.job_builder import _build_backup_job
+
+    job = _build_backup_job(
+        "k8si-test-20260831",
+        "default",
+        "test-pvc",
+        "test-secret",
+        {"pvc": "test-pvc"},
+        ["app=test"],
+        {"daily": 7, "weekly": 4, "monthly": 3},
+        None,
+    )
+    assert job["spec"]["template"]["spec"]["hostname"] == "k8si-backup", (
+        "backup Jobs must carry a fixed hostname — kopia maintenance ownership "
+        "and snapshot source identity depend on it being stable across runs"
+    )
