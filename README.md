@@ -231,6 +231,9 @@ The operator picks it up within 60s, bypassing the schedule check, the backup wi
 
 ## Limitations & security notes
 
+- **Single-node assumption in snapshot mode**: backup Jobs are pinned to the node the PVC lives on and snapshot clones must land on that same node — with node-local storage (topolvm) that effectively means one storage node. On multi-node clusters use `backupMode: direct` with an object-storage repository (S3/B2) instead.
+
+
 - **The dashboard is unauthenticated by default** and can trigger and pause backups cluster-wide, exposed on a NodePort on every node. Restrict it (NetworkPolicy, firewall, or an auth proxy), switch to the Ingress variant, or set [`K8SI_UI_TOKEN`](#dashboard-access-control).
 - **Backup jobs and restore containers run as root.** Restore must preserve file ownership; a non-root restore produces wrong permissions silently.
 - **The operator RBAC is broad by default** (cluster-wide watches, secret reads, pod exec for DB quiescing) so that backing up a new namespace needs no RBAC step. `deploy/rbac-namespaced.yaml` narrows `secrets get` and `pods/exec` to a per-namespace Role you enrol explicitly — see [RBAC modes](docs/reference.md#rbac-modes).

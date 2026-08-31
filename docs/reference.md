@@ -54,7 +54,7 @@ Detailed reference for k8si 0.9.x. For the pitch and quick start, see the
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `K8SI_IMAGE` | `ghcr.io/jaccoh/k8si:latest` | Image used for backup Jobs and restore init containers |
-| `BACKEND_TYPE` | `restic` | Backend for all backups handled by this operator (per-CRD `spec.backendType` is not wired up — see [Known quirks](#known-quirks)) |
+| `BACKEND_TYPE` | `restic` | Operator-wide default backend; per-CRD `spec.backendType` overrides it (since 0.10.0) |
 
 ### Kopia backend
 
@@ -62,7 +62,9 @@ Detailed reference for k8si 0.9.x. For the pitch and quick start, see the
 |----------|-------------|
 | `KOPIA_CONFIG_PATH` | kopia config file location inside the Job |
 
-> **kopia caveats:** experimental. `RESTIC_PASSWORD_FILE` is silently ignored
+> **kopia caveats:** experimental.
+>
+> **Per-backup kopia (since 0.10.0):** set `spec.backendType: kopia` + `spec.kopiaSecret` on a K8siBackup. The secret uses the same five-key shape as the restic secrets (`RESTIC_REPOSITORY` in kopia syntax, e.g. `sftp:user@host:backup/kopia/app`, `RESTIC_PASSWORD`, `RESTIC_SFTP_COMMAND`, `id_ed25519`, `known_hosts` — port is read from the sftp command). A repository that does not exist yet is auto-initialised on the first run, and since 0.11.0 the backup Job runs with a fixed hostname (`k8si-backup`) so kopia's designated maintenance user and the snapshot source identity stay stable across runs. `RESTIC_PASSWORD_FILE` is silently ignored
 > (only `RESTIC_PASSWORD` is forwarded), and retention (`forget`) uses a
 > per-source kopia policy rather than kopia's global policy.
 
