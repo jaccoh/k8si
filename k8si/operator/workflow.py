@@ -310,13 +310,12 @@ async def _run_backup(
     else:
         raw = raw_logs or ""
         marker = artifacts.ARTIFACT_MARKER.strip()
-        idx = raw.find(marker)
-        context = raw[max(0, idx - 150) : idx + 250] if idx != -1 else raw[-200:]
+        occurrences = raw.count(marker)
         logger.warning(
-            "Could not parse snapshot ID from job %s logs (marker present: %s, marker context: %r)",
+            "Could not parse snapshot ID from job %s logs (marker occurrences: %s, full logs: %r)",
             job_name,
-            idx != -1,
-            context,
+            occurrences,
+            raw,
         )
 
     now = datetime.now(tz=UTC).isoformat()

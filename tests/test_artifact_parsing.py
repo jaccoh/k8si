@@ -279,3 +279,21 @@ def test_structured_artifact_survives_kopia_carriage_progress() -> None:
         snap, size = _parse_artifact(blob, "kopia")
         assert snap == "e27632fe0a3f4ce60c25bb330d266a5a", f"{name}: marker parse failed"
         assert size == 199688393, f"{name}: exact size lost"
+
+
+def test_structured_artifact_survives_trailing_broken_marker() -> None:
+    """Production shape (2026-08-31, radarr kopia): a valid K8SI_ARTIFACT line
+    exists, yet the single-rfind parse failed — the only consistent
+    explanation is a later broken marker occurrence (rfind takes the last).
+    The parser must walk all occurrences and accept any valid one."""
+    from k8si.operator.artifacts import _parse_structured_artifact
+
+    blob = (
+        "progress line with \\r junk\r"
+        'K8SI_ARTIFACT {"snapshotId": "aaa111", "sizeBytes": 42}\n'
+        "maintenance output\n"
+        "K8SI_ARTIFACT {truncated-because-reasons"  # broken trailing copy
+    )
+    snap, size = _parse_structured_artifact(blob)
+    assert snap == "aaa111"
+    assert size == 42

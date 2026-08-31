@@ -34,19 +34,24 @@ def _parse_structured_artifact(logs: str) -> tuple[str | None, int | None]:
     authoritative when present. Returns (None, None) when absent or invalid —
     the caller then falls back to scraping the human-readable logs.
     """
-    idx = logs.rfind(ARTIFACT_MARKER)
-    if idx == -1:
-        return None, None
-    tail = logs[idx + len(ARTIFACT_MARKER) :]
-    line = tail.splitlines()[0] if tail.splitlines() else ""
-    try:
-        payload = json.loads(line)
-    except json.JSONDecodeError:
-        return None, None
-    if not isinstance(payload, dict) or not payload.get("snapshotId"):
-        return None, None
-    size = payload.get("sizeBytes")
-    return str(payload["snapshotId"]), size if isinstance(size, int) else None
+    # Walk ALL occurrences, last-first: if the job ever emits the marker more
+    # than once, a trailing broken copy must not invalidate an earlier valid
+    # one (rfind + single parse died on exactly that in production).
+    start = len(logs)
+    while True:
+        idx = logs.rfind(ARTIFACT_MARKER, 0, start)
+        if idx == -1:
+            return None, None
+        start = idx
+        tail = logs[idx + len(ARTIFACT_MARKER) :]
+        line = tail.splitlines()[0] if tail.splitlines() else ""
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("snapshotId"):
+            size = payload.get("sizeBytes")
+            return str(payload["snapshotId"]), size if isinstance(size, int) else None
 
 
 def _parse_artifact(logs: str, backend_type: str) -> tuple[str | None, int | None]:
