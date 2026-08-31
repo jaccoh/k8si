@@ -238,3 +238,44 @@ def test_parse_takes_last_structured_marker():
     logs = 'K8SI_ARTIFACT {"snapshotId": "first"}\nK8SI_ARTIFACT {"snapshotId": "second"}\n'
     snap_id, _ = _parse_artifact(logs, "restic")
     assert snap_id == "second"
+
+
+# ── live regression: kopia progress uses \r, marker must survive ──────────────
+
+KOPIA_LIVE_BLOB = (
+    "2026-08-31 INFO k8si.backup PVC backup job starting. Repo: sftp://x\n"
+    "2026-08-31 INFO k8si.backends.kopia kopia: Connected to repository.\n"
+    " * 0 hashing, 351 hashed (199.7 MB), 0 cached (0 B), uploaded 216 B, "
+    "estimated 199.7 MB (100.0%) 0s left   \r"
+    '{"id":"e27632fe0a3f4ce60c25bb330d266a5a","source":{"host":"k8si-backup",'
+    '"userName":"root","path":"/data"},"rootEntry":{"summ":{"size":199688393}}}\n'
+    'K8SI_ARTIFACT {"snapshotId": "e27632fe0a3f4ce60c25bb330d266a5a", '
+    '"sizeBytes": 199688393}\n'
+    "2026-08-31 INFO k8si.backends.kopia kopia: Setting policy for root@k8si-backup:/data\n"
+    "2026-08-31 INFO k8si.backup PVC backup complete.\n"
+)
+
+KOPIA_LIVE_BLOB_NO_NEWLINE_BEFORE_MANIFEST = KOPIA_LIVE_BLOB.replace(
+    "0s left   \r", "0s left   "
+).replace(
+    '"rootEntry":{"summ":{"size":199688393}}}\n',
+    '\r{"id":"e27632fe0a3f4ce60c25bb330d266a5a","source":{"host":"k8si-backup",'
+    '"userName":"root","path":"/data"},"rootEntry":{"summ":{"size":199688393}}}\n',
+    1,
+)
+
+
+def test_structured_artifact_survives_kopia_carriage_progress() -> None:
+    """Live regression (2026-08-31, sonarr/radarr kopia migration): the
+    operator logged 'Could not parse snapshot ID' on real kopia jobs whose
+    logs DO contain the K8SI_ARTIFACT line — the \r-laced progress stream is
+    the suspect. The marker parse must hold against realistic blobs."""
+    from k8si.operator.artifacts import _parse_artifact
+
+    for name, blob in (
+        ("clean", KOPIA_LIVE_BLOB),
+        ("cr-mixed", KOPIA_LIVE_BLOB_NO_NEWLINE_BEFORE_MANIFEST),
+    ):
+        snap, size = _parse_artifact(blob, "kopia")
+        assert snap == "e27632fe0a3f4ce60c25bb330d266a5a", f"{name}: marker parse failed"
+        assert size == 199688393, f"{name}: exact size lost"

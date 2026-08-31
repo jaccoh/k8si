@@ -18,7 +18,7 @@ import kubernetes
 import kubernetes.client
 import kubernetes.client.exceptions
 
-from . import pool, quiesce, snapshot
+from . import artifacts, pool, quiesce, snapshot
 from .artifacts import _parse_artifact  # re-exported for historical importers
 from .cronjob import K8SI_IMAGE
 from .job_builder import (
@@ -308,7 +308,12 @@ async def _run_backup(
     if snapshot_id:
         logger.info("Artifact: snapshot %s, size %s B", snapshot_id, size_bytes)
     else:
-        logger.warning("Could not parse snapshot ID from job %s logs", job_name)
+        logger.warning(
+            "Could not parse snapshot ID from job %s logs (marker present: %s, log tail: %r)",
+            job_name,
+            artifacts.ARTIFACT_MARKER.strip() in (raw_logs or ""),
+            (raw_logs or "")[-300:],
+        )
 
     now = datetime.now(tz=UTC).isoformat()
     return {

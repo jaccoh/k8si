@@ -138,7 +138,10 @@ def _emit_artifact(config: Config, backend: BackupBackend) -> None:
     """
     artifact = _resolve_artifact(config, backend)
     if artifact:
+        log.info("Artifact resolved: %s", artifact)
         print(f"{ARTIFACT_MARKER}{json.dumps(artifact)}", flush=True)
+    else:
+        log.warning("Artifact resolution returned nothing (structured line omitted)")
 
 
 def _resolve_artifact(config: Config, backend: BackupBackend) -> dict | None:
