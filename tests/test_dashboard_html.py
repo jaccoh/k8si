@@ -3,14 +3,22 @@
 import re
 from pathlib import Path
 
-DASHBOARD_HTML = Path(__file__).parent.parent / "k8si" / "ui" / "dashboard.html"
+UI_DIR = Path(__file__).parent.parent / "k8si" / "ui"
+DASHBOARD_HTML = UI_DIR / "dashboard.html"
+DASHBOARD_CSS = UI_DIR / "static" / "app.css"
+DASHBOARD_JS = UI_DIR / "static" / "app.js"
+
+
+def _bundle() -> str:
+    """Shell + JS + CSS concatenated — most checks only care that something
+    in the dashboard carries the marker, wherever the split put it."""
+    return DASHBOARD_HTML.read_text() + DASHBOARD_JS.read_text() + DASHBOARD_CSS.read_text()
 
 
 def _extract_style_block() -> str:
-    html = DASHBOARD_HTML.read_text()
-    match = re.search(r"<style>(.*?)</style>", html, re.DOTALL)
-    assert match, "dashboard.html has no <style> block"
-    return match.group(1)
+    css = DASHBOARD_CSS.read_text()
+    assert css.strip(), "static/app.css is empty"
+    return css
 
 
 def test_style_block_braces_are_balanced():
@@ -24,7 +32,7 @@ def test_style_block_braces_are_balanced():
 
 
 def _extract_function(name: str) -> str:
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     match = re.search(r"function " + re.escape(name) + r"\([^)]*\) \{(.*?)\n  \}", html, re.DOTALL)
     assert match, f"{name} function not found"
     return match.group(1)
@@ -61,7 +69,7 @@ def test_legacy_open_logs_path_removed():
     is dead code in the UI: the UI ServiceAccount has no RBAC to read pod logs,
     so the stream sits silent for 10 minutes and then paints a GREEN 'success'
     dot for a stream that never delivered anything. It must not exist."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     assert "function openLogs(" not in html, (
         "the legacy openLogs() path must be deleted from the dashboard — it "
         "cannot work (no pods/log RBAC) and falsifies success"
@@ -94,7 +102,7 @@ def test_stream_error_releases_active_run_state():
     """es.onerror must release activeRunState too: a network blip mid-run kills
     the stream without a 'done' message, stranding the entry with the same
     frozen-row + eternal-fast-poll symptoms as closing the tab."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     m = re.search(r"es\.onerror = function\(\) \{(.*?)\n    \};", html, re.DOTALL)
     assert m and "releaseActiveRunForTab" in m.group(1), (
         "the SSE error handler in openRunLogs must release the activeRunState entry"
@@ -104,7 +112,7 @@ def test_stream_error_releases_active_run_state():
 def test_open_run_logs_caps_concurrent_tabs():
     """EventSource connections are capped (~6 per origin on HTTP/1.1); unbounded
     log tabs starve the dashboard's own /api/backups polling (goals-doc #14)."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     assert re.search(r"MAX_LOG_TABS = \d+", html), "a MAX_LOG_TABS cap must be defined"
     body = _extract_function("openRunLogs")
     assert "MAX_LOG_TABS" in body and "closeTab(logTabs[0].id)" in body, (
@@ -117,7 +125,7 @@ def test_tabs_carry_backup_name():
     allBackups/recentRuns scans — the scan returns '' when the run isn't found
     (e.g. an older run picked from the picker), which propagates an empty
     backup name and breaks the picker (goals-doc #14)."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     assert re.search(r"function openRunLogs\(namespace, runName, backupName,", html), (
         "openRunLogs must take an explicit backupName argument"
     )
@@ -170,7 +178,7 @@ def test_mutating_calls_use_token_aware_fetch():
     """Goal #2: trigger/pause fetches must go through apiFetch (attaches the
     optional X-K8si-Token from localStorage and retries once after a 401
     prompt) — a bare fetch would fail permanently once K8SI_UI_TOKEN is set."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     assert "function apiFetch" in html, "apiFetch wrapper missing"
     assert "'X-K8si-Token'" in html, "token header not attached"
     assert "fetch('/api/backups/' +" not in html, (
@@ -231,7 +239,7 @@ def test_column_headers_are_sortable():
     assert "data-key=" in th_src, "sortable headers must carry a data-key attribute"
     assert "toggleSort(" in th_src, "headers must toggle sorting on click"
 
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     assert "function toggleSort(" in html, "toggleSort missing"
     assert "function clearSort(" in html, "clearSort missing"
     assert "function setSortIndicators(" in html, "setSortIndicators missing"
@@ -247,7 +255,7 @@ def test_status_rank_covers_all_five_phases():
     """Sorting by status needs a defined order for every phase the CRD can
     report — including the new 'queued' (needs-attention order: running <
     queued < failed < pending < success)."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     m = re.search(r"STATUS_RANK\s*=\s*\{([^}]*)\}", html)
     assert m, "STATUS_RANK map missing from dashboard script"
     for phase in ("running", "queued", "failed", "pending", "success"):
@@ -259,7 +267,7 @@ def test_queued_status_wired_into_views_and_polling():
     The dashboard must expose it: a sidebar view, a stat card, and fast
     polling while anything is queued (the slow 30s cadence would otherwise
     lag the queued→running flip)."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     assert 'data-filter="queued"' in html, "sidebar needs a Queued view"
     assert 'id="badge-queued"' in html, "sidebar Queued view needs a count badge"
     assert 'id="stat-queued"' in html, "summary strip needs a Queued stat card"
@@ -280,7 +288,7 @@ def test_actions_are_one_aligned_group_not_a_flex_td():
     2026-08-30 "stone-age and crooked"). All row actions (Backup now, Pause,
     Logs) must live in ONE <div class="actions-cell"> inside a normal td, and
     no td may carry display:flex."""
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     body = _extract_function("buildRow")
     assert 'actions-cell"' in body, "buildRow must wrap the action buttons in div.actions-cell"
     assert body.index("triggerBtn") < body.index("actions-cell")
@@ -319,7 +327,7 @@ def test_action_buttons_are_icon_only_with_tooltips():
     body = _extract_function("buildRow")
     for label in ("Backup now", "Pause", "Resume", "Logs"):
         assert f'aria-label="{label}"' in body, f"icon button needs aria-label '{label}'"
-    html = DASHBOARD_HTML.read_text()
+    html = _bundle()
     assert "<svg" in html and 'fill="currentColor"' in html, (
         "buttons must render inline SVG icons that inherit currentColor for hover states"
     )
@@ -333,4 +341,46 @@ def test_action_buttons_are_icon_only_with_tooltips():
     assert "btn.title" in _extract_function("setBtnState"), (
         "setBtnState must update the tooltip (btn.title) — icon-only buttons "
         "carry their state text there"
+    )
+
+
+def test_run_state_is_data_driven_with_toast_errors():
+    """SSE callbacks must not mutate button DOM refs — every render() detaches
+    them (fast-poll re-renders every 3s during a run). The live phase in
+    activeRunState drives the freshly built button (buildRow), so callbacks
+    only update state + render(). Error feedback goes through a toast — the
+    stale-ref path could never show it anyway."""
+    html = _bundle()
+    assert 'id="toast"' in html, "a toast element is needed for error feedback"
+    assert "function showToast" in html, "showToast missing"
+    assert re.search(r"\.toast\s*\{", _extract_style_block()), "toast needs styling"
+
+    trigger = _extract_function("triggerBackup")
+    assert "showToast" in trigger, "trigger failures must surface via showToast"
+    # The only allowed button touch is the immediate click feedback before the
+    # first render(); the SSE/done/error paths must be pure state.
+    after_render = trigger.split("render();", 1)[1] if "render();" in trigger else trigger
+    assert "btn." not in after_render, (
+        "after the optimistic render() the clicked button is detached — only "
+        "activeRunState + render() may drive the UI from there"
+    )
+
+    paused = _extract_function("setPaused")
+    assert "showToast" in paused, "pause failures must surface via showToast"
+
+
+def test_dashboard_shell_is_split_from_assets():
+    """The dashboard was a ~2000-line single HTML file. Since the split the
+    shell must stay lean: no inline <style>, no inline scripts — only the
+    /static asset references. Regressing to inline blocks re-creates the
+    monolith one paste at a time."""
+    shell = DASHBOARD_HTML.read_text()
+    assert "<style>" not in shell and "</style>" not in shell, "no inline CSS in the shell"
+    assert '<script src="/static/app.js"></script>' in shell, "JS must load from /static"
+    assert '<link rel="stylesheet" href="/static/app.css">' in shell, "CSS must load from /static"
+    body_scripts = [ln for ln in shell.splitlines() if "<script" in ln and "src=" not in ln]
+    assert not body_scripts, f"inline script blocks found: {body_scripts}"
+    assert len(shell.splitlines()) < 200, "the shell must stay lean — assets live in static/"
+    assert len(DASHBOARD_JS.read_text().splitlines()) > 500, (
+        "app.js should carry the bulk of the logic"
     )

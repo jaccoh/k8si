@@ -288,188 +288,11 @@ def test_load_k8s_falls_back_to_kube_config(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
 def _logs_client() -> TestClient:
     return make_ui_client(raise_server_exceptions=False)
 
 
-@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
-@patch("k8si.ui.app.kubernetes.client.CoreV1Api")
-def test_logs_endpoint_streams_phase_entries(mock_core: MagicMock, mock_custom: MagicMock) -> None:
-    """GET /logs streams phase entries from lastRunLog and closes on success."""
-    mock_obj = {
-        "status": {
-            "lastBackupResult": "success",
-            "lastRunLog": [
-                {"time": "2026-06-12T10:00:00Z", "phase": "BackupJobStarted", "message": "start"}
-            ],
-        }
-    }
-    mock_custom.return_value.get_namespaced_custom_object.return_value = mock_obj
-
-    client = _logs_client()
-    resp = client.get("/api/backups/default/myapp/logs")
-
-    assert resp.status_code == 200
-    assert "text/event-stream" in resp.headers["content-type"]
-    body = resp.text
-    assert "BackupJobStarted" in body
-    assert '"type": "phase"' in body
-    assert '"type": "done"' in body
-
-
-@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
-def test_logs_endpoint_404_on_missing_backup(mock_custom: MagicMock) -> None:
-    """GET /logs returns 404 when the CRD does not exist."""
-    import kubernetes.client.exceptions
-
-    exc = kubernetes.client.exceptions.ApiException(status=404)
-    exc.status = 404
-    mock_custom.return_value.get_namespaced_custom_object.side_effect = exc
-
-    client = _logs_client()
-    resp = client.get("/api/backups/default/missing/logs")
-
-    assert resp.status_code == 404
-
-
-def test_is_new_run_none_since() -> None:
-    """since=None → always treat as new run."""
-    from k8si.ui.app import _is_new_run
-
-    assert _is_new_run("2026-01-01T00:00:00Z", None) is True
-
-
-def test_is_new_run_same_timestamp() -> None:
-    """since == lastBackupTime → not a new run (stale)."""
-    from k8si.ui.app import _is_new_run
-
-    assert _is_new_run("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z") is False
-
-
-def test_is_new_run_newer_timestamp() -> None:
-    """lastBackupTime > since → new run completed."""
-    from k8si.ui.app import _is_new_run
-
-    assert _is_new_run("2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z") is True
-
-
-def test_is_new_run_missing_last_time() -> None:
-    """No lastBackupTime → not a new run yet."""
-    from k8si.ui.app import _is_new_run
-
-    assert _is_new_run(None, "2026-01-01T00:00:00Z") is False
-
-
-@patch("k8si.ui.app.asyncio.sleep")
-@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
-@patch("k8si.ui.app.kubernetes.client.CoreV1Api")
-def test_logs_endpoint_since_new_run_emits_done(
-    mock_core: MagicMock, mock_custom: MagicMock, mock_sleep: MagicMock
-) -> None:
-    """GET /logs?since=T emits done when lastBackupTime > T (new run completed)."""
-    mock_sleep.return_value = None
-    stale = {
-        "status": {
-            "lastBackupResult": "success",
-            "lastBackupTime": "2026-01-01T00:00:00Z",
-            "lastRunLog": [],
-        }
-    }
-    new_run = {
-        "status": {
-            "lastBackupResult": "success",
-            "lastBackupTime": "2026-01-02T00:00:00Z",
-            "lastRunLog": [
-                {"time": "2026-01-02T00:00:00Z", "phase": "BackupJobStarted", "message": "go"}
-            ],
-        }
-    }
-    mock_custom.return_value.get_namespaced_custom_object.side_effect = [stale, new_run]
-
-    client = _logs_client()
-    resp = client.get("/api/backups/default/myapp/logs?since=2026-01-01T00:00:00Z")
-
-    assert resp.status_code == 200
-    assert "BackupJobStarted" in resp.text
-    assert '"result": "success"' in resp.text
-
-
-def test_is_new_run_type_error_caught() -> None:
-    """Mixed aware/naive datetimes raise TypeError — must be caught, not propagate."""
-    from k8si.ui.app import _is_new_run
-
-    # naive since, aware last_backup_time → TypeError without the fix
-    assert _is_new_run("2026-01-02T00:00:00+00:00", "2026-01-01T00:00:00") is True
-
-
-@patch("k8si.ui.app.asyncio.sleep")
-@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
-@patch("k8si.ui.app.kubernetes.client.CoreV1Api")
-def test_logs_filters_stale_entries(
-    mock_core: MagicMock, mock_custom: MagicMock, mock_sleep: MagicMock
-) -> None:
-    """Entries with time <= since are not emitted; entries after since are emitted."""
-    mock_sleep.return_value = None
-    mock_obj = {
-        "status": {
-            "lastBackupResult": "success",
-            "lastBackupTime": "2026-01-02T00:00:00Z",
-            "lastRunLog": [
-                {"time": "2026-01-01T00:00:00Z", "phase": "OldPhase", "message": "stale"},
-                {"time": "2026-01-02T01:00:00Z", "phase": "NewPhase", "message": "fresh"},
-            ],
-        }
-    }
-    mock_custom.return_value.get_namespaced_custom_object.return_value = mock_obj
-
-    client = _logs_client()
-    resp = client.get("/api/backups/default/myapp/logs?since=2026-01-01T12:00:00Z")
-
-    assert resp.status_code == 200
-    assert "OldPhase" not in resp.text
-    assert "NewPhase" in resp.text
-
-
-@patch("k8si.ui.app.asyncio.sleep")
-@patch("k8si.ui.app.kubernetes.client.CustomObjectsApi")
-@patch("k8si.ui.app.kubernetes.client.CoreV1Api")
-def test_logs_seen_resets_on_log_clear(
-    mock_core: MagicMock, mock_custom: MagicMock, mock_sleep: MagicMock
-) -> None:
-    """When operator clears lastRunLog, seen resets so new entries are not skipped."""
-    mock_sleep.return_value = None
-    old_run = {
-        "status": {
-            "lastBackupResult": "success",
-            "lastBackupTime": "2026-01-01T00:00:00Z",
-            "lastRunLog": [
-                {"time": "2026-01-01T00:00:00Z", "phase": "OldPhase", "message": "old"},
-                {"time": "2026-01-01T00:00:01Z", "phase": "OldPhase2", "message": "old2"},
-                {"time": "2026-01-01T00:00:02Z", "phase": "OldPhase3", "message": "old3"},
-            ],
-        }
-    }
-    cleared = {"status": {"lastBackupResult": "running", "lastRunLog": []}}
-    new_run = {
-        "status": {
-            "lastBackupResult": "success",
-            "lastBackupTime": "2026-01-02T00:00:00Z",
-            "lastRunLog": [
-                {"time": "2026-01-02T00:00:01Z", "phase": "NewPhase", "message": "new"},
-            ],
-        }
-    }
-    mock_custom.return_value.get_namespaced_custom_object.side_effect = [old_run, cleared, new_run]
-
-    client = _logs_client()
-    # since = old lastBackupTime, so old entries are filtered; new entry should appear
-    resp = client.get("/api/backups/default/myapp/logs?since=2026-01-01T00:00:00Z")
-
-    assert resp.status_code == 200
-    assert "NewPhase" in resp.text
-
-
-# ---------------------------------------------------------------------------
 # GET /api/runs/{ns}/{runName}/logs — run-specific SSE endpoint
 # ---------------------------------------------------------------------------
 
@@ -566,3 +389,24 @@ async def test_lifespan_calls_load_k8s() -> None:
             pass
 
     mock_load.assert_called_once()
+
+
+def test_legacy_backup_logs_endpoint_removed() -> None:
+    """The legacy SSE endpoint (/api/backups/{ns}/{name}/logs) read
+    status.lastRunLog — a field nothing has written since the 0.10.0 cleanup.
+    Dead endpoints get deleted, not maintained (slop rule)."""
+    client = make_ui_client(raise_server_exceptions=False)
+    paths = {getattr(r, "path", "") for r in client.app.routes}
+    assert "/api/backups/{namespace}/{name}/logs" not in paths, (
+        "the legacy per-backup logs route must not be registered at all"
+    )
+
+
+def test_static_assets_served() -> None:
+    """The dashboard shell loads its CSS/JS from /static (app mount) — a broken
+    mount would serve a bare unstyled shell."""
+    client = make_ui_client()
+    css = client.get("/static/app.css")
+    js = client.get("/static/app.js")
+    assert css.status_code == 200 and ".backup-table" in css.text
+    assert js.status_code == 200 and "function render" in js.text

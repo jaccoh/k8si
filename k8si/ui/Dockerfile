@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py dashboard.html ./
+COPY static ./static
 
 ARG K8SI_VERSION=dev
 ENV K8SI_VERSION=$K8SI_VERSION

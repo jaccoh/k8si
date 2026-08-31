@@ -11,13 +11,16 @@ from typing import Any
 import kubernetes
 import kubernetes.client
 import kubernetes.client.exceptions
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 GROUP = "k8si.io"
 VERSION = "v1"
 PLURAL = "k8sibackups"
 RUN_PLURAL = "k8sibackupruns"
+
+_HERE = os.path.dirname(__file__)
 
 # Optional auth for the mutating endpoints (goals #2): the dashboard is
 # exposed on a NodePort, and without this anyone on the network can trigger
@@ -31,39 +34,6 @@ def _require_token(request: Request) -> None:
 
     if _UI_TOKEN and not hmac.compare_digest(request.headers.get("X-K8si-Token", ""), _UI_TOKEN):
         raise HTTPException(status_code=401, detail="missing or invalid X-K8si-Token header")
-
-
-def _is_new_run(last_backup_time: str | None, since: str | None) -> bool:
-    """Return True if last_backup_time is strictly after since (new run completed)."""
-    if since is None:
-        return True
-    if not last_backup_time:
-        return False
-    try:
-        return datetime.fromisoformat(last_backup_time) > datetime.fromisoformat(since)
-    except (ValueError, TypeError):
-        return True
-
-
-def _parse_since(since: str | None) -> datetime | None:
-    if since is None:
-        return None
-    try:
-        return datetime.fromisoformat(since)
-    except (ValueError, TypeError):
-        return None
-
-
-def _is_stale_entry(entry: dict, since_dt: datetime | None) -> bool:
-    if since_dt is None:
-        return False
-    entry_time = entry.get("time")
-    if not entry_time:
-        return False
-    try:
-        return datetime.fromisoformat(entry_time) <= since_dt
-    except (ValueError, TypeError):
-        return False
 
 
 def _load_k8s() -> None:
@@ -80,6 +50,10 @@ async def lifespan(app: FastAPI):  # noqa: ANN201
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Dashboard assets live split out (static/app.css + static/app.js); the HTML
+# shell references them under /static.
+app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name="static")
 
 
 @app.get("/api/backups")
@@ -333,89 +307,6 @@ async def stream_run_logs(namespace: str, run_name: str) -> StreamingResponse:
     )
 
 
-@app.get("/api/backups/{namespace}/{name}/logs")
-async def stream_logs(
-    namespace: str, name: str, since: str | None = Query(None)
-) -> StreamingResponse:
-    """Legacy SSE endpoint — watches K8siBackup.status.lastRunLog."""
-    custom = kubernetes.client.CustomObjectsApi()
-    try:
-        # Off the event loop like every other k8s call in this endpoint.
-        await asyncio.to_thread(
-            custom.get_namespaced_custom_object, GROUP, VERSION, namespace, PLURAL, name
-        )
-    except kubernetes.client.exceptions.ApiException as e:
-        if e.status == 404:
-            raise HTTPException(status_code=404, detail=f"{namespace}/{name} not found")
-        raise HTTPException(status_code=500, detail=str(e))
-
-    async def _generate():
-        seen = 0
-        log_lines_seen = 0
-        since_dt = _parse_since(since)
-        yield ": connected\n\n"
-        for _ in range(300):
-            try:
-                obj = await asyncio.to_thread(
-                    custom.get_namespaced_custom_object,
-                    GROUP,
-                    VERSION,
-                    namespace,
-                    PLURAL,
-                    name,
-                )
-            except Exception:
-                await asyncio.sleep(2)
-                continue
-
-            status = obj.get("status", {})
-            run_log = status.get("lastRunLog", [])
-
-            if len(run_log) < seen:
-                seen = 0
-
-            for entry in run_log[seen:]:
-                if not _is_stale_entry(entry, since_dt):
-                    yield f"data: {json.dumps({'type': 'phase', **entry})}\n\n"
-            seen = len(run_log)
-
-            result = status.get("lastBackupResult")
-            last_time = status.get("lastBackupTime")
-            if result == "running":
-                try:
-                    v1 = kubernetes.client.CoreV1Api()
-                    pods = await asyncio.to_thread(v1.list_namespaced_pod, namespace)
-                    for pod in pods.items:
-                        labels = pod.metadata.labels or {}
-                        if labels.get("job-name", "").startswith(f"k8si-{name}-"):
-                            logs = await asyncio.to_thread(
-                                v1.read_namespaced_pod_log,
-                                pod.metadata.name,
-                                namespace,
-                            )
-                            all_lines = (logs or "").splitlines()
-                            for line in all_lines[log_lines_seen:]:
-                                if line.strip():
-                                    yield f"data: {json.dumps({'type': 'log', 'line': line})}\n\n"
-                            log_lines_seen = len(all_lines)
-                            break
-                except Exception:
-                    pass
-            elif result in ("success", "failed") and seen > 0 and _is_new_run(last_time, since):
-                yield f"data: {json.dumps({'type': 'done', 'result': result})}\n\n"
-                return
-
-            await asyncio.sleep(2)
-
-        yield f"data: {json.dumps({'type': 'done', 'result': 'timeout'})}\n\n"
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
 @app.get("/api/version")
 def get_version() -> dict[str, str]:
     # K8SI_VERSION is injected at image build time; takes priority over package metadata.
@@ -437,5 +328,4 @@ def healthz() -> dict[str, str]:
 
 @app.get("/")
 def index() -> FileResponse:
-    here = os.path.dirname(__file__)
-    return FileResponse(os.path.join(here, "dashboard.html"))
+    return FileResponse(os.path.join(_HERE, "dashboard.html"))

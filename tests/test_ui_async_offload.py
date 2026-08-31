@@ -44,24 +44,3 @@ def test_stream_run_logs_offloads_initial_run_lookup() -> None:
         "initial run lookup must be offloaded via asyncio.to_thread, "
         f"offloaded calls were: {recorded}"
     )
-
-
-def test_stream_logs_offloads_initial_backup_lookup() -> None:
-    """Same for the legacy SSE endpoint's existence check."""
-    recorded: list[str] = []
-    spy = _spy_to_thread(recorded)
-
-    with (
-        patch("k8si.ui.app.kubernetes.client.CustomObjectsApi") as mock_cls,
-        patch("k8si.ui.app.asyncio.to_thread", side_effect=spy),
-    ):
-        mock_cls.return_value.get_namespaced_custom_object.return_value = {
-            "status": {"lastBackupResult": "success"}
-        }
-        response = asyncio.run(app_module.stream_logs("default", "my-backup"))
-
-    assert response.status_code == 200
-    assert any("get_namespaced_custom_object" in entry for entry in recorded), (
-        "initial backup lookup must be offloaded via asyncio.to_thread, "
-        f"offloaded calls were: {recorded}"
-    )

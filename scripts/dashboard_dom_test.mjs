@@ -16,7 +16,14 @@ import path from "node:path";
 import { JSDOM } from "jsdom";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const html = readFileSync(path.join(repoRoot, "k8si", "ui", "dashboard.html"), "utf8");
+const uiDir = path.join(repoRoot, "k8si", "ui");
+// The shell references /static assets; inline them so jsdom executes the real
+// script without a resource loader.
+const html = readFileSync(path.join(uiDir, "dashboard.html"), "utf8")
+  .replace('<link rel="stylesheet" href="/static/app.css">',
+    `<style>${readFileSync(path.join(uiDir, "static", "app.css"), "utf8")}</style>`)
+  .replace('<script src="/static/app.js"></script>',
+    `<script>${readFileSync(path.join(uiDir, "static", "app.js"), "utf8")}</script>`);
 
 const LONG_MSG =
   "Timed out waiting for in-progress VolumeSnapshot(s) on PVC pvc-traefik-acme after 1800s: " +
@@ -71,6 +78,10 @@ const dom = new JSDOM(html, {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ version: "dom-test" }) });
       }
       if (u.includes("/trigger")) {
+        if (window.__failNextTrigger) {
+          window.__failNextTrigger = false;
+          return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ detail: "boom-409" }) });
+        }
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ runName: "zeta-run-x" }) });
       }
       if (u === "/api/backups") {
@@ -79,7 +90,8 @@ const dom = new JSDOM(html, {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
     };
     class FakeEventSource {
-      constructor() { this.onmessage = null; this.onerror = null; this.onopen = null; }
+      constructor() { this.onmessage = null; this.onerror = null; this.onopen = null;
+        (window.__esInstances = window.__esInstances || []).push(this); }
       close() {}
     }
     window.EventSource = FakeEventSource;
@@ -91,12 +103,10 @@ const { document } = window;
 
 const results = { pass: [], fail: [] };
 function check(name, fn) {
-  try {
-    fn();
-    results.pass.push(name);
-  } catch (err) {
-    results.fail.push(`${name}: ${err && err.message}`);
-  }
+  return Promise.resolve()
+    .then(() => fn())
+    .then(() => results.pass.push(name))
+    .catch((err) => results.fail.push(`${name}: ${err && err.message}`));
 }
 function assert(cond, msg) {
   if (!cond) throw new Error(msg || "assertion failed");
@@ -114,12 +124,12 @@ function firstTableHeader(key) {
 
 await sleep(120); // let the initial fetch → render settle
 
-check("renders one table per namespace (2)", () => {
+await check("renders one table per namespace (2)", () => {
   const tables = document.querySelectorAll(".backup-table");
   assert(tables.length === 2, `expected 2 tables, got ${tables.length}`);
 });
 
-check("message cell keeps full text in title tooltip", () => {
+await check("message cell keeps full text in title tooltip", () => {
   const cells = [...document.querySelectorAll(".msg-cell")];
   assert(cells.length > 0, "no .msg-cell rendered");
   const zeta = cells.find((c) => (c.getAttribute("title") || "").includes("1800s"));
@@ -127,7 +137,7 @@ check("message cell keeps full text in title tooltip", () => {
   assert(zeta.textContent.includes("after 1800s"), "cell text must not be pre-truncated by JS");
 });
 
-check("row actions are icon-only buttons in one aligned group", () => {
+await check("row actions are icon-only buttons in one aligned group", () => {
   const rows = [...document.querySelectorAll(".backup-table tbody tr")];
   assert(rows.length > 0, "no rows rendered");
   for (const tr of rows) {
@@ -153,7 +163,7 @@ check("row actions are icon-only buttons in one aligned group", () => {
   assert(!ths.some((th) => th.textContent.trim() === "Logs"), "no separate Logs header column");
 });
 
-check("trigger button reflects live phase across re-renders (proof.mjs)", () => {
+await check("trigger button reflects live phase across re-renders (proof.mjs)", () => {
   // proof.mjs (2026-08-30 22:17): after triggerBackup's optimistic render()
   // the clicked button is detached; the FRESH button used to render with no
   // state and enabled — inviting a second click that 409s.
@@ -167,19 +177,19 @@ check("trigger button reflects live phase across re-renders (proof.mjs)", () => 
   assert((fresh.title || "").includes("Queued"), `tooltip must reflect the state — got "${fresh.title}"`);
 });
 
-check("queued backup renders a queued status badge", () => {
+await check("queued backup renders a queued status badge", () => {
   const badge = document.querySelector(".status.queued");
   assert(badge, "a queued CRD status must render the .status.queued badge");
 });
 
-check("queued counts wired into sidebar badge and stat card", () => {
+await check("queued counts wired into sidebar badge and stat card", () => {
   assert(document.getElementById("badge-queued") !== null, "badge-queued element missing");
   assert(document.getElementById("stat-queued") !== null, "stat-queued element missing");
   assert((document.getElementById("badge-queued").textContent || "").trim() === "1",
     `badge-queued should read 1, got "${document.getElementById("badge-queued").textContent}"`);
 });
 
-check("clicking Name header sorts ascending within every section", () => {
+await check("clicking Name header sorts ascending within every section", () => {
   const th = firstTableHeader("name");
   assert(th, "no sortable th[data-key=name]");
   th.click();
@@ -195,7 +205,7 @@ check("clicking Name header sorts ascending within every section", () => {
   assert(thNow.getAttribute("aria-sort") === "ascending", "aria-sort must be ascending");
 });
 
-check("second click flips to descending", () => {
+await check("second click flips to descending", () => {
   firstTableHeader("name").click();
   const names1 = tableRows(1).map((tr) => tr.dataset.name);
   assert(JSON.stringify(names1) === JSON.stringify(["zeta", "never", "alpha"]),
@@ -204,7 +214,7 @@ check("second click flips to descending", () => {
     "aria-sort must be descending");
 });
 
-check("Last backup sorts newest-first by default and nulls last", () => {
+await check("Last backup sorts newest-first by default and nulls last", () => {
   firstTableHeader("lastBackupTime").click();
   const names1 = tableRows(1).map((tr) => tr.dataset.name);
   assert(JSON.stringify(names1) === JSON.stringify(["zeta", "alpha", "never"]),
@@ -213,7 +223,7 @@ check("Last backup sorts newest-first by default and nulls last", () => {
   assert(th.getAttribute("aria-sort") === "descending", "time columns default to descending");
 });
 
-check("sort chip shows the active sort and clears on click", () => {
+await check("sort chip shows the active sort and clears on click", () => {
   const chip = document.getElementById("sort-chip");
   assert(chip, "sort-chip element missing");
   assert(chip.style.display !== "none" && chip.textContent.trim() !== "",
@@ -226,11 +236,37 @@ check("sort chip shows the active sort and clears on click", () => {
     "chip must hide after clear");
 });
 
-check("status sort ranks running < queued < failed < pending < success", () => {
+await check("status sort ranks running < queued < failed < pending < success", () => {
   firstTableHeader("status").click();
   const all = [...document.querySelectorAll(".backup-table tbody tr")].map((tr) => tr.dataset.name);
   assert(JSON.stringify(all) === JSON.stringify(["gamma", "delta", "zeta", "never", "alpha"]),
     `status asc within sections — got ${all}`);
+});
+
+await check("SSE phase events drive the fresh button, not stale refs", async () => {
+  // The previous check left a live trigger for zeta with an open EventSource.
+  const es = window.__esInstances[window.__esInstances.length - 1];
+  assert(es, "no EventSource captured");
+  es.onmessage({ data: JSON.stringify({ type: "phase", phase: "Running", time: "t", message: "x" }) });
+  const runningBtn = document.querySelector('tr[data-name="zeta"] button[aria-label="Backup now"]');
+  assert(runningBtn.className.includes("running"), `fresh button must show running via data — got "${runningBtn.className}"`);
+  assert(runningBtn.disabled, "running button must be disabled");
+  es.onmessage({ data: JSON.stringify({ type: "done", result: "success" }) });
+  await sleep(20);
+  const doneBtn = document.querySelector('tr[data-name="zeta"] button[aria-label="Backup now"]');
+  assert(!doneBtn.disabled, "after done the button must reset (enabled, no state class)");
+  assert(!doneBtn.className.includes("running"), `state class must clear — got "${doneBtn.className}"`);
+});
+
+await check("failed trigger surfaces a toast", async () => {
+  window.__failNextTrigger = true;
+  const btn = document.querySelector('tr[data-name="delta"] button[aria-label="Backup now"]');
+  window.triggerBackup("alpha-ns", "delta", btn);
+  await sleep(40);
+  const toast = document.getElementById("toast");
+  assert(toast, "toast element missing");
+  assert(toast.classList.contains("show"), `toast must be visible on failure — classes "${toast.className}"`);
+  assert((toast.textContent || "").includes("boom-409"), `toast must carry the error detail — got "${toast.textContent}"`);
 });
 
 console.log(JSON.stringify(results));
