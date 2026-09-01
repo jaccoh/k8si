@@ -1314,3 +1314,24 @@ def test_backup_job_has_stable_hostname_for_kopia() -> None:
         "backup Jobs must carry a fixed hostname — kopia maintenance ownership "
         "and snapshot source identity depend on it being stable across runs"
     )
+
+
+def test_collect_job_logs_decodes_bytes() -> None:
+    """Live regression (2026-09-01, kopia migration): the kubernetes client
+    can return pod logs as bytes; str(bytes) renders newlines as literal
+    backslash-n pairs, which defeats the K8SI_ARTIFACT line parse while
+    regex scraping keeps working — exact snapshotId/size never reached
+    recentRuns. Collected logs must always be a real str."""
+    from k8si.operator.workflow import _collect_job_logs
+
+    v1 = MagicMock()
+    pod = MagicMock()
+    pod.metadata.name = "k8si-x-1"
+    v1.list_namespaced_pod.return_value = MagicMock(items=[pod])
+    v1.read_namespaced_pod_log.return_value = (
+        b'progress\rK8SI_ARTIFACT {"snapshotId": "abc123", "sizeBytes": 7}\ndone\n'
+    )
+    out = _collect_job_logs(v1, "k8si-x-1", "default")
+    assert isinstance(out, str)
+    assert "K8SI_ARTIFACT" in out
+    assert 'K8SI_ARTIFACT {"snapshotId": "abc123", "sizeBytes": 7}' in out.splitlines()

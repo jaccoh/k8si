@@ -454,9 +454,16 @@ def _collect_job_logs(v1: Any, job_name: str, namespace: str) -> str:
     try:
         pods = v1.list_namespaced_pod(namespace, label_selector=f"job-name={job_name}")
         for pod in pods.items:
-            return v1.read_namespaced_pod_log(  # type: ignore[no-any-return]
-                pod.metadata.name, namespace
-            )
+            logs = v1.read_namespaced_pod_log(pod.metadata.name, namespace)
+            # Depending on client version/preload settings this comes back as
+            # bytes — str(bytes) would turn every newline into a literal
+            # backslash-n pair, which silently kills the K8SI_ARTIFACT line
+            # parse (splitlines finds nothing, json.loads chokes on the tail)
+            # while regex-based scraping keeps "working". Found live on the
+            # kopia migration, 2026-09-01.
+            if isinstance(logs, bytes):
+                logs = logs.decode("utf-8", errors="replace")
+            return logs  # type: ignore[no-any-return]
     except Exception:
         pass
     return ""
