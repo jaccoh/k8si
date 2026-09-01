@@ -4,6 +4,7 @@ Orchestration only — Job body construction lives in job_builder.py, artifact
 parsing in artifacts.py (both re-exported here for historical importers).
 """
 
+import ast
 import asyncio
 import logging
 import os
@@ -455,14 +456,22 @@ def _collect_job_logs(v1: Any, job_name: str, namespace: str) -> str:
         pods = v1.list_namespaced_pod(namespace, label_selector=f"job-name={job_name}")
         for pod in pods.items:
             logs = v1.read_namespaced_pod_log(pod.metadata.name, namespace)
-            # Depending on client version/preload settings this comes back as
-            # bytes — str(bytes) would turn every newline into a literal
-            # backslash-n pair, which silently kills the K8SI_ARTIFACT line
-            # parse (splitlines finds nothing, json.loads chokes on the tail)
-            # while regex-based scraping keeps "working". Found live on the
-            # kopia migration, 2026-09-01.
+            # Depending on client version/preload settings the log comes back
+            # as bytes — or, worse, as a str whose CONTENT is the repr of the
+            # bytes ("b'...\n...'", verbatim observed in production): either
+            # way every newline is a literal backslash-n pair, which silently
+            # kills the K8SI_ARTIFACT line parse (splitlines finds nothing,
+            # json.loads chokes on the tail) while regex-based scraping keeps
+            # "working". Normalize both shapes to a real str.
             if isinstance(logs, bytes):
                 logs = logs.decode("utf-8", errors="replace")
+            elif isinstance(logs, str) and logs[:2] in ("b'", 'b"'):
+                try:
+                    evaluated = ast.literal_eval(logs)
+                except (ValueError, SyntaxError):
+                    evaluated = None
+                if isinstance(evaluated, bytes):
+                    logs = evaluated.decode("utf-8", errors="replace")
             return logs  # type: ignore[no-any-return]
     except Exception:
         pass

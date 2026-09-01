@@ -1335,3 +1335,13 @@ def test_collect_job_logs_decodes_bytes() -> None:
     assert isinstance(out, str)
     assert "K8SI_ARTIFACT" in out
     assert 'K8SI_ARTIFACT {"snapshotId": "abc123", "sizeBytes": 7}' in out.splitlines()
+
+    # And the nastier production shape: a str whose CONTENT is the bytes repr
+    # ("b'...\n...'" as text) — observed live from read_namespaced_pod_log.
+    v1.read_namespaced_pod_log.return_value = repr(
+        b'K8SI_ARTIFACT {"snapshotId": "def456", "sizeBytes": 9}\ndone\n'
+    )
+    out = _collect_job_logs(v1, "k8si-x-1", "default")
+    assert 'K8SI_ARTIFACT {"snapshotId": "def456", "sizeBytes": 9}' in out.splitlines(), (
+        "the bytes-repr-as-str shape must be unwrapped to real lines"
+    )
