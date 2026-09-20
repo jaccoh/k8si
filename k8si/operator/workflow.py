@@ -135,6 +135,44 @@ async def _cleanup_orphan_snap_pvcs(name: str, namespace: str) -> None:
     await asyncio.to_thread(_delete_orphans)
 
 
+async def _settle_before_start(
+    namespace: str,
+    run_name: str,
+    run_ns: str | None,
+    logger: logging.Logger,
+) -> None:
+    """Wait out the settle gap before this backup starts.
+
+    No-op unless K8SI_BACKUP_SETTLE_SECONDS is set. The Queued phase plus a
+    Settling log entry are re-asserted in one patch before sleeping: if
+    on_run_create's original Queued patch failed, the reconciler's 5-minute
+    stuck-Pending kill would otherwise race a long settle, and the entry
+    makes the wait visible in the run log.
+    """
+    if pool.BACKUP_SETTLE_SECONDS <= 0:
+        return
+    if run_name:
+        await asyncio.to_thread(
+            _patch_run_status,
+            run_ns or namespace,
+            run_name,
+            {
+                "phase": "Queued",
+                "log": [
+                    {
+                        "time": datetime.now(tz=UTC).isoformat(),
+                        "phase": "Settling",
+                        "message": (
+                            f"Settling {pool.BACKUP_SETTLE_SECONDS}s since the previous"
+                            " backup finished before starting this one"
+                        ),
+                    }
+                ],
+            },
+        )
+    await pool.settle_gap(logger)
+
+
 async def run_backup(
     name: str,
     namespace: str,
@@ -148,12 +186,18 @@ async def run_backup(
     """Run the full snapshot-first backup. Returns status fields on success.
 
     Concurrency-capped: each execution parks an executor worker for the whole
-    job duration — unbounded parallel backups froze the operator (#6).
+    job duration — unbounded parallel backups froze the operator (#6). A
+    settle gap (K8SI_BACKUP_SETTLE_SECONDS) can additionally space consecutive
+    backups out; the queued run waits it out in phase Queued.
     """
     async with pool.SEMAPHORE:
-        return await _run_backup(
-            name, namespace, spec, logger, body, run_name, run_ns, on_job_created
-        )
+        await _settle_before_start(namespace, run_name, run_ns, logger)
+        try:
+            return await _run_backup(
+                name, namespace, spec, logger, body, run_name, run_ns, on_job_created
+            )
+        finally:
+            pool.note_backup_finished()
 
 
 async def _run_backup(

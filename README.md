@@ -67,6 +67,7 @@ So the disaster movie looks like this: the cluster dies. GitOps rebuilds every D
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/crd.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/crd_run.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/rbac.yaml
+kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/configmap.yaml
 kubectl apply -f https://raw.githubusercontent.com/jaccoh/k8si/main/deploy/operator.yaml
 
 # Optional dashboard (ClusterIP + Ingress instead of NodePort):

@@ -1345,3 +1345,140 @@ def test_collect_job_logs_decodes_bytes() -> None:
     assert 'K8SI_ARTIFACT {"snapshotId": "def456", "sizeBytes": 9}' in out.splitlines(), (
         "the bytes-repr-as-str shape must be unwrapped to real lines"
     )
+
+
+# ── Settle gap between backups (K8SI_BACKUP_SETTLE_SECONDS) ───────────────────
+
+
+def test_run_backup_settles_gap_between_consecutive_backups(monkeypatch):
+    """The second backup must not start until the settle gap since the first
+    one's finish has elapsed — while waiting, the run sits in phase Queued."""
+    import time
+
+    import k8si.operator.pool as pool
+    import k8si.operator.workflow as wf
+
+    monkeypatch.setattr(pool, "BACKUP_SETTLE_SECONDS", 0.25)
+    marks: list[tuple[str, float]] = []
+
+    async def fake_backup(*args, **kwargs):
+        marks.append(("start", time.monotonic()))
+        await asyncio.sleep(0.02)
+        marks.append(("finish", time.monotonic()))
+        return {}
+
+    async def call():
+        with (
+            patch.object(wf, "_run_backup", fake_backup),
+            patch.object(wf, "_patch_run_status"),
+        ):
+            await wf.run_backup(
+                "test-backup", "default", {"pvc": "p"}, MagicMock(), run_name="run-1"
+            )
+            await wf.run_backup(
+                "test-backup", "default", {"pvc": "p"}, MagicMock(), run_name="run-2"
+            )
+
+    asyncio.run(call())
+    first_finish = next(t for phase, t in marks if phase == "finish")
+    second_start = [t for phase, t in marks if phase == "start"][1]
+    assert second_start - first_finish >= 0.2, (
+        f"second backup started {second_start - first_finish:.3f}s after the first"
+        " finished — settle gap not honored"
+    )
+
+
+def test_run_backup_marks_finish_even_when_backup_fails(monkeypatch):
+    """A failed backup hammered the storage too — the next one must still
+    settle (note_backup_finished runs in the finally)."""
+    import time
+
+    import k8si.operator.pool as pool
+    import k8si.operator.workflow as wf
+
+    monkeypatch.setattr(pool, "BACKUP_SETTLE_SECONDS", 0.25)
+    marks: list[tuple[str, float]] = []
+
+    async def failing_backup(*args, **kwargs):
+        marks.append(("start", time.monotonic()))
+        raise RuntimeError("job exploded")
+
+    async def probe_backup(*args, **kwargs):
+        marks.append(("start", time.monotonic()))
+        return {}
+
+    async def call():
+        with (
+            patch.object(wf, "_run_backup", failing_backup),
+            patch.object(wf, "_patch_run_status"),
+        ):
+            with pytest.raises(RuntimeError):
+                await wf.run_backup(
+                    "test-backup", "default", {"pvc": "p"}, MagicMock(), run_name="run-1"
+                )
+        with (
+            patch.object(wf, "_run_backup", probe_backup),
+            patch.object(wf, "_patch_run_status"),
+        ):
+            await wf.run_backup(
+                "test-backup", "default", {"pvc": "p"}, MagicMock(), run_name="run-2"
+            )
+
+    started = time.monotonic()
+    asyncio.run(call())
+    # Second start must be >= settle after the first run_backup returned
+    # (i.e. after its finally marked the failure finished).
+    assert marks[1][1] - started >= 0.2, "settle gap skipped after a failed backup"
+
+
+def test_run_backup_without_settle_knob_starts_immediately(monkeypatch):
+    """Default K8SI_BACKUP_SETTLE_SECONDS=0 must not delay or patch anything."""
+    import k8si.operator.pool as pool
+    import k8si.operator.workflow as wf
+
+    monkeypatch.setattr(pool, "BACKUP_SETTLE_SECONDS", 0)
+    called = []
+
+    async def fake_backup(*args, **kwargs):
+        called.append(1)
+        return {}
+
+    async def call():
+        with (
+            patch.object(wf, "_run_backup", fake_backup),
+            patch.object(wf, "_patch_run_status") as patch_status,
+        ):
+            await wf.run_backup(
+                "test-backup", "default", {"pvc": "p"}, MagicMock(), run_name="run-1"
+            )
+            patch_status.assert_not_called()
+
+    asyncio.run(call())
+    assert called == [1]
+
+
+def test_settle_before_start_reasserts_queued_with_settling_log(monkeypatch):
+    """While settling, the run is re-asserted to phase Queued with a Settling
+    log entry — the reconciler's stuck-Pending kill can't race a long settle,
+    and the wait is visible in the run log."""
+    import k8si.operator.pool as pool
+    import k8si.operator.workflow as wf
+
+    monkeypatch.setattr(pool, "BACKUP_SETTLE_SECONDS", 0.05)
+    with patch.object(wf, "_patch_run_status") as patch_status:
+        asyncio.run(wf._settle_before_start("default", "run-1", None, MagicMock()))
+    patch_status.assert_called_once()
+    ns, run, fields = patch_status.call_args.args
+    assert (ns, run) == ("default", "run-1")
+    assert fields["phase"] == "Queued"
+    assert fields["log"][0]["phase"] == "Settling"
+
+
+def test_settle_before_start_noop_without_knob(monkeypatch):
+    import k8si.operator.pool as pool
+    import k8si.operator.workflow as wf
+
+    monkeypatch.setattr(pool, "BACKUP_SETTLE_SECONDS", 0)
+    with patch.object(wf, "_patch_run_status") as patch_status:
+        asyncio.run(wf._settle_before_start("default", "run-1", None, MagicMock()))
+    patch_status.assert_not_called()
