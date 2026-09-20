@@ -27,6 +27,9 @@ spec:
           env:
             - name: K8SI_IMAGE
               value: ghcr.io/jaccoh/k8si:v0.9.0
+          envFrom:
+            - configMapRef:
+                name: k8si-operator-config
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

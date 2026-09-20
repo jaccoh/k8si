@@ -21,6 +21,16 @@ Detailed reference for k8si 0.9.x. For the pitch and quick start, see the
 
 \* Either `RESTIC_PASSWORD` or `RESTIC_PASSWORD_FILE` must be set.
 
+### Operator
+
+The operator reads its tuning knobs from the environment; `deploy/configmap.yaml` (name: `k8si-operator-config`) is the intended source and is wired into `deploy/operator.yaml` via `envFrom`. Changed values take effect on the next operator pod restart.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `K8SI_MAX_CONCURRENT_BACKUPS` | `2` | Backups executing at once. `1` fully serializes them — the relief knob for storage that chokes on parallel heavy Jobs (cache flush / SMR drain) |
+| `K8SI_BACKUP_SETTLE_SECONDS` | `0` (off) | Quiet seconds between the end of one backup and the start of the next; the waiting run stays in phase `Queued` |
+| `K8SI_RUN_RETENTION` | `30` | Finished K8siBackupRuns kept per backup |
+
 ### Restore mode (`MODE=restore`)
 
 | Variable | Required | Default | Description |

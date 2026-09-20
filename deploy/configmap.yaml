@@ -1,0 +1,19 @@
+# Operator tuning knobs, consumed via envFrom by deploy/operator.yaml.
+# Apply before the operator itself:
+#   kubectl apply -f deploy/configmap.yaml
+# Values take effect on the next operator pod restart:
+#   kubectl -n k8si-system rollout restart deploy/k8si-operator
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8si-operator-config
+  namespace: k8si-system
+data:
+  # Backups executing at once. 1 fully serializes — the biggest relief knob
+  # for storage that chokes on parallel heavy Jobs (cache flush / SMR drain).
+  K8SI_MAX_CONCURRENT_BACKUPS: "1"
+  # Quiet seconds between the end of one backup and the start of the next
+  # (0 = off). While settling, the next run waits in phase Queued.
+  K8SI_BACKUP_SETTLE_SECONDS: "300"
+  # Finished K8siBackupRuns kept per backup.
+  K8SI_RUN_RETENTION: "30"

@@ -407,3 +407,34 @@ class TestCiSchedule:
     def test_e2e_runs_on_schedule(self):
         cond = yaml.safe_load(CI.read_text())["jobs"]["e2e"]["if"]
         assert "schedule" in cond, "e2e must still run on the nightly schedule"
+
+
+# ── Operator pacing config ────────────────────────────────────────────────────
+
+
+class TestOperatorPacingConfig:
+    """deploy/configmap.yaml is the operator's tuning surface; the deployment
+    must actually consume it, and the run CRD must accept phase Queued — the
+    phase runs wait in while the concurrency semaphore / settle gap holds."""
+
+    def test_configmap_carries_the_knobs(self):
+        cm = _find(_docs(DEPLOY / "configmap.yaml"), "ConfigMap", "k8si-operator-config")
+        assert cm["metadata"]["namespace"] == "k8si-system"
+        assert int(cm["data"]["K8SI_MAX_CONCURRENT_BACKUPS"]) >= 1
+        assert int(cm["data"]["K8SI_BACKUP_SETTLE_SECONDS"]) >= 0
+
+    def test_operator_deployment_consumes_the_configmap(self):
+        dep = _find(_docs(DEPLOY / "operator.yaml"), "Deployment", "k8si-operator")
+        refs = dep["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        assert any(r.get("configMapRef", {}).get("name") == "k8si-operator-config" for r in refs), (
+            "operator.yaml must envFrom the k8si-operator-config ConfigMap"
+        )
+
+    def test_run_phase_enum_accepts_queued(self):
+        """main.py patches runs to phase Queued while they wait on the
+        semaphore/settle gap — a CRD enum without it silently 422s every such
+        patch (best-effort, so the phase just never showed)."""
+        status = _openapi(DEPLOY / "crd_run.yaml", "k8sibackupruns.k8si.io")["properties"][
+            "status"
+        ]["properties"]
+        assert "Queued" in status["phase"]["enum"]
